@@ -1,27 +1,26 @@
 #pragma once
-// =====================================================================
+//
 // stats.hpp — the statistics, and nothing else.
 //
 // Pure arithmetic on a vector of measured latencies: no CUDA, no images, no
-// configuration. That matters twice over:
-//   - it can be read (and tested) without the GPU stack, and
-//   - the reporting convention lives in ONE place, so the numbers printed
-//     here and the numbers a Python analysis computes from the CSV agree.
-//     See computeStats for the percentile convention.
-// =====================================================================
+// configuration. That matters twice over — it can be read and tested without
+// the GPU stack, and the reporting convention lives in exactly one place, so
+// the numbers printed here and the numbers a Python analysis computes from the
+// same CSV agree.
+//
 
 #include <cstddef>
 #include <vector>
 
 // The battery used for latency reporting:
 //
-//   mean   average; sensitive to outliers, so never report it alone.
-//   median the middle observation; robust.
-//   std    spread around the mean (sample standard deviation, n-1).
-//   p95/99 the value below which 95%/99% of observations fall.
-//   max    the observed worst case.
-//   tail   p99 - median: how fat the worst 1% is. For a real-time system
-//          this is the number that decides deadlines.
+//   mean    average; sensitive to outliers, so never report it alone.
+//   median  the middle observation; robust.
+//   std     spread around the mean (sample standard deviation, n-1).
+//   p95/99  the value below which 95%/99% of observations fall.
+//   max     the observed worst case.
+//   tail    p99 - median: how fat the worst 1% is. For a real-time system this
+//           is the number that decides deadlines.
 struct Stats {
     std::size_t n = 0;
     double mean = 0, median = 0, std = 0;
@@ -32,6 +31,6 @@ struct Stats {
 // Takes the vector BY VALUE because it sorts it.
 Stats computeStats(std::vector<float> values);
 
-// Fixed-width console table, so columns line up. Values are milliseconds.
+// Fixed-width console table, so the columns line up. Values are milliseconds.
 void printStatsHeader();
 void printStats(const char* label, const Stats& s);

@@ -486,12 +486,264 @@ network gets more SMs — so the ratio itself is a tuning knob.
 
 ---
 
-## 9. Open items
+## 9. The measurement protocol: `sweep.sh` + `aggregate.py`
 
-- **The 5-run protocol and aggregation.** The runner does one *run*; the driver
-  script must launch 5 fresh processes per configuration (a fresh process per
-  run is required — it resets the CUDA context, the allocator and the green
-  contexts), then aggregate across runs.
+Two scripts, deliberately separate: `sweep.sh` only *measures*,
+`aggregate.py` only *analyses*. The analysis is therefore repeatable without
+re-running 37 minutes of GPU work.
+
+### 9.1 The run matrix
+
+| # | Experiment | Configuration | Allocation |
+|---|---|---|---|
+| 1–5 | 1 | `whole` (baseline) | whole GPU |
+| 6–10 | 1 | `gc100` (control) | green context, 100 % |
+| 11–15 | 1 | `gc75` | green context, 75 % |
+| 16–20 | 1 | `gc50` | green context, 50 % |
+| 21–25 | 1 | `gc25` | green context, 25 % |
+| 26–50 | 1 | *the same five* | for ResNet-50 |
+| 51–55 | 2 | `baseline` | two networks, **no** partitioning |
+| 56–60 | 2 | `50_50` | mobilenet 50 % + resnet 50 % |
+| 61–65 | 2 | `75_25` | mobilenet 75 % + resnet 25 % |
+| 66–70 | 2 | `25_75` | mobilenet 25 % + resnet 75 % |
+
+**14 configurations × 5 runs = 70 fresh processes**, ≈ 40 minutes.
+
+### 9.2 Why these choices
+
+- **`gc100` is not redundant with `whole`.** It is the control that proves the
+green-context *mechanism* costs nothing (measured 0.5351 vs 0.5390 ms), so a
+slowdown at 75 % cannot be blamed on the mechanism itself.
+- **Experiment 2 uses a MIXED pair** (MobileNet + ResNet), not mob-mob/res-res.
+Three reasons: (i) a scheduler co-locates *different* workloads, so the mixed
+pair is the deployment actually studied; (ii) one mixed sweep yields each
+network's co-run latency at 4, 8 and 12 SMs — exactly the points Experiment 1
+measures in isolation; (iii) the **asymmetry is itself a result** (MobileNet
++35.7 %, ResNet +13.8 %) — the lighter model suffers more because it has less
+work to hide the interference behind. Same-pairs would answer a different
+question (how residual interference scales with the co-tenant's weight) and are
+an extension, not the core.
+- **Honest caveat for the thesis:** in a mixed pair the co-tenant's SM count
+moves with the split (at 75/25 MobileNet's co-tenant has only 4 SMs), so the
+three splits answer *"which ratio is best?"*, not *"interference at a fixed k
+SMs"*. 50/50 is the only fully symmetric point.
+- **Run index is the OUTER loop**, configurations the inner one, so thermal and
+machine-state drift is spread evenly over configurations instead of favouring
+whichever one ran first.
+- **The sweep is resumable**: a run whose `_stats.csv` exists is skipped. An
+interrupted sweep is restarted, not repeated. (Because of this, smoke results
+go to a separate directory — a smoke run left under a real name would be
+skipped and silently kept.)
+
+### 9.3 The GPU cannot be locked — so it is measured
+
+The shared board offers **no way to exclude another tenant**:
+
+```
+nvidia-smi --help :  -c/--compute-mode  0/DEFAULT … 3/EXCLUSIVE_PROCESS   (advertised)
+nvidia-smi -q     :  Compute Mode : N/A                                 (not supported)
+                     Persistence Mode : N/A
+                     MIG Mode : not supported on Orin
+```
+
+The Tegra driver reports no compute-mode support (and it would need root);
+there is no MIG; and every user runs as the **same `nvidia` account**, so there
+is no permission boundary either. `nvidia-smi --query-compute-apps` returns
+`N/A` on Tegra, `/sys/devices/gpu.0/load` does not exist, and `fuser /dev/nvidia*`
+reports nothing.
+
+So the board cannot be locked — it can only be **checked by measurement**:
+
+| Layer | What | Cost |
+|---|---|---|
+| Preflight | clock check (`min == max`), then a calibration | ~2 s |
+| Sentinel before every run | a fixed 500-inference MobileNet run; median must match the 0.535 ms reference within ±15 %, else abort | ~1.3 s × 70 |
+| Post-hoc | `aggregate.py` flags any run whose median is > 25 % above its 4 siblings | free |
+
+Observed working: a co-tenant's `green_ctx_benchmark` inflated the median from
+0.53 to 2.83 ms, and the sentinel aborted the sweep with **+42 %** before any
+time was wasted. Observed limitation: once, the sentinel read a clean 0.5392 ms
+*while* a co-tenant was running — 500 inferences can fall between the other
+job's iterations. **The sentinel is a tripwire, not a guarantee**; the cross-run
+consistency check is the real safety net. The honest fix is social:
+coordinate with the other user (and note the co-tenant is running *the same
+experiment* on `--sm 4/6/8`, which is worth mentioning in the thesis).
+
+### 9.4 Aggregation: the run is the unit of replication
+
+The single decision that drives `aggregate.py`:
+
+- **Level 1 (within a run)** — the runner has already summarised each run
+(`_stats.csv`: median/mean/p99/std over that run's ~10k–60k inferences).
+- **Level 2 (across runs)** — the point estimate is the **median of the 5
+run-level values**, and the run-to-run spread is reported as **[min, max]**.
+
+Pooling all ~300k raw inferences into one vector and taking its p99 — the
+tempting alternative — is the classic **pseudo-replication** error: it treats
+correlated observations from only 5 processes as independent and understates
+the uncertainty several-fold. The 5 fresh processes exist precisely to provide
+a between-run error bar, so the aggregation must expose it.
+
+Outputs (into `../bench/`, outside the git repository):
+
+| File | Content |
+|---|---|
+| `raw.csv` | tidy/long: one row per (experiment, config, network, run, metric) — for plotting |
+| `summary.csv` | across-run point estimate and spread per config/network |
+| `tables.txt` | the four derived tables (also printed) |
+| `<run>.log` | full stdout of each run (holds the granted SM counts) |
+
+The four tables: **Exp 1** (latency vs SM share, ratio vs `whole`), **Exp 2**
+(per network median/p99/std + aggregate throughput), **residual interference**
+(concurrent ÷ isolated at the same SM count), and **jitter** (`std`, `p99 − median`,
+`max`). Derived numbers are computed by script, never by hand.
+
+---
+
+## 10. Experiment 3: MPS — and why it is not a green context
+
+Green Context and MPS are not two implementations of the same idea:
+
+| | Green Context | MPS |
+|---|---|---|
+| unit | an execution context **inside one process** | a *server* shared by several CUDA **processes** |
+| purpose | lightweight partitioning / resource control, usable within a process | co-schedule multiple processes and reduce the usual time-sharing between contexts |
+| disjointness | guaranteed only by a **joint** `cudaDevSmResourceSplit` in one process | server-managed partitions, hence exclusive across processes |
+| clients | 1 process, N contexts | N processes |
+
+**The consequence that shapes the experiment:** the two mechanisms cannot be run
+at the same process count. Two processes each creating their own green context
+are *not* guaranteed disjoint (§4.3), so Experiment 2 must stay in-process;
+MPS exists precisely for the multi-process case. A GC-vs-MPS comparison
+therefore carries a **process-model** difference — which is why Experiment 3
+*measures* that difference (`mps_off` = two plain processes) instead of
+assuming it away.
+
+### 10.1 The three phases, and what each buys
+
+| phase | configurations | what it buys |
+|---|---|---|
+| 1 | `mps_single`, `mps_off`, `mps_default` | the minimal comparison, plus the two controls that make it readable |
+| 2 | `mps_atp_50_50`, `mps_atp_75_25`, `mps_atp_25_75` | whether active-thread-percentage is a substitute for spatial partitioning (**it is not**: ATP limits the fraction of SM *thread slots*, not which SMs) |
+| 3 | `mps_static_50_50`, `…75_25`, `…25_75` | the true MPS analogue of a green context |
+
+`mps_single` (one process under MPS) is Experiment 3's `gc100`: it measures the
+**per-client cost** of routing through the MPS server, so that
+`mps_default − mps_off` can be read as co-scheduling rather than as
+co-scheduling *plus* overhead. The derived rows live in the
+`MPS EFFECTS` table, each pairing a control with a measurement.
+
+### 10.2 Alignment: the two processes share no clock
+
+Experiment 2 aligns its threads with an in-process `StartGate`. Two processes
+cannot: there is no shared memory to rendezvous in, so each starts its timed
+phase when **its own** warm-up ends. The skew is the difference in pre-timed
+work — 200 inferences × (0.53 ms MobileNet, 1.36 ms ResNet) ≈ **0.16 s out of
+30 s, i.e. ~0.5 %**. A `--start-at <monotonic deadline>` would make it exact and
+is the planned refinement; it is not needed to detect an effect large enough to
+matter. The caveat is printed on the Experiment 3 table so it cannot be
+forgotten.
+
+### 10.3 Static SM partitioning: what the installed stack supports
+
+**MPS is supported on Jetson AGX Orin from CUDA 12.5 / JetPack 6.1 onwards**
+(this board: CUDA 13.2, JetPack R39, and the daemon was confirmed to start and
+answer commands). It was **not** supported on Tegra before that, which is why
+older forum answers say the opposite. Tegra exceptions worth stating in the
+thesis:
+
+- GPU **compute modes are not supported** on Tegra (`nvidia-smi` reports
+  `Compute Mode : N/A`) — the same reason `EXCLUSIVE_PROCESS` cannot be used to
+  lock the board (§9.3);
+- MPS **client termination, CUDA IPC and cooperative launches** are not
+  supported with MPS on Tegra;
+- **one MPS server can only be active for one user at a time**. On this board
+  everyone shares the `nvidia` uid, so a private `CUDA_MPS_PIPE_DIRECTORY` is
+  what keeps our server from being joined by someone else's client (§10.4).
+
+The board exposes the **MPS v2 interface**:
+
+```
+nvidia-cuda-mps-control -d [-S]              -S enables static partitioning mode
+sm_partition add <device UUID> <n_chunks>
+sm_partition rm  <device UUID> <partition ID>
+lspart
+```
+
+**A chunk is 2 SMs on an integrated GPU** (Orin), on any architecture; it is
+4 SMs for Ampere dGPUs under MPS v2 and 8 for Hopper+. So this 16-SM device
+exposes **8 chunks**, which means **50/50, 75/25 and 25/75 are all exactly
+expressible — at the same 2-SM granularity as a green context.** That is a much
+fairer comparison than expected; had a chunk been 8 SMs, 75/25 would have been
+impossible on 16 SMs.
+
+`lspart`'s layout (the GPU and the partition are **separate columns** — the
+`GPU-<uuid>/<partition>` identifier a client needs does *not* appear as such):
+
+```
+GPU          Partition  free used  free used clients
+                           chunk chunk  SM   SM
+GPU-74d43ed3 -           0   10     0   80 -
+GPU-74d43ed3 Dx4AAAA...  -    5     -   40 Yes
+```
+
+Two traps the parser handles: the header spans **two** lines (the second,
+`chunk chunk SM SM`, otherwise looks like a partition row), and — because we
+query `lspart` *before* the clients attach — a freshly created partition may
+have its size in `free` rather than `used`, so the parser sums both columns.
+(The documented example has clients attached, which is why it only ever shows
+`used` filled.)
+
+Other established facts:
+
+- a client joins a partition by setting **`CUDA_MPS_SM_PARTITION`** in its
+  environment *before creating a CUDA context*, in the form
+  `GPU-<full-uuid>/<partition-id>` (the full UUID from `nvidia-smi -L` joined to
+  the partition string from `lspart`);
+- if static mode is on and that variable is missing, **context creation
+  fails** (`CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION`). This is the most
+  reassuring property of phase 3: a misconfigured run **dies loudly** instead of
+  silently measuring an unpartitioned GPU (contrast the *silent* green-context
+  oversubscription trap in §4.3);
+- partitions must be created **before** any client connects — the driver rejects
+  a static request once the device has active clients;
+- the SMs in a partition are exclusive to its clients and cannot be borrowed,
+  and over-allocation is refused;
+- **when static partitioning is enabled, active-thread-percentage is ignored**
+  — ATP and static partitions are mutually exclusive, which is the mechanism
+  behind the claim that ATP is *not* a substitute for spatial partitioning;
+- static partitioning cannot be combined with locality domains (Blackwell+,
+  so irrelevant here);
+- requires Ampere or newer (Orin is CC 8.7). The `sm_partition`/`lspart`
+  spelling is the v2 interface; MPS v3 uses a `sm-partition` module plus a TOML
+  configuration file, and partition-id encodings are **not** portable between
+  the two.
+
+### 10.4 Two operational traps
+
+- **`quit` terminates the MPS daemon.** It is a teardown command, never a way
+  to end a probe: using it in a probe loop silently kills the daemon, and the
+  next command reports *"Cannot find MPS control daemon process"*. The driver
+  uses it only to shut down.
+- **The pipe directory is the isolation boundary.** `sweep.sh` uses a private
+  `CUDA_MPS_PIPE_DIRECTORY` (`/tmp/mps-$USER`), which makes this daemon
+  invisible to every other user of the shared board: a client joins a server
+  only if it was told about the same directory. That is what makes running MPS
+  on a machine other people are using safe. The daemon is torn down by an
+  `EXIT` trap, so an aborted sweep cannot leave it running.
+
+---
+
+## 11. Open items
+
+- **Experiment 3 (MPS)** is written but **never executed**: `sweep.sh` supports
+  it (`--exp 3`, `--static-chunks <total>` for phase 3), validated by dry run and
+  by offline tests of the `lspart` parser against the documented layout. Phase 1
+  waits for the board; phase 3 additionally needs the real `lspart` output to
+  confirm the total chunk count (expected: 8).
+- **`--start-at`** is still unimplemented: the two-process runs are aligned to
+  ~0.5 % by warm-up symmetry rather than exactly (§10.2). Worth adding for the
+  final thesis-quality runs.
 - **CPU affinity.** The two concurrent networks run in two threads; pinning them
   to distinct cores would remove the one confound that in-process concurrency
   introduces.

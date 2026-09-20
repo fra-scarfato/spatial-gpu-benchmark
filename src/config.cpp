@@ -1,14 +1,14 @@
-// =====================================================================
+//
 // config.cpp — the command line.
 //
-// The parser, the usage text and the defaults in config.hpp all describe
-// the same thing (Options), so they live together: adding an option means
-// editing config.hpp (the field) and this file (the parser + the usage
-// text), with the two right next to each other.
+// The parser, the usage text and the defaults in config.hpp all describe the
+// same thing, so they live together: adding an option means editing config.hpp
+// for the field and this file for the parser and the usage text, with the two
+// right next to each other.
 //
-// Note that this file makes no CUDA call and touches no GPU state: it only
-// turns argv into an Options struct.
-// =====================================================================
+// Nothing here calls CUDA or touches GPU state. It only turns argv into an
+// Options struct.
+//
 
 #include "config.hpp"
 
@@ -19,9 +19,6 @@
 #include <string>
 #include <vector>
 
-// ---------------------------------------------------------------------
-// printUsage
-// ---------------------------------------------------------------------
 void printUsage(const char* prog) {
     std::cerr
         << "Usage:\n"
@@ -70,18 +67,22 @@ void printUsage(const char* prog) {
         << "  needs --one-pass.\n";
 }
 
-// ---------------------------------------------------------------------
-// parseArgs
-// ---------------------------------------------------------------------
 namespace {
 
+// Fetch the value that follows an option. It takes the loop index by reference
+// and advances it, so the caller's loop consumes both the option and its value;
+// forgetting that would silently treat the value as another option.
 std::string nextValue(int& i, int argc, char** argv, const std::string& arg) {
     if (i + 1 >= argc)
         throw std::runtime_error("missing value for " + arg);
     return argv[++i];
 }
 
-// <engine>:<percent>[:<label>]
+// Parse <engine>:<percent>[:<label>].
+//
+// The engine path may itself contain colons in principle, but the engine
+// extension never does, so the first colon always separates the path from the
+// percentage and the second, if there is one, introduces the label.
 NetworkOptions parseNetSpec(const std::string& spec) {
     const std::size_t c1 = spec.find(':');
     if (c1 == std::string::npos)
@@ -95,6 +96,8 @@ NetworkOptions parseNetSpec(const std::string& spec) {
     if (n.enginePath.empty())
         throw std::runtime_error("--net: empty engine path in: " + spec);
 
+    // The percentage runs from after the first colon to the second colon, or to
+    // the end of the string when there is no label.
     const std::string pct =
         spec.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
     n.smPercent = std::stoi(pct);
@@ -110,7 +113,9 @@ NetworkOptions parseNetSpec(const std::string& spec) {
 } // namespace
 
 Options parseArgs(int argc, char** argv) {
-    // --help wins over everything, including missing arguments.
+    // --help is checked first, over the raw argv, so that it works even when
+    // the rest of the command line is wrong or incomplete. Asking for help must
+    // never depend on having asked for everything else correctly.
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -123,7 +128,9 @@ Options parseArgs(int argc, char** argv) {
     bool positionalNetwork = false;
     int  i = 1;
 
-    // Backward-compatible positional form: <engine> <image_dir> ...
+    // The older positional form: <engine> <image_dir> ... — frontend passed, so
+    // the very first argument is the engine path. Anything starting with '-'
+    // means the caller used the --net form instead.
     if (i < argc && argv[i][0] != '-') {
         NetworkOptions n;
         n.enginePath = argv[i++];
@@ -155,6 +162,8 @@ Options parseArgs(int argc, char** argv) {
         else if (arg == "--min-duration")
             o.protocol.minDurationS = std::stod(nextValue(i, argc, argv, arg));
         else if (arg == "--one-pass") {
+            // Both bounds to zero is the "run one pass" signal; see Network's
+            // stop rule.
             o.protocol.minInferences = 0;
             o.protocol.minDurationS  = 0.0;
         } else if (arg == "--csv")
@@ -162,6 +171,10 @@ Options parseArgs(int argc, char** argv) {
         else if (arg == "--allocation")
             o.allocation = nextValue(i, argc, argv, arg);
         else if (arg == "--sm-percent") {
+            // Only meaningful for the positional form, where there is exactly
+            // one network to apply it to. In the --net form each network
+            // carries its own percentage, so accepting it here would be
+            // ambiguous — refuse rather than guess which network it meant.
             if (!positionalNetwork)
                 throw std::runtime_error(
                     "--sm-percent applies to the positional <engine> form; with "
@@ -172,6 +185,8 @@ Options parseArgs(int argc, char** argv) {
         }
     }
 
+    // Consistency checks. These are the combinations that would otherwise
+    // produce a run that looks fine and measures the wrong thing.
     if (o.networks.empty())
         throw std::runtime_error("no network given: pass <engine> or --net <engine>:<pct>");
     if (positionalNetwork && o.networks.size() > 1)
@@ -185,6 +200,10 @@ Options parseArgs(int argc, char** argv) {
     if (o.fixedInputs && o.numFixedInputs == 0)
         throw std::runtime_error("--fixed needs a set size of at least 1");
 
+    // Unlabelled networks still need a name, because the label is what keeps
+    // their output files apart: with several networks each writes
+    // <prefix>_<label>_latencies.csv, and two networks sharing a label would
+    // overwrite each other.
     for (std::size_t k = 0; k < o.networks.size(); ++k)
         if (o.networks[k].label.empty())
             o.networks[k].label = "net" + std::to_string(k + 1);

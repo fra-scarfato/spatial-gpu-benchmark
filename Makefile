@@ -37,7 +37,7 @@
 # inflates the numbers about 3.4x. See README.md.
 
 CXX      := g++
-CXXFLAGS := -O2 -std=c++17 -Wall
+CXXFLAGS := -O2 -std=c++20 -Wall
 INCDIR   := include
 SRCDIR   := src
 TARGET   := runner
@@ -58,9 +58,14 @@ HEADERS  := $(wildcard $(INCDIR)/*.hpp)
 # They are explicit rather than discovered on purpose: this is a shared lab
 # machine, and the build must not depend on an environment variable that
 # another user forgot to export.
+#
+# OpenCV is pulled in with -isystem rather than -I so that its headers count as
+# system headers and their warnings are not printed. Under C++20, OpenCV 4.8
+# emits a few hundred -Wdeprecated-enum-enum-conversion warnings of its own (it
+# predates that rule), which would otherwise bury any warning from our code.
 INCLUDES := -I$(INCDIR) \
             -I/usr/include/aarch64-linux-gnu \
-            -I/usr/include/opencv4 \
+            -isystem /usr/include/opencv4 \
             -I/usr/local/cuda/include
 LIBS     := -L/usr/local/cuda/targets/sbsa-linux/lib \
             -lnvinfer -lcudart \

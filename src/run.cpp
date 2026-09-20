@@ -1,14 +1,14 @@
-// =====================================================================
+//
 // run.cpp — a Run: the networks, the protocol and the results.
-// =====================================================================
+//
 
 #include "run.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <format>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -17,6 +17,9 @@
 
 namespace {
 
+// steady_clock, not system_clock: it is monotonic, so an NTP step during a
+// 30-second measurement window cannot make an elapsed time negative or absurd.
+// On Linux this maps to CLOCK_MONOTONIC.
 using Clock = std::chrono::steady_clock;
 
 double secondsSince(Clock::time_point t0) {
@@ -24,7 +27,8 @@ double secondsSince(Clock::time_point t0) {
 }
 
 // With one network the output keeps the plain name; with several, each network
-// gets its own suffix so the files never collide.
+// gets its own suffix so the files never collide. This is the whole reason the
+// label exists in the file names.
 std::string csvPrefixFor(const Options& opts, std::size_t index) {
     if (opts.networks.size() == 1)
         return opts.csvPrefix;
@@ -33,9 +37,6 @@ std::string csvPrefixFor(const Options& opts, std::size_t index) {
 
 } // namespace
 
-// =====================================================================
-// Network
-// =====================================================================
 Network::Network(const NetworkOptions& net,
                  std::unique_ptr<SmAllocation> allocation,
                  const Options& opts,
@@ -43,20 +44,25 @@ Network::Network(const NetworkOptions& net,
                  const std::vector<std::string>& images)
     : label_(net.label),
       allocation_(std::move(allocation)),
+      // engine_ is built before inputSet_ because declaration order decides,
+      // and inputSet_ needs engine_.inputVolume() to size itself.
       engine_(net.enginePath, *allocation_),
       inputSet_(opts, images, std::size_t(engine_.inputVolume())),
       spec_(spec),
       csv_(spec.csvPrefix + "_latencies.csv")
 {
+    // ofstream does not throw by default, so an unopened file looks like a
+    // working stream that silently discards every row.
     if (!csv_)
         throw std::runtime_error("cannot open " + spec.csvPrefix + "_latencies.csv");
     csv_ << "phase,index,image,prep_ms,wall_ms,gpu_ms\n";
 }
 
 Network::Sample Network::step(std::size_t index) {
-    // Fetch the input. In fixed mode this is pointer arithmetic — no disk, no
-    // decode, no preprocessing. In end-to-end mode it pays the full CPU cost,
-    // which is what prep_ms then measures.
+    // Fetch the input first, on its own, so that its cost can be attributed.
+    // In fixed mode this is pointer arithmetic — no disk, no decode, no
+    // preprocessing — so prep_ms is ~0 by construction. In end-to-end mode it
+    // pays the full CPU cost, which is exactly what prep_ms measures.
     const auto t0 = Clock::now();
     const float* input = inputSet_.at(index);
     const auto t1 = Clock::now();
@@ -65,6 +71,8 @@ Network::Sample Network::step(std::size_t index) {
     const double gpuMs = engine_.infer(input);
     const auto t2 = Clock::now();
 
+    // wall_ms spans t0..t2, so it covers the whole step; prep_ms covers t0..t1
+    // only, and is therefore a disjoint slice of it rather than extra time.
     Sample s;
     s.prepMs = float(std::chrono::duration<double, std::milli>(t1 - t0).count());
     s.wallMs = float(std::chrono::duration<double, std::milli>(t2 - t0).count());
@@ -73,14 +81,18 @@ Network::Sample Network::step(std::size_t index) {
 }
 
 void Network::writeRow(const char* phase, std::size_t index, const Sample& s) {
+    // "phase" separates warmup from bench so the warm-up curve stays in the
+    // file without contaminating the statistics. "image" is the input's id,
+    // which in fixed mode is a set index rather than a file name.
     csv_ << phase << "," << index << "," << inputSet_.idOf(index) << ","
          << s.prepMs << "," << s.wallMs << "," << s.gpuMs << "\n";
 }
 
 void Network::warmup() {
-    // Warm-up rows are recorded (so the warm-up curve is visible in the CSV)
-    // but excluded from the statistics: warm-up is not the steady state, and
-    // the steady state is what we characterise.
+    // Warm-up rows are written to the CSV so the ramp is visible, but they are
+    // never pushed into the statistics vectors: warm-up is not the steady
+    // state, and the steady state is what is being characterised. The first
+    // inference costs ~37 ms against a ~0.54 ms steady state.
     std::cout << "[info] warm-up: " << cfg::numWarmup << " inferences over "
               << inputSet_.count() << " distinct inputs\n";
 
@@ -89,10 +101,14 @@ void Network::warmup() {
 }
 
 void Network::measure(StartGate& gate) {
-    // The stop rule. A bound of 0 is disabled. With both bounds at 0 the loop
-    // makes a single pass over the input set — fast, for development.
-    // Otherwise it keeps cycling the set until BOTH bounds are satisfied, so
-    // a fast network is measured over the same window as a slow one.
+    // The stop rule. A bound of 0 disables it, and with both bounds at 0 the
+    // loop makes a single pass over the input set, which is the fast
+    // development mode.
+    //
+    // Both bounds are needed and they answer different questions: the count
+    // gives the percentiles enough samples, and the duration gives every
+    // configuration the same observation window, so a fast network is not
+    // measured over a shorter period than a slow one.
     const bool  enforce   = (spec_.minInferences > 0) || (spec_.minDurationS > 0.0);
     const std::size_t onePass = inputSet_.count();
 
@@ -112,8 +128,9 @@ void Network::measure(StartGate& gate) {
                   << " inferences (stop rule disabled)\n";
     }
 
-    // Every network waits here, so the timed phases start together. With one
-    // participant this returns immediately.
+    // Every network blocks here, so the timed phases begin together. With one
+    // participant it returns immediately, which is why the solo path needs no
+    // special case.
     gate.arriveAndWait();
 
     const auto t0 = Clock::now();
@@ -126,6 +143,8 @@ void Network::measure(StartGate& gate) {
         prepTimes_.push_back(s.prepMs);
         ++n;
 
+        // Checked on every iteration rather than only when the count is
+        // reached: the duration bound can be the first one satisfied.
         if (!enforce) {
             if (n >= onePass) break;
         } else {
@@ -133,13 +152,16 @@ void Network::measure(StartGate& gate) {
             if (n >= spec_.minInferences && elapsed >= spec_.minDurationS) break;
         }
 
+        // Progress only; printing every inference would cost more than the
+        // inference itself. std::format, not the sticky setprecision, so this
+        // cannot leave the stream in a state the table below inherits.
         if (n % 2000 == 0)
-            std::cout << "  ..." << n << " inferences, "
-                      << std::fixed << std::setprecision(1)
-                      << secondsSince(t0) << " s\n"
-                      << std::defaultfloat;
+            std::cout << std::format("  ...{} inferences, {:.1f} s\n",
+                                     n, secondsSince(t0));
     }
 
+    // The timed window is the loop's own elapsed time, not derived from the
+    // per-inference timings, so it stays correct even if a sample is dropped.
     timedCount_     = n;
     timedDurationS_ = secondsSince(t0);
     csv_.close();
@@ -147,21 +169,24 @@ void Network::measure(StartGate& gate) {
 
 void Network::report() const {
     std::cout << "\n=== LATENCY SUMMARY (timed phase) ===\n";
-    std::cout << "inferences: " << timedCount_
-              << "   duration: " << std::fixed << std::setprecision(2)
-              << timedDurationS_ << " s\n";
-    // Say it here too: this is where the numbers are read, and prep_ms ~0 is
-    // easy to misread as "preprocessing is instantaneous".
+    std::cout << std::format("inferences: {}   duration: {:.2f} s\n",
+                             timedCount_, timedDurationS_);
+    // Said here as well as at startup because this is where the numbers are
+    // read, and prep_ms ~0 is easy to misread as "preprocessing is
+    // instantaneous".
     if (inputSet_.isFixed())
         std::cout << "note: fixed-input mode. Preprocessing ran once at startup and is\n"
                      "      NOT part of these numbers: prep_ms is ~0 by construction and\n"
                      "      wall_ms covers exactly H2D + inference + D2H.\n";
-    std::cout << "\n" << std::defaultfloat;
+    std::cout << "\n";
     printStatsHeader();
     printStats("gpu compute (ms)",     computeStats(gpuTimes_));
     printStats("end-to-end wall (ms)", computeStats(wallTimes_));
     printStats("preprocess only (ms)", computeStats(prepTimes_));
 
+    // Two different throughputs, deliberately. The whole-loop figure is the
+    // one a scheduler would see; the GPU-only figure is 1/mean and is what the
+    // 30-second window would produce if nothing else existed.
     std::cout << "\nThroughput (whole loop): "
               << double(timedCount_) / timedDurationS_ << " inferences/s\n";
 
@@ -173,8 +198,9 @@ void Network::report() const {
 }
 
 void Network::writeStats() const {
-    // One row per metric; the run metadata is repeated on every row so a
-    // single row is self-contained.
+    // One row per metric, and the run metadata (count, duration) is repeated
+    // on every row so that a single row is self-contained — which is what lets
+    // aggregate.py read these files without cross-referencing anything else.
     const std::string path = spec_.csvPrefix + "_stats.csv";
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot open " + path);
@@ -182,41 +208,41 @@ void Network::writeStats() const {
     out << "metric,n,mean,median,std,p95,p99,max,min,p99_minus_median,"
         << "count,duration_s\n";
 
+    // An array of pairs rather than three near-identical blocks; the structured
+    // binding below unpacks it.
     const std::pair<const char*, const std::vector<float>*> rows[] = {
         {"gpu_ms",  &gpuTimes_},
         {"wall_ms", &wallTimes_},
         {"prep_ms", &prepTimes_},
     };
-    out << std::fixed << std::setprecision(6);
+    // The column count here has to match the header above exactly: this file is
+    // the contract with aggregate.py, which parses it positionally.
     for (const auto& [name, values] : rows) {
         const Stats s = computeStats(*values);
-        out << name << "," << s.n << "," << s.mean << "," << s.median << ","
-            << s.std << "," << s.p95 << "," << s.p99 << "," << s.max << ","
-            << s.min << "," << s.tail << "," << timedCount_ << ","
-            << timedDurationS_ << "\n";
+        out << std::format("{},{},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f},{:.6f},"
+                           "{:.6f},{:.6f},{},{:.6f}\n",
+                           name, s.n, s.mean, s.median, s.std, s.p95, s.p99,
+                           s.max, s.min, s.tail, timedCount_, timedDurationS_);
     }
 
     std::cout << "Stats written to: " << path << "\n";
 }
 
-// =====================================================================
-// Run
-// =====================================================================
 Run::Run(const Options& opts)
     : opts_(opts)
 {
-    // 1. The dataset, sorted so runs are deterministic and comparable. It is
-    //    listed ONCE and shared by every network, so both networks of a
-    //    concurrent run see exactly the same inputs.
+    // 1. The dataset. Listed ONCE and shared by every network, so both
+    //    networks of a concurrent run see exactly the same inputs. listImages
+    //    sorts, so the order is deterministic and two runs are comparable.
     images_ = inputs::listImages(opts_.imageDir);
     if (opts_.maxImages > 0 && images_.size() > opts_.maxImages)
         images_.resize(opts_.maxImages);
     if (images_.empty())
         throw std::runtime_error("no .JPEG files in " + opts_.imageDir);
 
-    // 2. Every SM allocation for the run, in ONE call: this must be the first
-    //    CUDA-touching step, and for green contexts it splits the device
-    //    jointly so the partitions are disjoint.
+    // 2. Every SM allocation for the run, in ONE call. This has to be the
+    //    first CUDA-touching step, and for green contexts it splits the device
+    //    jointly, which is what makes the partitions disjoint.
     std::vector<int> percents;
     percents.reserve(opts_.networks.size());
     for (const auto& n : opts_.networks)
@@ -225,8 +251,9 @@ Run::Run(const Options& opts)
     std::vector<std::unique_ptr<SmAllocation>> allocations =
         makeSmAllocations(opts_.allocation, percents);
 
-    // 3. One Network per engine. The allocations are already provisioned, so
-    //    building the networks only creates engines, buffers and streams.
+    // 3. One Network per engine. The allocations are already provisioned by
+    //    now, so building a network only creates an engine, buffers and a
+    //    stream — it never has to provision anything itself.
     for (std::size_t k = 0; k < opts_.networks.size(); ++k) {
         const RunSpec spec{opts_.protocol.minInferences,
                            opts_.protocol.minDurationS,
@@ -236,7 +263,9 @@ Run::Run(const Options& opts)
                                                   opts_, spec, images_));
     }
 
-    // 4. Say what we are about to measure.
+    // 4. Say what is about to be measured. This log is the record of the
+    //    configuration: the granted SM counts appear here, and the results
+    //    directory does not carry them anywhere else.
     std::cout << "[info] allocation:  " << opts_.allocation << "\n";
     for (const auto& n : nets_)
         std::cout << "[info] network '" << n->label() << "': " << n->allocationName()
@@ -254,15 +283,18 @@ Run::Run(const Options& opts)
 
 void Run::execute() {
     if (nets_.size() == 1) {
-        // Characterisation: nothing to align with, so the gate is a no-op.
+        // Characterisation: there is nothing to align with, so the gate is a
+        // one-participant no-op.
         nets_[0]->warmup();
         StartGate solo(1);
         nets_[0]->measure(solo);
         return;
     }
 
-    // Concurrent: warm-up and the timed phase both happen in parallel, so both
-    // networks reach a contended steady state before the gate releases them.
+    // Concurrent: each network gets its own thread, and BOTH the warm-up and
+    // the timed phase happen in parallel. Warming up in parallel matters — it
+    // means both networks reach a contended steady state before the gate
+    // releases them, rather than one of them warming up alone on a quiet GPU.
     std::cout << "[info] running " << nets_.size()
               << " networks concurrently, each on its own partition\n";
 
@@ -270,6 +302,9 @@ void Run::execute() {
     std::vector<std::thread> threads;
     threads.reserve(nets_.size());
     for (auto& n : nets_) {
+        // The two captures are deliberate: a raw pointer for the network,
+        // because a Network is not copyable and so cannot be captured by
+        // value, and the gate by reference so both threads share one gate.
         threads.emplace_back([p = n.get(), &gate] {
             p->warmup();
             p->measure(gate);
@@ -286,9 +321,11 @@ void Run::report() const {
     }
 
     if (nets_.size() > 1) {
-        // Aggregate throughput across the networks: total work over the window
-        // they actually shared. max(duration) is the window, because the gate
-        // released them together.
+        // Aggregate throughput: the total work over the window the networks
+        // actually shared. max(duration) is that window, because the gate
+        // released them together and each ran for its own measured duration.
+        // Dividing by the sum, or by the shorter duration, would invent
+        // throughput that never happened.
         std::size_t total   = 0;
         double      longest = 0.0;
         for (const auto& n : nets_) {
