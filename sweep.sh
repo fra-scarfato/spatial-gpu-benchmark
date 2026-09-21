@@ -37,8 +37,8 @@
 #
 # Usage:
 #   ./sweep.sh                     experiments 1 and 2 (~40 min)
-#   ./sweep.sh --exp 3             experiment 3 only
-#   ./sweep.sh --exp 1,2           a subset
+#   ./sweep.sh --exp mps           a subset: each entry is matched as a
+#   ./sweep.sh --exp isolated,mps  substring of the experiment name
 #   ./sweep.sh --static-chunks 8   also run the static-partition jobs, passing
 #                                  the device's TOTAL chunk count (read it off
 #                                  `lspart`; a chunk is 2 SMs on an iGPU, so a
@@ -97,7 +97,7 @@ MPS_MODE=off                    # off | on | static
 # 16-SM Orin has 8.
 STATIC_CHUNKS=0
 
-EXPS="1,2,3"
+EXPS="isolated,greenctx,mps"    # substrings; these three select everything
 FORCE=0
 DRY=0
 SMOKE=0
@@ -171,51 +171,65 @@ check_clocks() {
     [ "$ok" = 1 ]
 }
 
-# Names processes that look like they are doing GPU work. Returns non-zero if
-# it found any.
+# Who is holding the GPU's device nodes open? Returns non-zero if anyone is.
 #
-# This is a heuristic, and deliberately NOT the primary guard: it reads command
-# lines, so it misses a workload whose binary we don't recognise, and it could
-# in principle match a process that never touches the GPU. The sentinel — an
-# actual measurement — is what really decides. The scan exists for two reasons:
-# when the sentinel aborts, "who" is the most useful thing to print, and a named
-# co-tenant is somebody you can go and talk to.
+# This is the honest signal on Tegra. A CUDA process opens
+# /dev/nvgpu/igpu0/ctrl and /dev/nvmap (plus the DRM render node) and keeps them
+# open for its lifetime; a compiler opens none of them. Verified against our own
+# runner.
+#
+# Two traps this avoids:
+#   - /dev/nvidia* exists on this board but CUDA does NOT hold it, so a check for
+#     it would silently match nothing. (It did, on the first attempt.)
+#   - the MPS control daemon holds these nodes for its entire life without doing
+#     any GPU work, so it has to be excluded or the guard would fire forever.
+#
+# This replaced a command-line pattern match, which produced a false positive in
+# real use: a colleague's *compiler* was flagged because the source path it was
+# compiling happened to contain "green_ctx". Names guess; file descriptors do
+# not. The sentinel below is still the authority on whether the GPU is actually
+# contended — this only answers the narrower question of who is attached to it.
 other_gpu_users() {
-    local p c found=0
+    local p pid f t cmd hit found=0
     for p in /proc/[0-9]*; do
-        # A process can exit between the glob expanding and this read; that is
-        # normal, so skip it rather than failing.
-        [ -r "$p/cmdline" ] || continue
-        # cmdline is NUL-separated, so turn the NULs into spaces to get one
-        # readable line. An empty result means a kernel thread or an exiting
-        # process.
-        c=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
-        [ -n "$c" ] || continue
-        # Skip our own shell. A wrapper such as `bash -c './sweep.sh ...'` puts
-        # this script's text onto a command line, where it could match the
-        # patterns below and make the sweep report itself as an intruder.
-        case "$c" in *sweep.sh*) continue ;; esac
-        case "$c" in
-            *trtexec*|*green_ctx*|*polygraphy*|*benchmark.py*|*onnx*)
-                printf '          %s\n' "$c"
-                found=1 ;;
+        # Any of the device nodes counts; stop at the first one. A process can
+        # exit mid-scan, which is normal, so a failed readlink just means skip.
+        hit=""
+        for f in "$p"/fd/*; do
+            t=$(readlink "$f" 2>/dev/null) || continue
+            case "$t" in
+                /dev/nvgpu/*|/dev/nvmap|/dev/dri/renderD*) hit=1; break ;;
+            esac
+        done
+        [ -n "$hit" ] || continue
+
+        pid=$(basename "$p")
+        # cmdline is NUL-separated; turn the NULs into spaces for one readable
+        # line. Empty means a kernel thread or a process already exiting.
+        cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
+        [ -n "$cmd" ] || continue
+        # Ourselves, and the daemon, which is attached but idle by construction.
+        case "$cmd" in
+            *sweep.sh*|*nvidia-cuda-mps-control*|*nvidia-cuda-mps-server*) continue ;;
         esac
+        printf '          pid %-8s %s\n' "$pid" "$cmd"
+        found=1
     done
     [ "$found" = 0 ]
 }
 
-# "Is the GPU ours right now?" Two tests, cheapest first: the name scan above
-# (fast, but a heuristic) and then the sentinel (slow, authoritative). Returns
-# non-zero if either one says no.
+# "Is the GPU ours right now?" Two tests, cheapest first: the device-holder
+# scan above (fast and definitive about *attachment*) and then the sentinel
+# (slow and definitive about *contention*). Non-zero if either says no.
 require_quiet_gpu() {
     local scratch="$OUT/_sentinel" got ok
 
     if ! other_gpu_users; then
-        echo "[sweep] ABORT: another process looks like it is using the GPU." >&2
+        echo "[sweep] ABORT: another process has the GPU open (named above)." >&2
         echo "        Nothing was measured. Coordinate with the other user:" >&2
         echo "        a co-tenant benchmark inflates every latency several-fold." >&2
-        echo "        (If the named process is harmless, relax the patterns in" >&2
-        echo "        other_gpu_users -- do not just ignore it.)" >&2
+        echo "        (A compiler does not hold these devices, so if one is listed" >&2
+        echo "        it really is attached to the GPU.)" >&2
         return 1
     fi
 
@@ -325,8 +339,9 @@ mps_start() {  # $1 = on | static
 }
 
 # Called before a job is launched to bring the daemon into the mode that job
-# needs. Doing nothing when the mode already matches is what keeps the exp1/exp2
-# jobs (all mode "off") from paying for a daemon restart each time.
+# needs. Doing nothing when the mode already matches is what keeps the
+# unpartitioned experiments (all mode "off") from paying for a daemon restart
+# before every single run.
 mps_ensure() {  # $1 = off | on | static
     [ "$1" = "$MPS_MODE" ] && return 0
     mps_stop
@@ -462,9 +477,9 @@ add() { JOB_NAME+=("$1"); JOB_SPEC+=("$2"); }
 # cannot be blamed on the mechanism.
 for net in mobilenet resnet; do
     if [ "$net" = mobilenet ]; then eng="$MOB"; else eng="$RES"; fi
-    add "exp1_${net}_whole" "solo|off|||$RUNNER $eng $DS --allocation whole|"
+    add "isolated-scaling_${net}_whole" "solo|off|||$RUNNER $eng $DS --allocation whole|"
     for p in 100 75 50 25; do
-        add "exp1_${net}_gc${p}" \
+        add "isolated-scaling_${net}_gc${p}" \
             "solo|off|||$RUNNER $eng $DS --allocation greenctx --sm-percent $p|"
     done
 done
@@ -475,19 +490,19 @@ done
 # studied (a scheduler co-locates *different* workloads), and the mixed pair
 # yields each network's co-run latency at 4, 8 and 12 SMs — exactly the points
 # Experiment 1 measures in isolation.
-add "exp2_baseline" \
+add "concurrent-greenctx_baseline" \
     "solo|off|||$RUNNER --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
-    add "exp2_${mp}_${rp}" \
+    add "concurrent-greenctx_${mp}_${rp}" \
         "solo|off|||$RUNNER --dataset $DS --allocation greenctx --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
 done
 
 # Experiment 3: MPS, TWO processes.
 #
 # Phase 1, the minimal comparison plus the control that makes it readable:
-#   mps_single : one process under MPS, vs exp1 `whole` -> the per-client cost
+#   mps_single : one process under MPS, vs the isolated `whole` run
 #   mps_off    : two processes, no MPS                  -> the 2-process baseline
 #   mps_default: two processes under MPS                -> the co-scheduling effect
 #
@@ -497,16 +512,16 @@ done
 # vs 0.27 s ResNet) out of a 30 s window, so roughly 0.5%. A `--start-at`
 # deadline would make it exact; it is not needed to see an effect of the size
 # MPS would have to show in order to matter.
-add "exp3_mps_single"  "solo|on|||$RUNNER $MOB $DS --allocation whole|"
-add "exp3_mps_off"     "pair|off|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
-add "exp3_mps_default" "pair|on|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
+add "concurrent-mps_mps_single"  "solo|on|||$RUNNER $MOB $DS --allocation whole|"
+add "concurrent-mps_mps_off"     "pair|off|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
+add "concurrent-mps_mps_default" "pair|on|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
 
 # Phase 2: active thread percentage. This is NOT spatial partitioning. ATP
 # limits the fraction of the SM's thread slots a client may occupy, which scales
 # throughput but does not reserve particular SMs.
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
-    add "exp3_mps_atp_${mp}_${rp}" \
+    add "concurrent-mps_mps_atp_${mp}_${rp}" \
         "pair|on|CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=$mp|CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=$rp|$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
 done
 
@@ -521,34 +536,37 @@ done
 if [ "$STATIC_CHUNKS" -gt 0 ]; then
     for split in 50:50 75:25 25:75; do
         mp="${split%%:*}"; rp="${split##*:}"
-        add "exp3_mps_static_${mp}_${rp}" \
+        add "concurrent-mps_mps_static_${mp}_${rp}" \
             "pair|static|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole|$mp"
     done
 fi
 
-# Has this configuration already been measured? A pair counts as done only when
-# both of its stats files are present, otherwise a half-finished pair would be
-# skipped and look complete.
+# Has this configuration already been measured?
 #
-# The stats file is the completion marker, and it is written only at the very
-# end of a run. That is what makes an interrupted sweep safe to restart: a run
-# that was killed mid-measurement leaves its latency CSV behind but no stats
-# file, so it is not "done" and gets re-run as if it had never started.
-job_done() {  # $1 = output prefix, $2 = kind
-    if [ "$2" = solo ]; then
-        [ -f "$1_stats.csv" ]
-    else
-        [ -f "$1_mobilenet_stats.csv" ] && [ -f "$1_resnet_stats.csv" ]
-    fi
+# The number of stats files depends on how many NETWORKS a run has, not on how
+# many PROCESSES it uses — and getting that wrong caused a real bug. Experiment 2
+# is one process with two networks, so the runner writes two labelled files,
+# while this check (keyed on kind=solo) looked for a single unlabelled one. Every
+# Experiment 2 run therefore looked unfinished and was re-measured on every
+# restart: 20 wasted runs, about 12 minutes.
+#
+# Keying on the shape of the output instead of the job kind is what makes that
+# impossible. Either naming counts, a missing file means not-finished, and at
+# least one of the two is always written.
+#
+# The stats file is also the completion marker, written only at the very end of a
+# run. That is what makes an interrupted sweep safe to restart: a run killed
+# mid-measurement leaves its latency CSV behind but no stats file, so it is not
+# "done" and gets re-run as if it had never started.
+job_done() {  # $1 = output prefix
+    [ -f "$1_stats.csv" ] || \
+        { [ -f "$1_mobilenet_stats.csv" ] && [ -f "$1_resnet_stats.csv" ]; }
 }
 
-# Partial output but no stats file: somebody killed a run in flight.
-interrupted() {  # $1 = output prefix, $2 = kind
-    if [ "$2" = solo ]; then
-        [ -f "$1_latencies.csv" ] && [ ! -f "$1_stats.csv" ]
-    else
-        [ -f "$1_mobilenet_latencies.csv" ] && [ ! -f "$1_mobilenet_stats.csv" ]
-    fi
+# Partial output with no completion marker: somebody killed a run in flight.
+interrupted() {  # $1 = output prefix
+    job_done "$1" && return 1
+    [ -f "$1_latencies.csv" ] || [ -f "$1_mobilenet_latencies.csv" ]
 }
 
 do_job() {  # $1 = spec, $2 = output prefix
@@ -633,22 +651,35 @@ fi
 
 for r in $(seq 1 "$RUNS"); do
     for i in "${!JOB_NAME[@]}"; do
+        # Two names, deliberately different:
+        #   name  the full identity — for the log, and for the --exp filter
+        #   out   the path the files go to, which is shorter because the
+        #         directory already carries the experiment and the config
+        # So the tree is bench/<experiment>/mobilenet_gc50/r3_stats.csv, rather
+        # than one flat directory repeating the whole path in every file name.
+        # The experiment folders say what the experiment is — a reader learns
+        # nothing from "exp1", and the numbering can move as the thesis is
+        # written while the description cannot.
         name="${JOB_NAME[$i]}_r${r}"
-        out="$OUT/$name"
+        exp="${JOB_NAME[$i]%%_*}"          # isolated-scaling
+        cfg="${JOB_NAME[$i]#${exp}_}"      # mobilenet_gc50
+        out="$OUT/$exp/$cfg/r${r}"
 
-        # The --exp filter. ${name%%_*} strips everything from the first
-        # underscore on, giving exp1/exp2/exp3; ${exp#exp} then drops the
-        # prefix, leaving the bare number. The commas wrapped around both
-        # sides let "1,2,3" be matched exactly, without "1" also matching "11".
-        exp="${JOB_NAME[$i]%%_*}"
-        expn="${exp#exp}"
-        case ",$EXPS," in *",$expn,"*) ;; *) continue ;; esac
+        # The --exp filter. Each entry is a SUBSTRING of the experiment name, so
+        # `--exp mps` selects concurrent-mps without anyone having to remember
+        # the full folder name, and the default list selects all of them.
+        selected=0
+        IFS=',' read -ra want <<< "$EXPS"
+        for w in "${want[@]}"; do
+            case "$exp" in *"$w"*) selected=1; break ;; esac
+        done
+        [ "$selected" = 1 ] || continue
 
         # Kind and mps are needed here for the done-check and the dry-run
         # display; the command fields are only used by the dry run.
         IFS='|' read -r kind mps _eA _eB _cA _cB _ratio <<< "${JOB_SPEC[$i]}"
 
-        if job_done "$out" "$kind" && [ "$FORCE" = 0 ]; then
+        if job_done "$out" && [ "$FORCE" = 0 ]; then
             printf '[sweep] skip %s (already done)\n' "$name"
             continue
         fi
@@ -656,7 +687,7 @@ for r in $(seq 1 "$RUNS"); do
         # Start again from scratch, but say why: without this, a run appearing
         # twice in the log after a restart looks like a bug rather than the
         # resumability doing its job.
-        if interrupted "$out" "$kind"; then
+        if interrupted "$out"; then
             printf '[sweep] re-running %s (a previous attempt was interrupted)\n' "$name"
         fi
 
@@ -670,6 +701,10 @@ for r in $(seq 1 "$RUNS"); do
             fi
             continue
         fi
+
+        # The per-run directory has to exist before the runner opens its CSVs.
+        # Created here, after the dry-run branch, so a dry run stays a dry run.
+        mkdir -p "$(dirname "$out")"
 
         # Re-checked before every run, because interference that starts
         # mid-sweep is exactly what a single startup check would miss.

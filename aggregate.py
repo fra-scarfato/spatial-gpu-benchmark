@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """aggregate.py — turn the per-run statistics into the numbers the thesis needs.
 
-THE UNIT OF REPLICATION IS THE RUN, NOT THE INFERENCE. That single decision
-drives everything below:
+The unit of replication is the RUN, not the inference, and that single decision
+drives everything below.
 
   level 1 (within a run)  the runner has already summarised the run: its
-                          <name>_stats.csv holds median/mean/p99/std over the
-                          ~10k-60k inferences of that process. We read that.
+                          <name>_stats.csv holds median/mean/p99/std over that
+                          process's ~10k-60k inferences. We read that.
   level 2 (across runs)   the point estimate is the MEDIAN OF THE 5 RUN-LEVEL
                           VALUES, and the run-to-run spread is reported as
                           [min, max].
@@ -15,12 +15,20 @@ The tempting alternative -- pool every raw inference from the 5 runs into one
 vector and take its p99 -- is the classic pseudo-replication error: it treats
 ~300k correlated observations from 5 processes as independent, and therefore
 understates the uncertainty several-fold. The 5 fresh processes exist precisely
-to provide a between-run error bar, so the aggregation must expose it.
+to provide a between-run error bar, so the aggregation has to expose it.
 
-Outputs (into --out):
+Input layout — the runner writes the results as a tree, and the experiment and
+the configuration come from the DIRECTORY names, so the file names stay short:
+
+  <out>/<experiment>/<config>/r<run>[_<label>]_stats.csv
+  <out>/<experiment>/<config>/r<run>[_<label>]_latencies.csv
+  <out>/<experiment>/<config>/r<run>[_<label>].log
+
+Outputs, all into <out>/aggregate/ — derived numbers live beside the data, never
+mixed into them:
   raw.csv       tidy/long: one row per (experiment, config, network, run, metric)
   summary.csv   across-run point estimate and spread per config/network
-  tables.txt    the four derived tables, also printed to stdout
+  tables.txt    the derived tables, also printed to stdout
 """
 
 import argparse
@@ -31,20 +39,45 @@ import re
 import statistics as stats
 import sys
 
-# exp1_mobilenet_gc50_r3_stats.csv
-# exp2_50_50_r3_mobilenet_stats.csv
-NAME_RE = re.compile(
-    r'^(?P<exp>exp\d+)_(?P<config>.+?)_r(?P<run>\d+)'
-    r'(?:_(?P<net>mobilenet|resnet))?_stats\.csv$')
+# The file name carries only the run number and the optional network label:
+#
+#   r3_stats.csv             one network per process, or a process holding one
+#   r3_mobilenet_stats.csv   network — the runner adds a label only when a run
+#                            holds more than one network.
+#
+# The experiment and the configuration are NOT in the file name: they are the two
+# directory levels above it. That is what keeps these short and the tree
+# readable, and it is why the parser below walks paths rather than names.
+RUN_RE = re.compile(r'^r(?P<run>\d+)(?:_(?P<net>mobilenet|resnet))?_stats\.csv$')
 
+# Results-tree folder -> the short key used throughout this file.
+#
+# The folders are named for what the experiment is, because a directory called
+# "exp1" tells a reader nothing and the numbering can move as the thesis gets
+# written. The keys stay short here because they appear in every table function
+# below; only this mapping has to know the folder names.
+EXP_DIR = {
+    "isolated-scaling":    "exp1",
+    "concurrent-greenctx": "exp2",
+    "concurrent-mps":      "exp3",
+}
+
+# Only gpu_ms is plotted; wall_ms includes the host round trip and prep_ms is
+# zero by construction in fixed-input mode. All three are still carried through
+# to raw.csv so the choice can be revisited without re-running anything.
 METRICS = ("gpu_ms", "wall_ms", "prep_ms")
-# Column order written by Network::writeStats.
+
+# The column order Network::writeStats emits. Keeping it in one place means
+# read_stats and write_raw cannot drift apart.
 COLS = ("metric", "n", "mean", "median", "std", "p95", "p99", "max", "min",
         "p99_minus_median", "count", "duration_s")
 
-# The SM counts the configs asked for, as a percentage of the 16-SM device.
-# Percentages are what the protocol specifies and what was granted and verified
-# on this board (16 SMs, alignment 2: 25->4, 50->8, 75->12).
+# How many SMs each configuration asked for, as a percentage of the device.
+#
+# Percentages rather than SM counts because that is what the protocol specifies
+# and what the runner was told; the grant was read back and verified on this
+# board (16 SMs, alignment 2, so 25%->4, 50%->8, 75%->12, 100%->16). If the
+# board ever changes, these are the numbers to re-check against the logs.
 EXP1_PCT = {"whole": 100, "gc100": 100, "gc75": 75, "gc50": 50, "gc25": 25}
 EXP2_PCT = {"baseline": {"mobilenet": 100, "resnet": 100},
             "50_50":    {"mobilenet": 50,  "resnet": 50},
@@ -53,11 +86,8 @@ EXP2_PCT = {"baseline": {"mobilenet": 100, "resnet": 100},
 TOTAL_SMS = 16
 
 
-# ---------------------------------------------------------------------
-# Loading
-# ---------------------------------------------------------------------
 def read_stats(path):
-    """-> {metric: {col: float}}"""
+    """One run's stats file -> {metric: {column: value}}."""
     out = {}
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
@@ -66,18 +96,40 @@ def read_stats(path):
 
 
 def load(outdir):
-    """-> data[(exp, config, run)][network][metric] = {col: value}"""
+    """Read every stats file in a results tree.
+
+    Walks <outdir>/<experiment>/<config>/r<run>[_<label>]_stats.csv: the
+    experiment and the configuration come from the directory names, and only the
+    run number and the network label come from the file name.
+
+    The key is (exp, config, run) and not the file name because a single run of
+    Experiment 2 produces two files — one per network — that belong together:
+    they were measured in the same process during the same window, so pairing
+    them is what makes their comparison meaningful. Experiment 3 gets the same
+    pairing for a weaker reason: two processes, but launched together.
+    """
     data = {}
-    for path in sorted(glob.glob(os.path.join(outdir, "*_stats.csv"))):
-        m = NAME_RE.match(os.path.basename(path))
+    for path in sorted(glob.glob(os.path.join(outdir, "**", "*_stats.csv"),
+                                 recursive=True)):
+        m = RUN_RE.match(os.path.basename(path))
         if not m:
             continue
-        exp, config, run = m.group("exp"), m.group("config"), int(m.group("run"))
+        cfgdir = os.path.dirname(path)
+        config = os.path.basename(cfgdir)
+        # The folder names say what each experiment IS; this file keeps short
+        # keys, so the tables below and their lookup dictionaries do not have to
+        # change whenever a folder is renamed for readability.
+        exp = EXP_DIR.get(os.path.basename(os.path.dirname(cfgdir)))
+        if exp is None:
+            # Not inside the tree — a stray stats file at the top level, say.
+            continue
+        run = int(m.group("run"))
         net = m.group("net")
-        # exp1 encodes the network in the config name: "mobilenet_gc50".
-        # exp3's single-process control has no label either (the runner only
-        # adds one when there are several networks in the run), and it is the
-        # MobileNet client.
+        # When there is no label in the file name, the network has to be
+        # deduced. exp1 puts it in the config name ("mobilenet_gc50"), and
+        # exp3's single-process control is the MobileNet client. Anything else
+        # is a naming change we have not accounted for, so fail loudly rather
+        # than silently mislabelling a row.
         if net is None:
             if exp == "exp1":
                 net = config.split("_")[0]
@@ -90,8 +142,22 @@ def load(outdir):
     return data
 
 
+def runs_of(data, exp, config):
+    """Which run indices exist for this configuration."""
+    return {r for (e, c, r) in data if e == exp and c == config}
+
+
 def aggr(data, exp, config, net, metric, col):
-    """Across-run aggregate of one statistic -> (median, min, max, n_runs)."""
+    """Aggregate one statistic across the runs, -> (median, min, max, n_runs).
+
+    Returns None when there is nothing to aggregate, so callers can distinguish
+    "this configuration was not run" from "this configuration measured zero"
+    and skip the row instead of printing a misleading one.
+
+    Both the point estimate and the spread come from the RUN-LEVEL values: the
+    median of the five medians, not the median of the pooled samples. See the
+    module docstring for why that matters.
+    """
     vals = [data[(exp, config, r)][net][metric][col]
             for r in sorted(runs_of(data, exp, config))
             if (exp, config, r) in data and net in data[(exp, config, r)]]
@@ -100,18 +166,13 @@ def aggr(data, exp, config, net, metric, col):
     return stats.median(vals), min(vals), max(vals), len(vals)
 
 
-def runs_of(data, exp, config):
-    return {r for (e, c, r) in data if e == exp and c == config}
-
-
 def exp1_configs(net):
+    """The five Experiment 1 configurations for one network, in order."""
     return [f"{net}_{k}" for k in ("whole", "gc100", "gc75", "gc50", "gc25")]
 
 
-# ---------------------------------------------------------------------
-# Tables
-# ---------------------------------------------------------------------
 def hdr(title):
+    """A section heading padded out to a constant width, so the file scans."""
     return f"\n=== {title} " + "=" * max(0, 74 - len(title)) + "\n"
 
 
@@ -122,6 +183,8 @@ def table_exp1(data, lines):
     lines.append(f"  {'network':<10} {'config':<9} {'SMs':>4} "
                  f"{'median ms':>10} {'[min, max]':>18} {'ratio':>7} {'p99 ms':>8}")
     for net in ("mobilenet", "resnet"):
+        # The ratio is against this network's own unpartitioned run, so the
+        # number answers "what did restricting the SMs cost this model?".
         base = aggr(data, "exp1", f"{net}_whole", net, "gpu_ms", "median")
         for cfg in exp1_configs(net):
             a = aggr(data, "exp1", cfg, net, "gpu_ms", "median")
@@ -130,6 +193,8 @@ def table_exp1(data, lines):
                 continue
             med, lo, hi, n = a
             ratio = f"{med / base[0]:.3f}" if base else "-"
+            # cfg looks like "mobilenet_gc50"; split once, keep the tail, so
+            # the SM lookup does not care which network this is.
             sms = round(TOTAL_SMS * EXP1_PCT[cfg.split('_', 1)[1]] / 100)
             lines.append(f"  {net:<10} {cfg.split('_',1)[1]:<9} {sms:>4} "
                          f"{med:>10.4f} {'[' + format(lo, '.4f') + ',' + format(hi, '.4f') + ']':>18} "
@@ -147,12 +212,18 @@ def table_exp2(data, lines):
     for cfg in order:
         if not any((e, c) == ("exp2", cfg) for (e, c, _) in data):
             continue
+        # Throughput needs both networks, so it is computed per run and only
+        # then reduced. Dividing totals instead would weight a run that
+        # happened to last longer more heavily than the others.
         thr = []
         for r in sorted(runs_of(data, "exp2", cfg)):
             rec = data.get(("exp2", cfg, r))
             if not rec or len(rec) < 2:
                 continue
             cnt = sum(rec[n]["gpu_ms"]["count"] for n in rec)
+            # max(), not min(): the two networks shared the board for as long
+            # as the longer of them ran, and dividing by the shorter window
+            # would invent throughput that never existed.
             dur = max(rec[n]["gpu_ms"]["duration_s"] for n in rec)
             thr.append(cnt / dur)
         agg_thr = f"{stats.median(thr):.0f}" if thr else "-"
@@ -182,7 +253,8 @@ def table_residual(data, lines):
             conc = aggr(data, "exp2", cfg, net, "gpu_ms", "median")
             if conc is None:
                 continue
-            # baseline shares the whole GPU unpartitioned -> compare to `whole`
+            # The unpartitioned baseline shares the whole GPU, so its isolated
+            # reference is `whole`, not a green-context run.
             ref_cfg = f"{net}_whole" if cfg == "baseline" else \
                       f"{net}_gc{EXP2_PCT[cfg][net]}"
             iso = aggr(data, "exp1", ref_cfg, net, "gpu_ms", "median")
@@ -199,6 +271,8 @@ def table_jitter(data, lines):
     lines.append(hdr("JITTER - the tail is what a deadline sees"))
     lines.append(f"  {'network':<10} {'config':<12} {'std ms':>9} "
                  f"{'p99-med ms':>11} {'max ms':>9}")
+    # "iso" = Experiment 1 (alone), "conc" = Experiment 2 (sharing), so the two
+    # halves of the table can be read against each other line by line.
     for net in ("mobilenet", "resnet"):
         for cfg in exp1_configs(net):
             sd = aggr(data, "exp1", cfg, net, "gpu_ms", "std")
@@ -219,22 +293,23 @@ def table_jitter(data, lines):
     return lines
 
 
-# ---------------------------------------------------------------------
-# Experiment 3 — MPS, two processes
-#
-# Note the difference from Experiments 1-2: there, one runner process owns
-# both networks, so a single "run" yields a matched pair of stats files and the
-# two windows are identical by construction. Here the two networks are two
-# INDEPENDENT processes with no shared clock, so their windows are aligned only
-# to ~0.5% (the difference in warm-up length). Everything below therefore
-# aggregates the pair as one record, but the caveat is stamped on the table.
-# ---------------------------------------------------------------------
+# Experiment 3 is the one place where two networks are two INDEPENDENT
+# processes. In Experiments 1 and 2 a single process owns both networks, so one
+# run yields a matched pair of stats files and the two windows are identical by
+# construction. Here there is no shared clock, so the windows are aligned only
+# to the difference in warm-up length, about 0.5%. The pair is still aggregated
+# as one record; the caveat is stamped on the table so it cannot be forgotten.
 EXP3_ORDER = ["mps_single", "mps_off", "mps_default",
               "mps_atp_50_50", "mps_atp_75_25", "mps_atp_25_75",
               "mps_static_50_50", "mps_static_75_25", "mps_static_25_75"]
 
 
 def exp3_configs(data):
+    """Known configurations first, in a deliberate order; anything unknown after.
+
+    Sorting them so a half-finished sweep still produces a readable table, and
+    a configuration added later still shows up rather than being dropped.
+    """
     present = {c for (e, c, _) in data if e == "exp3"}
     return [c for c in EXP3_ORDER if c in present] + sorted(present - set(EXP3_ORDER))
 
@@ -278,19 +353,25 @@ def table_exp3(data, lines):
 
 
 def table_mps_effects(data, lines):
-    """The comparisons that need BOTH the MPS run and a reference.
+    """The comparisons that each need a control AND a measurement.
 
-    These are the rows that make Experiment 3 interpretable:
-      - MPS per-client cost: does MPS itself slow a lone client down? Without
-        this, `mps_default` vs `mps_off` cannot be attributed to co-scheduling.
-      - Process-model cost: two processes vs one, with no MPS on either side.
-        This is the measured bound on the GC-vs-MPS confound.
+    These rows are what make Experiment 3 interpretable, and they are the
+    reason the matrix contains configurations that are not themselves
+    interesting:
+      - MPS per-client cost: does MPS slow a lone client down? Without this,
+        mps_default vs mps_off cannot be attributed to co-scheduling, because
+        the difference could just as easily be MPS's own overhead.
+      - Process-model cost: two processes versus one, with no MPS on either
+        side. This is the measured bound on the green-context-vs-MPS confound,
+        which cannot be removed (those two mechanisms cannot run at the same
+        process count) but can at least be sized.
       - Co-scheduling: what MPS is actually for.
     """
     def med(exp, cfg, net):
         a = aggr(data, exp, cfg, net, "gpu_ms", "median")
         return a[0] if a else None
 
+    # (label, description, reference, measurement)
     checks = [
         ("MPS per-client cost", "mps_single vs isolated (both 1 process)",
          ("exp3", "mps_single", "mobilenet"), ("exp1", "mobilenet_whole", "mobilenet")),
@@ -303,11 +384,17 @@ def table_mps_effects(data, lines):
         ("MPS co-scheduling", "2 processes, MPS vs no MPS",
          ("exp3", "mps_default", "resnet"), ("exp3", "mps_off", "resnet")),
     ]
+    # ATP rows compare against mps_default rather than mps_off: the question is
+    # whether throttling the thread slots helps ON TOP of MPS, not whether it
+    # helps compared to no MPS at all.
     for cfg in ("mps_atp_50_50", "mps_atp_75_25", "mps_atp_25_75"):
         split = cfg[len("mps_atp_"):]
         for net in ("mobilenet", "resnet"):
             checks.append((f"ATP {split}", f"{net}: vs mps_default (no ATP)",
                            ("exp3", cfg, net), ("exp3", "mps_default", net)))
+    # The static rows are the cross-mechanism comparison, and the only place
+    # where the process-model difference is real: a green context is
+    # intra-process, a static MPS partition is inter-process.
     for cfg in ("mps_static_50_50", "mps_static_75_25", "mps_static_25_75"):
         split = cfg[len("mps_static_"):]
         for net in ("mobilenet", "resnet"):
@@ -340,10 +427,8 @@ def table_mps_effects(data, lines):
     return lines
 
 
-# ---------------------------------------------------------------------
-# Writing
-# ---------------------------------------------------------------------
 def write_raw(data, outdir):
+    """One row per (experiment, config, network, run, metric) — for plotting."""
     path = os.path.join(outdir, "raw.csv")
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -359,6 +444,13 @@ def write_raw(data, outdir):
 
 
 def write_summary(data, outdir):
+    """The across-run numbers in one row per config/network.
+
+    The column names are doubled on purpose: "median__median" is the median
+    (across runs) of the median (within a run), which is exactly the two-level
+    structure described in the module docstring. Collapsing that into a single
+    word would hide which level a number came from.
+    """
     path = os.path.join(outdir, "summary.csv")
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -388,8 +480,17 @@ def write_summary(data, outdir):
 def check_consistency(data, lines):
     """Flag runs whose median is a clear outlier among their siblings.
 
-    This is the after-the-fact safety net: a contaminated run usually shows up
-    as one run several times slower than the other four.
+    The after-the-fact half of the interference guard. The sentinel in
+    sweep.sh catches a busy board before a run starts, but it samples only 500
+    inferences and can miss a co-tenant that is between iterations; a
+    contaminated run, however, almost always shows up as one run several times
+    slower than the other four. So this is where contamination that slipped
+    past the sentinel gets noticed.
+
+    The 25% threshold is deliberately loose: it has to clear the normal
+    run-to-run drift (well under 1%) by a wide margin while still catching a
+    genuinely spoiled run. Fewer than three runs is skipped, because with two
+    values there is no "family" to compare against.
     """
     flagged = []
     for (exp, config) in {(e, c) for (e, c, _) in data}:
@@ -414,8 +515,9 @@ def check_consistency(data, lines):
     return lines
 
 
-# ---------------------------------------------------------------------
 def main():
+    # Defaulting relative to the script's own location, so the tool works from
+    # any working directory: the results live beside the runner, not here.
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=os.path.join(os.path.dirname(
@@ -425,14 +527,26 @@ def main():
 
     data = load(args.out)
     if not data:
-        sys.exit(f"no *_stats.csv found in {args.out}")
+        sys.exit(f"no *_stats.csv found under {args.out}")
 
+    # Derived numbers go in their own folder, so the tree above stays
+    # measurements only. Created on demand, which is also what gives the layout
+    # something to point at before anything has been run.
+    aggdir = os.path.join(args.out, "aggregate")
+    os.makedirs(aggdir, exist_ok=True)
+
+    # The number of distinct run indices, i.e. how many repetitions there are.
+    # Worth reporting, because less than 5 means the between-run spread is
+    # thinner than the protocol intends and the tables will look tighter than
+    # the data deserves.
     n_runs = len({r for (_, _, r) in data})
     print(f"[aggregate] {len(data)} runs, {n_runs} run index(es), from {args.out}")
     if n_runs < 5:
         print(f"[aggregate] NOTE: only {n_runs} run(s) per configuration. "
               "The protocol asks for 5.")
 
+    # Every table appends to one list of lines and returns it, so the tables
+    # can be reordered or skipped without touching how the text is emitted.
     lines = []
     table_exp1(data, lines)
     table_exp2(data, lines)
@@ -444,12 +558,12 @@ def main():
 
     text = "\n".join(lines) + "\n"
     print(text)
-    with open(os.path.join(args.out, "tables.txt"), "w") as fh:
+    with open(os.path.join(aggdir, "tables.txt"), "w") as fh:
         fh.write(text)
 
-    print(f"[aggregate] wrote {write_raw(data, args.out)}")
-    print(f"[aggregate] wrote {write_summary(data, args.out)}")
-    print(f"[aggregate] wrote {os.path.join(args.out, 'tables.txt')}")
+    print(f"[aggregate] wrote {write_raw(data, aggdir)}")
+    print(f"[aggregate] wrote {write_summary(data, aggdir)}")
+    print(f"[aggregate] wrote {os.path.join(aggdir, 'tables.txt')}")
 
 
 if __name__ == "__main__":

@@ -552,13 +552,26 @@ is no permission boundary either. `nvidia-smi --query-compute-apps` returns
 `N/A` on Tegra, `/sys/devices/gpu.0/load` does not exist, and `fuser /dev/nvidia*`
 reports nothing.
 
-So the board cannot be locked — it can only be **checked by measurement**:
+So the board cannot be locked — it can only be **checked**:
 
 | Layer | What | Cost |
 |---|---|---|
 | Preflight | clock check (`min == max`), then a calibration | ~2 s |
+| Device-holder scan, before every run | any process holding `/dev/nvgpu/*`, `/dev/nvmap` or `/dev/dri/renderD*` → abort | ms |
 | Sentinel before every run | a fixed 500-inference MobileNet run; median must match the 0.535 ms reference within ±15 %, else abort | ~1.3 s × 70 |
 | Post-hoc | `aggregate.py` flags any run whose median is > 25 % above its 4 siblings | free |
+
+The device scan is **not** a name heuristic. A CUDA process on this board opens
+`/dev/nvgpu/igpu0/ctrl` and `/dev/nvmap` (and the DRM render node) and keeps them open
+for its lifetime, whereas a compiler opens none of them. Two traps it has to avoid:
+`/dev/nvidia*` exists here but CUDA never holds it, so checking for it matches
+nothing (that was the first attempt); and the MPS control daemon holds these nodes
+for its whole life without doing GPU work, so it is excluded.
+
+**An earlier version matched on command-line text, and it failed in real use.** It
+flagged a colleague's *compiler* — `nvcc`/`cicc`, invoked on a source file whose
+*path* contained "green_ctx" — and aborted a sweep that was 113 runs in. Compiling
+does not touch the GPU. Names guess; file descriptors do not.
 
 Observed working: a co-tenant's `green_ctx_benchmark` inflated the median from
 0.53 to 2.83 ms, and the sentinel aborted the sweep with **+42 %** before any
@@ -584,19 +597,44 @@ correlated observations from only 5 processes as independent and understates
 the uncertainty several-fold. The 5 fresh processes exist precisely to provide
 a between-run error bar, so the aggregation must expose it.
 
-Outputs (into `../bench/`, outside the git repository):
+The results are a tree: one folder per experiment, one per configuration, with a
+run's files inside it. The point is that the file name only has to carry the run
+number — the directory already says which experiment and which configuration.
+
+```
+bench/
+├── isolated-scaling/     one network, alone, varying the SM budget
+│     mobilenet_whole/r1_latencies.csv   r1_stats.csv   r1.log    (10 configs)
+├── concurrent-greenctx/  two networks, ONE process, disjoint green contexts
+│     50_50/r3_latencies.csv   r3_mobilenet_stats.csv   …       (4 configs)
+├── concurrent-mps/       two networks, TWO processes, MPS
+│     mps_static_50_50/r3_mobilenet_stats.csv   …               (9 configs)
+└── aggregate/            raw.csv   summary.csv   tables.txt
+```
+
+The folder names say what each experiment *is* rather than which number it has
+in the thesis, because the numbering can move as the text is written and a
+directory called `exp1` tells a reader nothing. The analysis code keeps short
+internal keys and maps them once, in `aggregate.py`'s `EXP_DIR`.
+
+Data and derived numbers never mix: measurements live in the tree, everything
+generated from them lives in `aggregate/`.
+
+Outputs, all in `bench/aggregate/`:
 
 | File | Content |
 |---|---|
 | `raw.csv` | tidy/long: one row per (experiment, config, network, run, metric) — for plotting |
 | `summary.csv` | across-run point estimate and spread per config/network |
-| `tables.txt` | the four derived tables (also printed) |
+| `tables.txt` | the derived tables (also printed) |
 | `<run>.log` | full stdout of each run (holds the granted SM counts) |
 
-The four tables: **Exp 1** (latency vs SM share, ratio vs `whole`), **Exp 2**
+The tables: **Exp 1** (latency vs SM share, ratio vs `whole`), **Exp 2**
 (per network median/p99/std + aggregate throughput), **residual interference**
-(concurrent ÷ isolated at the same SM count), and **jitter** (`std`, `p99 − median`,
-`max`). Derived numbers are computed by script, never by hand.
+(concurrent ÷ isolated at the same SM count), **jitter** (`std`, `p99 − median`,
+`max`), plus **Exp 3** (the two-process MPS runs) and **MPS EFFECTS** (each row
+pairing a control with a measurement). Derived numbers are computed by script,
+never by hand.
 
 ---
 
