@@ -17,6 +17,15 @@ vector and take its p99 -- is the classic pseudo-replication error: it treats
 understates the uncertainty several-fold. The 5 fresh processes exist precisely
 to provide a between-run error bar, so the aggregation has to expose it.
 
+ONE EXCEPTION, and it is deliberate. The observed maximum is reduced with max
+over the runs, not with the median: the run-level `max` is the largest sample
+that run saw, so the maximum over the runs IS the maximum over every inference
+measured for the configuration (max of maxima = max of the union). Taking the
+median of five maxima would discard exactly the rare event the column exists to
+catch, because a stall usually spoils one run in five rather than all of them.
+Only this one column departs from the median-of-runs rule; obs_max() is the
+single place that does it, and everything else keeps the rule above.
+
 Input layout — the runner writes the results as a tree, and the experiment and
 the configuration come from the DIRECTORY names, so the file names stay short:
 
@@ -59,6 +68,12 @@ RUN_RE = re.compile(r'^r(?P<run>\d+)(?:_(?P<net>mobilenet|resnet))?_stats\.csv$'
 EXP_DIR = {
     "isolated-scaling":    "exp1",
     "concurrent-greenctx": "exp2",
+    # The work queue experiment is Experiment 2's setup with the work queue half
+    # of the green context descriptor set explicitly, so it belongs in the SAME
+    # tables: a devctx_8_50_50 row sitting next to the 50_50 row it must
+    # reproduce is the whole point of running it. Mapping two folders onto one
+    # key is what makes that free — the tables see one configuration space.
+    "concurrent-wq":       "exp2",
     "concurrent-mps":      "exp3",
 }
 
@@ -84,6 +99,55 @@ EXP2_PCT = {"baseline": {"mobilenet": 100, "resnet": 100},
             "75_25":    {"mobilenet": 75,  "resnet": 25},
             "25_75":    {"mobilenet": 25,  "resnet": 75}}
 TOTAL_SMS = 16
+
+# Experiment 2's original four configurations, and the work queue arms that
+# extend them. One list, built once, so the four tables that need it cannot
+# disagree about which configurations exist.
+EXP2_BASE = ("baseline", "50_50", "75_25", "25_75")
+WQ_ARMS   = (("devctx", "8"), ("balanced", "8"),
+             ("devctx", "2"), ("balanced", "2"),
+             ("devctx", "1"))
+WQ_SPLITS = ("50_50", "75_25")
+
+
+def exp2_configs(data):
+    """Every Experiment 2 configuration present, originals first.
+
+    Ordering is deliberate: the original rows appear before the work queue arms
+    that must reproduce them, so a reader can compare a row against the one it
+    is meant to match without hunting. Configurations never run are skipped
+    rather than shown empty, which is what keeps a partial sweep readable.
+    """
+    present = {c for (e, c, _) in data if e == "exp2"}
+    out = [c for c in EXP2_BASE if c in present]
+    for tag, lim in WQ_ARMS:
+        for split in WQ_SPLITS:
+            c = f"{tag}_{lim}_{split}"
+            if c in present:
+                out.append(c)
+    for lim in ("8", "2"):
+        c = f"unpart_{lim}"
+        if c in present:
+            out.append(c)
+    return out
+
+
+def exp2_pct(cfg):
+    """{network: SM percentage} for an Experiment 2 configuration.
+
+    The original four have a fixed table above; the work queue arms carry their
+    split in their own names (devctx_8_50_50 means MobileNet 50, ResNet 50), and
+    the unpartitioned pair shares the whole device. Reading the split back out of
+    the name is why that name has the shape it has.
+    """
+    if cfg in EXP2_PCT:
+        return EXP2_PCT[cfg]
+    if cfg.startswith("unpart_"):
+        return {"mobilenet": 100, "resnet": 100}
+    parts = cfg.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit() and parts[-2].isdigit():
+        return {"mobilenet": int(parts[-2]), "resnet": int(parts[-1])}
+    raise ValueError(f"cannot read an SM split out of the config name {cfg!r}")
 
 
 def read_stats(path):
@@ -147,8 +211,13 @@ def runs_of(data, exp, config):
     return {r for (e, c, r) in data if e == exp and c == config}
 
 
-def aggr(data, exp, config, net, metric, col):
-    """Aggregate one statistic across the runs, -> (median, min, max, n_runs).
+def aggr(data, exp, config, net, metric, col, how=stats.median):
+    """Aggregate one statistic across the runs, -> (point, min, max, n_runs).
+
+    `how` is the across-run reducer for the point estimate and defaults to the
+    median, which is the rule for every column but one. The observed maximum
+    passes max here -- through obs_max(), not directly -- for the reason in the
+    module docstring.
 
     Returns None when there is nothing to aggregate, so callers can distinguish
     "this configuration was not run" from "this configuration measured zero"
@@ -163,7 +232,25 @@ def aggr(data, exp, config, net, metric, col):
             if (exp, config, r) in data and net in data[(exp, config, r)]]
     if not vals:
         return None
-    return stats.median(vals), min(vals), max(vals), len(vals)
+    return how(vals), min(vals), max(vals), len(vals)
+
+
+def obs_max(data, exp, config, net, metric="gpu_ms"):
+    """The OBSERVED MAXIMUM of a configuration: max over the runs of the maxima.
+
+    Not the median of the run maxima. The run-level `max` is the largest sample
+    a run actually saw; a rare stall that costs a deadline normally shows up in
+    one run out of five, and the median of five values would drop it on the
+    floor. Because the maximum of a union is the maximum of the maxima, taking
+    max() over the runs gives exactly the maximum over all the inferences
+    pooled -- so this reads no extra data (the per-inference CSVs do not have to
+    be rescanned) and every other statistic keeps the run as its unit of
+    replication.
+
+    Returns None when the configuration has no runs, so callers can skip it.
+    """
+    a = aggr(data, exp, config, net, metric, "max", how=max)
+    return a[0] if a else None
 
 
 def exp1_configs(net):
@@ -206,9 +293,20 @@ def table_exp2(data, lines):
     lines.append(hdr("EXPERIMENT 2 - concurrent (MobileNet + ResNet), disjoint partitions"))
     lines.append("  Aggregate throughput = (count_mob + count_res) / max(duration) per run,\n"
                  "  median over the 5 runs.\n")
-    lines.append(f"  {'split':<10} {'network':<10} {'SMs':>4} {'median ms':>10} "
+    # Only mentioned when the work queue arms are actually present, so the
+    # original four-configuration table reads exactly as it did before.
+    if any(c.startswith(("devctx_", "balanced_", "unpart_"))
+           for (e, c, _) in data if e == "exp2"):
+        lines.append(
+            "  The devctx_*/balanced_* rows are the SAME configurations with the green\n"
+            "  context's work queue settings pinned in the name (scope_limit, the limit\n"
+            "  being both the declared concurrency and CUDA_DEVICE_MAX_CONNECTIONS), and\n"
+            "  unpart_* is the unpartitioned run at a pinned queue budget.\n"
+            "  devctx_8_50_50 must reproduce 50_50: if it does not, the path that sets\n"
+            "  the work queue configuration is wrong and the other arms mean nothing.\n")
+    lines.append(f"  {'split':<16} {'network':<10} {'SMs':>4} {'median ms':>10} "
                  f"{'p99 ms':>8} {'std ms':>8} {'tail ms':>8} {'agg inf/s':>10}")
-    order = ["baseline", "50_50", "75_25", "25_75"]
+    order = exp2_configs(data)
     for cfg in order:
         if not any((e, c) == ("exp2", cfg) for (e, c, _) in data):
             continue
@@ -235,8 +333,8 @@ def table_exp2(data, lines):
             p99 = aggr(data, "exp2", cfg, net, "gpu_ms", "p99")[0]
             sd = aggr(data, "exp2", cfg, net, "gpu_ms", "std")[0]
             tl = aggr(data, "exp2", cfg, net, "gpu_ms", "p99_minus_median")[0]
-            sms = round(TOTAL_SMS * EXP2_PCT[cfg][net] / 100)
-            lines.append(f"  {cfg:<10} {net:<10} {sms:>4} {med:>10.4f} "
+            sms = round(TOTAL_SMS * exp2_pct(cfg)[net] / 100)
+            lines.append(f"  {cfg:<16} {net:<10} {sms:>4} {med:>10.4f} "
                          f"{p99:>8.4f} {sd:>8.4f} {tl:>8.4f} {agg_thr:>10}")
         lines.append("")
     return lines
@@ -246,22 +344,22 @@ def table_residual(data, lines):
     lines.append(hdr("RESIDUAL INTERFERENCE - concurrent / isolated, same SM count"))
     lines.append("  Isolated = Experiment 1 at the same SM count. This is the number\n"
                  "  SM partitioning could NOT remove: memory bandwidth, L2, work queues.\n")
-    lines.append(f"  {'network':<10} {'split':<10} {'SMs':>4} "
+    lines.append(f"  {'network':<10} {'split':<16} {'SMs':>4} "
                  f"{'isolated':>10} {'concurrent':>11} {'overhead':>9}")
-    for cfg in ["baseline", "50_50", "75_25", "25_75"]:
+    for cfg in exp2_configs(data):
         for net in ("mobilenet", "resnet"):
             conc = aggr(data, "exp2", cfg, net, "gpu_ms", "median")
             if conc is None:
                 continue
-            # The unpartitioned baseline shares the whole GPU, so its isolated
-            # reference is `whole`, not a green-context run.
-            ref_cfg = f"{net}_whole" if cfg == "baseline" else \
-                      f"{net}_gc{EXP2_PCT[cfg][net]}"
+            # Unpartitioned configurations share the whole GPU, so their
+            # isolated reference is `whole`, not a green-context run.
+            pct = exp2_pct(cfg)[net]
+            ref_cfg = f"{net}_whole" if pct == 100 else f"{net}_gc{pct}"
             iso = aggr(data, "exp1", ref_cfg, net, "gpu_ms", "median")
             if iso is None:
                 continue
-            sms = round(TOTAL_SMS * EXP2_PCT[cfg][net] / 100)
-            lines.append(f"  {net:<10} {cfg:<10} {sms:>4} {iso[0]:>10.4f} "
+            sms = round(TOTAL_SMS * pct / 100)
+            lines.append(f"  {net:<10} {cfg:<16} {sms:>4} {iso[0]:>10.4f} "
                          f"{conc[0]:>11.4f} {100 * (conc[0] / iso[0] - 1):>8.1f}%")
         lines.append("")
     return lines
@@ -269,27 +367,31 @@ def table_residual(data, lines):
 
 def table_jitter(data, lines):
     lines.append(hdr("JITTER - the tail is what a deadline sees"))
-    lines.append(f"  {'network':<10} {'config':<12} {'std ms':>9} "
-                 f"{'p99-med ms':>11} {'max ms':>9}")
+    lines.append(f"  {'network':<10} {'config':<20} {'std ms':>9} "
+                 f"{'p99-med ms':>11} {'obs-max ms':>11}")
     # "iso" = Experiment 1 (alone), "conc" = Experiment 2 (sharing), so the two
     # halves of the table can be read against each other line by line.
+    #
+    # The last column is the observed maximum, i.e. max over the runs and not
+    # the median of the run maxima -- see obs_max. It is the one number here
+    # that is not a typical value, so it is labelled obs-max to say so.
     for net in ("mobilenet", "resnet"):
         for cfg in exp1_configs(net):
             sd = aggr(data, "exp1", cfg, net, "gpu_ms", "std")
             if sd is None:
                 continue
-            lines.append(f"  {net:<10} {'iso ' + cfg.split('_',1)[1]:<12} "
+            lines.append(f"  {net:<10} {'iso ' + cfg.split('_',1)[1]:<18} "
                          f"{sd[0]:>9.4f} "
                          f"{aggr(data,'exp1',cfg,net,'gpu_ms','p99_minus_median')[0]:>11.4f} "
-                         f"{aggr(data,'exp1',cfg,net,'gpu_ms','max')[0]:>9.4f}")
-    for cfg in ["baseline", "50_50", "75_25", "25_75"]:
+                         f"{obs_max(data,'exp1',cfg,net):>11.4f}")
+    for cfg in exp2_configs(data):
         for net in ("mobilenet", "resnet"):
             sd = aggr(data, "exp2", cfg, net, "gpu_ms", "std")
             if sd is None:
                 continue
-            lines.append(f"  {net:<10} {'conc ' + cfg:<12} {sd[0]:>9.4f} "
+            lines.append(f"  {net:<10} {'conc ' + cfg:<20} {sd[0]:>9.4f} "
                          f"{aggr(data,'exp2',cfg,net,'gpu_ms','p99_minus_median')[0]:>11.4f} "
-                         f"{aggr(data,'exp2',cfg,net,'gpu_ms','max')[0]:>9.4f}")
+                         f"{obs_max(data,'exp2',cfg,net):>11.4f}")
     return lines
 
 
@@ -349,6 +451,73 @@ def table_exp3(data, lines):
                 f"{aggr(data,'exp3',cfg,net,'gpu_ms','p99')[0]:>8.4f} "
                 f"{aggr(data,'exp3',cfg,net,'gpu_ms','std')[0]:>8.4f} {agg:>10}")
         lines.append("")
+    return lines
+
+
+def table_dispersion(data, lines):
+    """The dispersion view, with the observed maximum.
+
+    One row per (configuration, network). Every column except obs-max is the
+    median across the runs of that run-level statistic; obs-max is the maximum
+    over every inference measured for the configuration (see obs_max).
+
+    The `x iso` columns divide by the same network's isolated `whole` run of
+    Experiment 1 — the only reference that stays valid across experiments,
+    because Experiment 1 shows the isolated spread barely moves with the SM
+    budget (0.9-1.2x), so a single reference is enough to read every row
+    against, including the rows of Experiment 1 itself. Typical latency and
+    throughput are in the tables above.
+    """
+    lines.append(hdr("DISPERSION - spread, tail and observed maximum"))
+    lines.append(
+        "  All columns reduce across the 5 runs with the median, EXCEPT obs-max,\n"
+        "  which is the maximum over every inference measured for that configuration:\n"
+        "  a rare stall shows up in one run of five, and a median would drop it.\n"
+        "  `x iso` is against the same network's isolated `whole` run of Experiment 1.\n")
+    lines.append(f"  {'config':<20} {'network':<9} {'std':>8} {'x iso':>7} "
+                 f"{'p95':>8} {'p99':>8} {'tail':>8} {'x iso':>7} "
+                 f"{'obs-max':>8} {'x iso':>7}")
+
+    def ref(net, col):
+        """The isolated `whole` value of one statistic for this network."""
+        a = aggr(data, "exp1", f"{net}_whole", net, "gpu_ms", col)
+        return a[0] if a else None
+
+    def ratio(value, reference):
+        return f"{value / reference:.2f}x" if reference else "-"
+
+    def row(exp, cfg, net, label):
+        if aggr(data, exp, cfg, net, "gpu_ms", "median") is None:
+            return
+        sd  = aggr(data, exp, cfg, net, "gpu_ms", "std")[0]
+        p95 = aggr(data, exp, cfg, net, "gpu_ms", "p95")[0]
+        p99 = aggr(data, exp, cfg, net, "gpu_ms", "p99")[0]
+        tl  = aggr(data, exp, cfg, net, "gpu_ms", "p99_minus_median")[0]
+        mx  = obs_max(data, exp, cfg, net)
+        # The reference for obs-max has to be an observed maximum too, and not
+        # the isolated run's median-of-maxima: both sides of the ratio must be
+        # the same kind of number or the multiplier means nothing.
+        iso_max = obs_max(data, "exp1", f"{net}_whole", net)
+        lines.append(
+            f"  {label:<20} {net:<9} {sd:>8.4f} {ratio(sd, ref(net,'std')):>7} "
+            f"{p95:>8.4f} {p99:>8.4f} {tl:>8.4f} "
+            f"{ratio(tl, ref(net,'p99_minus_median')):>7} "
+            f"{mx:>8.4f} {ratio(mx, iso_max):>7}")
+
+    lines.append("  -- Experiment 1: isolated, one network")
+    for net in ("mobilenet", "resnet"):
+        for cfg in exp1_configs(net):
+            row("exp1", cfg, net, cfg.split("_", 1)[1])
+    lines.append("")
+    lines.append("  -- Experiment 2: two networks, one process, disjoint green contexts")
+    for cfg in exp2_configs(data):
+        for net in ("mobilenet", "resnet"):
+            row("exp2", cfg, net, cfg)
+    lines.append("")
+    lines.append("  -- Experiment 3: two processes, MPS")
+    for cfg in exp3_configs(data):
+        for net in ("mobilenet", "resnet"):
+            row("exp3", cfg, net, cfg)
     return lines
 
 
@@ -450,14 +619,18 @@ def write_summary(data, outdir):
     (across runs) of the median (within a run), which is exactly the two-level
     structure described in the module docstring. Collapsing that into a single
     word would hide which level a number came from.
+
+    observed_max is the one column NOT named that way, because it is not the
+    median of the run-level values: it is the maximum over the runs of the run
+    maxima, i.e. over every inference measured. See obs_max().
     """
     path = os.path.join(outdir, "summary.csv")
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["experiment", "config", "network", "n_runs",
                     "median__median", "median__min", "median__max",
-                    "p99__median", "std__median", "tail__median",
-                    "throughput_inf_s"])
+                    "std__median", "p95__median", "p99__median", "tail__median",
+                    "observed_max", "throughput_inf_s"])
         for (exp, config) in sorted({(e, c) for (e, c, _) in data}):
             nets = sorted({n for (e, c, r) in data if (e, c) == (exp, config)
                            for n in data[(e, c, r)]})
@@ -470,9 +643,11 @@ def write_summary(data, outdir):
                 tput = (thr[0] / dur[0]) if thr and dur else 0.0
                 w.writerow([exp, config, net, med[3],
                             f"{med[0]:.6f}", f"{med[1]:.6f}", f"{med[2]:.6f}",
-                            f"{aggr(data,exp,config,net,'gpu_ms','p99')[0]:.6f}",
                             f"{aggr(data,exp,config,net,'gpu_ms','std')[0]:.6f}",
+                            f"{aggr(data,exp,config,net,'gpu_ms','p95')[0]:.6f}",
+                            f"{aggr(data,exp,config,net,'gpu_ms','p99')[0]:.6f}",
                             f"{aggr(data,exp,config,net,'gpu_ms','p99_minus_median')[0]:.6f}",
+                            f"{obs_max(data,exp,config,net):.6f}",
                             f"{tput:.2f}"])
     return path
 
@@ -553,6 +728,7 @@ def main():
     table_residual(data, lines)
     table_jitter(data, lines)
     table_exp3(data, lines)
+    table_dispersion(data, lines)
     table_mps_effects(data, lines)
     check_consistency(data, lines)
 

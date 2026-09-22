@@ -59,6 +59,21 @@ void printUsage(const char* prog) {
         << "                        (default 100). With --net, put the percentage in\n"
         << "                        the --net spec instead.\n"
         << "\n"
+        << "Work queues (greenctx only; omitted means the descriptor carries SMs only):\n"
+        << "  --wq-scope <s>        sharing scope for each green context's work queues.\n"
+        << "                        'device_ctx' is the driver default: every context\n"
+        << "                        shares one set of queues, so independent work on\n"
+        << "                        different streams can land on the SAME queue and\n"
+        << "                        acquire a false dependency. 'green_ctx_balanced'\n"
+        << "                        asks the driver to give balanced green contexts\n"
+        << "                        non-overlapping queues where it can.\n"
+        << "  --wq-limit <N>        expected number of concurrent stream-ordered\n"
+        << "                        workloads, declared to the driver as a hint when it\n"
+        << "                        assigns queues. NOT a stream limit, and NOT\n"
+        << "                        CUDA_DEVICE_MAX_CONNECTIONS (that one bounds how many\n"
+        << "                        queues exist and is read from the environment before\n"
+        << "                        CUDA starts, so set it in the shell).\n"
+        << "\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -180,6 +195,21 @@ Options parseArgs(int argc, char** argv) {
                     "--sm-percent applies to the positional <engine> form; with "
                     "--net, put the percentage in the --net spec");
             o.networks[0].smPercent = std::stoi(nextValue(i, argc, argv, arg));
+        } else if (arg == "--wq-scope") {
+            // Validated here rather than at use, so a typo fails before a single
+            // inference is measured instead of silently falling back to the
+            // driver default. A silent fallback would produce an arm labelled
+            // 'balanced' that is really the control, which is the one failure
+            // mode that would invalidate the whole matrix while looking fine.
+            o.wqScope = nextValue(i, argc, argv, arg);
+            if (o.wqScope != "device_ctx" && o.wqScope != "green_ctx_balanced")
+                throw std::runtime_error(
+                    "--wq-scope expects device_ctx or green_ctx_balanced, got: " + o.wqScope);
+        } else if (arg == "--wq-limit") {
+            o.wqLimit = static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
+            if (o.wqLimit == 0)
+                throw std::runtime_error(
+                    "--wq-limit must be at least 1 (omit it to leave the driver default)");
         } else {
             throw std::runtime_error("unknown option: " + arg);
         }
@@ -199,6 +229,14 @@ Options parseArgs(int argc, char** argv) {
         throw std::runtime_error("--csv needs a non-empty prefix");
     if (o.fixedInputs && o.numFixedInputs == 0)
         throw std::runtime_error("--fixed needs a set size of at least 1");
+    // Work queue options configure a green context's descriptor, so with the
+    // unpartitioned allocation there is no descriptor to put them in. Refusing
+    // is the honest outcome: ignoring them would produce a run that looks like a
+    // work queue arm and measures plain whole-GPU contention.
+    if ((!o.wqScope.empty() || o.wqLimit != 0) && o.allocation != "greenctx")
+        throw std::runtime_error(
+            "--wq-scope/--wq-limit configure a green context, so they need "
+            "--allocation greenctx");
 
     // Unlabelled networks still need a name, because the label is what keeps
     // their output files apart: with several networks each writes

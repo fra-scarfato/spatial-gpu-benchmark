@@ -18,7 +18,8 @@ include/
   config.hpp      every parameter (compile-time cfg:: + run-time Options) and
                   the command-line declarations
   gpu.hpp         the GPU layer: Logger, PinnedHostBuffer, SmAllocation/WholeGpu,
-                  SmPartition, PartitionPlan, GreenContextAllocation, TrtEngine
+                  SmPartition, PartitionPlan, WqConfig, GreenContextAllocation,
+                  TrtEngine
   inputs.hpp      listImages, preprocess (the ImageNet input contract), InputSet
   stats.hpp       Stats + the statistics formatting (no CUDA, no images)
   run.hpp         RunSpec, StartGate, Network, Run
@@ -100,6 +101,8 @@ runner --dataset <dir> --net <engine>:<pct>[:<label>]  # one or more networks
 | `--csv <prefix>` | output prefix (default `bench`) |
 | `--allocation <name>` | `whole` (no partitioning) or `greenctx` |
 | `--sm-percent <P>` | with the positional form: SMs for `greenctx`, % of the device |
+| `--wq-scope <s>` | work queue sharing scope for each green context: `device_ctx` (the driver default: all contexts share one set of queues) or `green_ctx_balanced` (the driver tries to give balanced green contexts non-overlapping queues). **Omitted = no work queue resource in the descriptor at all**, which is what every run before Experiment 4 did |
+| `--wq-limit <N>` | how many concurrent stream-ordered workloads to declare to the driver, as a **hint** it consults when assigning queues. Not a stream limit. Needs `--allocation greenctx`. Distinct from `CUDA_DEVICE_MAX_CONNECTIONS`, which bounds how many queues exist and is read from the environment (§4.6) |
 
 Outputs: `<prefix>_latencies.csv` (one row per inference:
 `phase,index,image,prep_ms,wall_ms,gpu_ms`), `<prefix>_stats.csv` (one row per
@@ -200,6 +203,16 @@ samples — the same convention numpy uses, so the runner and a Python analysis
 of the CSV agree. For a real-time system the tail is the number that decides
 deadlines, which is why it is reported rather than buried.
 
+`max` is the **observed maximum** of that run: the largest sample it actually
+saw. The runner prints it as `obs-max` so it is never read as a worst-case
+bound; the CSV column keeps the short name `max` because the analysis and every
+file already on disk use it. Across runs it is the one statistic that is **not**
+reduced with the median — `aggregate.py:obs_max` takes the maximum over the runs
+instead, which is exactly the maximum over every inference measured, because the
+maximum of a union is the maximum of the maxima. Taking the median of five
+maxima would discard the rare stall the column exists to catch, and a stall
+normally spoils one run in five rather than all of them.
+
 ### 3.6 Lock the clocks — and check that they are locked
 
 The `nvhost_podgov` governor drops the GPU to **306 MHz** (from 1.3 GHz) when it
@@ -298,7 +311,59 @@ mind:
 - a constructor that throws does **not** run the destructor, so the green
   context is acquired last and nothing after it may throw.
 
-### 4.6 What green contexts do *not* do
+### 4.6 Work queues: the other resource a green context can partition
+
+SMs are one provisionable resource; **work queues are the other**. The guide's
+warning is why it matters:
+
+> If independent GPU work tasks (e.g., kernels submitted on different CUDA
+> streams) map to the same workqueue, a false dependence between these tasks may
+> be introduced, which can lead to their serialized execution.
+
+So disjoint SM partitions are not enough to make the work inside them overlap: if
+two contexts' streams share a queue, a kernel enqueued later waits for an earlier
+one even with every SM free. Experiment 3's `mps_off` is that failure mode at its
+most extreme — the two networks land within 0.03 % of each other on latency,
+which is what serialisation looks like.
+
+Three knobs, and conflating them is the easy mistake:
+
+| knob | what it is | where it lives |
+|---|---|---|
+| `sharingScope` | how queues are shared between contexts | the green context's resource descriptor |
+| `wqConcurrencyLimit` | how many concurrent stream-ordered workloads we *expect*, declared as a **hint** used when the driver assigns queues. Not a stream limit: `--wq-limit 1` does not mean "one stream" | same descriptor |
+| `CUDA_DEVICE_MAX_CONNECTIONS` | how many queue connections exist **at all** | the environment, read before CUDA initialises |
+
+`--wq-scope` and `--wq-limit` set the first two; the third is set by whoever
+launches the process (`sweep.sh`).
+
+**Measured on this board (CUDA 13.2), because the defaults are not what one would
+guess:**
+
+| condition | device-reported `wqConcurrencyLimit` | scope |
+|---|---|---|
+| one process, no MPS | **8** (the documented `CUDA_DEVICE_MAX_CONNECTIONS` default) | `device_ctx` |
+| `CUDA_DEVICE_MAX_CONNECTIONS=1` / `=32` | 1 / 32 (32 is the documented maximum) | `device_ctx` |
+| **under MPS**, nothing set | **2** | `device_ctx` |
+| under MPS, `CUDA_DEVICE_MAX_CONNECTIONS=8` | 8 | `device_ctx` |
+
+The third row is the one that bites: **the two concurrent experiments were run at
+different queue budgets without anyone choosing it** — 8 in the one-process
+green-context runs, 2 under MPS — so their dispersion differs in three things at
+once (the mechanism, the process model, and the budget). Unpicking that is what
+the `concurrent-wq` family exists for.
+
+**What the read-back proves, and what it does not.**
+`cudaExecutionCtxGetDevResource` returns what a live context was provisioned with,
+and every run logs it next to the granted SM count, so the log says which knobs
+were applied. It does **not** prove a particular queue assignment was achieved: the
+request is a hint, and *"the user has no direct control over the specific work
+queues that may be used under the hood"*. The guide is explicit that even with
+disjoint SMs **and** balanced queues, concurrency is not guaranteed — the
+techniques "remove factors which can prevent concurrent execution" rather than
+promising overlap.
+
+### 4.7 What green contexts do *not* do
 
 - They partition **SMs and (optionally) work queues — not memory bandwidth or
   L2**. NVIDIA's own framing of the goal is to *"reduce, or better control,
@@ -314,7 +379,7 @@ mind:
   shows the provisioned-resource bitmask if visual confirmation of disjointness
   is needed.
 
-### 4.7 CUDA graphs do not interfere here
+### 4.8 CUDA graphs do not interfere here
 
 A CUDA graph's *launch stream* does not determine the SMs; each kernel node
 carries the execution context it was created with. In standard TensorRT, graph
@@ -351,18 +416,20 @@ stream genuinely governs the work.
 ## 6. Measurements so far
 
 Board: Jetson AGX Orin 64 GB, 16 SMs, CC 8.7, clocks locked at 1.3005 GHz.
-Windows of 3 s, one run each — indicative; the protocol wants 5 runs per
-configuration. Run-to-run drift is ~0.5–1%.
+**Five runs per configuration, 30 s windows, one fresh process each**; every
+number is the median of the five run medians and the run-to-run spread is under
+1 % throughout. Raw data in `bench/`, derived tables in
+`bench/aggregate/tables.txt`.
 
 ### 6.1 Experiment 1 — one network, varying the SM budget (medians, ms)
 
 | SMs | MobileNet V2 | ResNet-50 v2 | linear model (16/N) |
 |---|---|---|---|
-| 16 (`whole`) | 0.5390 | 1.3607 | 1.00× |
-| 16 (gc 100%) | 0.5351 (1.01×) | 1.3564 (1.00×) | 1.00× |
-| 12 (gc 75%) | 0.5833 (1.10×) | 1.6027 (1.18×) | 1.33× |
-| 8 (gc 50%) | 0.6700 (1.26×) | 1.7723 (1.31×) | 2.00× |
-| 4 (gc 25%) | 1.0309 (1.93×) | 2.9727 (2.19×) | 4.00× |
+| 16 (`whole`) | 0.534 | 1.356 | 1.00× |
+| 16 (`gc100`) | 0.536 (1.00×) | 1.363 (1.01×) | 1.00× |
+| 12 (`gc75`) | 0.584 (1.09×) | 1.611 (1.19×) | 1.33× |
+| 8 (`gc50`) | 0.675 (1.26×) | 1.771 (1.31×) | 2.00× |
+| 4 (`gc25`) | 1.031 (1.93×) | 2.972 (2.19×) | 4.00× |
 
 `greenctx 100%` matches `whole` within 0.5%, so a full-size green context is a
 valid control. **The scaling is strongly sublinear**: halving the SMs costs
@@ -375,19 +442,19 @@ latency, so aggregate throughput rises.
 
 | split | SMs mob/res | MobileNet | ResNet | aggregate |
 |---|---|---|---|---|
-| 50 / 50 | 8 / 8 | 0.9095 | 2.0172 | 1439 /s |
-| 75 / 25 | 12 / 4 | 0.7133 | 3.3094 | 1480 /s |
-| 25 / 75 | 4 / 12 | 1.2831 | 1.8222 | 1269 /s |
-| **baseline, no partitioning** | 16 shared | 0.8664 | 1.8170 | **1587 /s** |
+| 50 / 50 | 8 / 8 | 0.909 | 2.021 | 1442 /s |
+| 75 / 25 | 12 / 4 | 0.713 | 3.309 | 1484 /s |
+| 25 / 75 | 4 / 12 | 1.286 | 1.813 | 1269 /s |
+| **baseline, no partitioning** | 16 shared | 0.892 | 1.803 | **1565 /s** |
 
 ### 6.3 Residual interference: concurrent ÷ isolated, same SM count
 
 | | MobileNet V2 | ResNet-50 v2 |
 |---|---|---|
-| 8 SMs | **+35.7%** | **+13.8%** |
-| 12 SMs | +22.3% | +13.7% |
-| 4 SMs | +24.5% | +11.3% |
-| unpartitioned baseline | +60.7% | +33.5% |
+| 8 SMs (50/50) | **+34.7%** | **+14.1%** |
+| 12 SMs (75/25) | +22.2% | +11.3% |
+| 4 SMs (25/75) | +24.7% | +12.6% |
+| unpartitioned baseline | +67.1% | +33.0% |
 
 **The point of the experiment:** partitioning does not eliminate interference —
 every disjoint configuration is still 11–36% slower than isolated — but it
@@ -395,16 +462,56 @@ halves the cost of the unpartitioned baseline. The residual is the interference
 that SM partitioning cannot remove (memory bandwidth, L2, work queues), which
 is exactly the gap the "green contexts are not MIG" caveat predicts.
 
-**Jitter is where it hurts most.** At 50/50, MobileNet's `std` went from
-0.0028 ms isolated to **0.0944 ms** under co-execution (34×), with
-`p99 − median` rising from 0.0071 to **0.2388 ms**, while ResNet stayed tight
-(0.0026 → 0.0147). Short kernels are far more exposed to interference jitter,
-which is a strong argument for why mean latency is the wrong headline metric.
+**Jitter is where it hurts most.** At 50/50, MobileNet's `std` goes from
+0.0025 ms isolated to **0.1013 ms** under co-execution (40.5×), with
+`p99 − median` rising from 0.0066 to **0.2734 ms**, while ResNet stays tight
+(0.0043 → 0.0178). At 75/25 MobileNet's tail multiplier reaches **56.9×**. Short
+kernels are far more exposed to interference jitter, which is a strong argument
+for why mean latency is the wrong headline metric.
 
 **Throughput vs predictability:** the unpartitioned baseline has the highest
-aggregate throughput (1587 /s) but the worst per-network latency and jitter.
-The 75/25 split beats 50/50 on aggregate (1480 vs 1439) because the faster
+aggregate throughput (1565 /s) but the worst per-network latency and jitter.
+The 75/25 split beats 50/50 on aggregate (1484 vs 1442) because the faster
 network gets more SMs — so the ratio itself is a tuning knob.
+
+### 6.4 Experiment 3 — two processes, MPS (medians, ms)
+
+| configuration | MobileNet | ResNet | aggregate |
+|---|---|---|---|
+| `mps_single` (control: one process under MPS) | 0.534 | — | 1683 /s |
+| `mps_off` (two processes, **no** MPS) | 2.076 | 2.077 | 934 /s |
+| `mps_default` (two processes, MPS) | 0.877 | 1.825 | 1585 /s |
+| ATP 50/50 · 75/25 · 25/75 | 1.369 · 0.759 · 1.459 | 2.262 · 3.505 · 1.870 | 1129 · 1491 · 1170 |
+| static 50/50 · 75/25 · 25/75 | 0.841 · 0.703 · 1.273 | 2.058 · 3.336 · 1.822 | 1561 · **1591** · 1275 |
+
+- **MPS's per-client cost is zero.** `mps_single` is 0.5342 against the isolated
+  `whole` run's 0.5342, identical to four decimal places, and the 5-run ranges
+  overlap.
+- **Without MPS the process model costs ~40 % of the throughput.** `mps_off`
+  serialises the two networks almost perfectly — they land 0.03 % apart, against
+  a 2.5× ratio in isolation.
+- **Static SM partitions beat ATP at every ratio** (38.6 % faster for MobileNet at
+  50/50, +38 % aggregate) *and* are tighter on every dispersion metric, so static
+  wins both axes rather than trading one for the other.
+- **Static and a green context agree on the median to within ±2 %** — five of six
+  comparisons sit inside the process-model bound (§9.4). That agreement is what
+  the work queue experiment exists to explain rather than merely record.
+
+### 6.5 Dispersion, and the observed maximum
+
+Partitioning shows up in the tail, not the median. MobileNet's `p99 − median`
+goes from 0.007 ms isolated to 0.273 ms at 50/50 and 0.404 ms at 75/25 — a 40–57×
+multiplier on the same GPU at the same SM budgets — while ResNet's moves by only
+3–5×. `mps_off` is the instructive outlier: its `std` is 16× isolated while its
+*tail* is 0.9×, because serialisation offsets the distribution instead of
+fattening it.
+
+The **observed maximum** (§3.5) is a different view, and the p99 does not bound
+it: it exceeds the p99 by up to 4.0× in the isolated MobileNet runs (2.7468 ms at
+8 SMs against a 0.6816 ms p99), and `mps_default` holds the worst single event in
+the campaign — 4.6940 ms for ResNet, 3.09× isolated. Per-configuration numbers
+with their `× iso` multipliers are in `bench/aggregate/tables.txt` (the
+DISPERSION block), which is also where the thesis tables come from.
 
 ---
 
@@ -490,39 +597,40 @@ network gets more SMs — so the ratio itself is a tuning knob.
 
 Two scripts, deliberately separate: `sweep.sh` only *measures*,
 `aggregate.py` only *analyses*. The analysis is therefore repeatable without
-re-running 37 minutes of GPU work.
+re-running two hours of GPU work.
 
 ### 9.1 The run matrix
 
-| # | Experiment | Configuration | Allocation |
+| Experiment | Configurations | Runs | Allocation |
 |---|---|---|---|
-| 1–5 | 1 | `whole` (baseline) | whole GPU |
-| 6–10 | 1 | `gc100` (control) | green context, 100 % |
-| 11–15 | 1 | `gc75` | green context, 75 % |
-| 16–20 | 1 | `gc50` | green context, 50 % |
-| 21–25 | 1 | `gc25` | green context, 25 % |
-| 26–50 | 1 | *the same five* | for ResNet-50 |
-| 51–55 | 2 | `baseline` | two networks, **no** partitioning |
-| 56–60 | 2 | `50_50` | mobilenet 50 % + resnet 50 % |
-| 61–65 | 2 | `75_25` | mobilenet 75 % + resnet 25 % |
-| 66–70 | 2 | `25_75` | mobilenet 25 % + resnet 75 % |
+| 1 `isolated-scaling` | `whole`, `gc100`, `gc75`, `gc50`, `gc25` × 2 networks | 10 | one network, alone |
+| 2 `concurrent-greenctx` | `baseline`, `50_50`, `75_25`, `25_75` | 4 | two networks, **one process**, disjoint green contexts |
+| 3 `concurrent-mps` | `mps_single`, `mps_off`, `mps_default`, `mps_atp_*`, `mps_static_*` | 6–9 | two networks, **two processes**, MPS |
+| 4 `concurrent-wq` | 5 arms × `50_50`/`75_25`, plus `unpart_8`/`unpart_2` | 12 | Experiment 2's setup with the work queue configuration pinned (§4.6) |
 
-**14 configurations × 5 runs = 70 fresh processes**, ≈ 40 minutes.
+**5 runs each.** Everything selected is 32 configurations / 160 runs, a bit over
+2 hours. Experiment 3's `mps_static_*` appear only with `--static-chunks <n>`,
+because the chunk count has to come off `lspart` on the real board first.
+
+The work queue family is deliberately **not** in the default selection: it is 60
+runs, and a routine re-run should not start it by accident. Ask for it:
+
+    ./sweep.sh --exp wq
 
 ### 9.2 Why these choices
 
 - **`gc100` is not redundant with `whole`.** It is the control that proves the
-green-context *mechanism* costs nothing (measured 0.5351 vs 0.5390 ms), so a
+green-context *mechanism* costs nothing (measured 0.536 vs 0.534 ms), so a
 slowdown at 75 % cannot be blamed on the mechanism itself.
 - **Experiment 2 uses a MIXED pair** (MobileNet + ResNet), not mob-mob/res-res.
 Three reasons: (i) a scheduler co-locates *different* workloads, so the mixed
 pair is the deployment actually studied; (ii) one mixed sweep yields each
 network's co-run latency at 4, 8 and 12 SMs — exactly the points Experiment 1
-measures in isolation; (iii) the **asymmetry is itself a result** (MobileNet
-+35.7 %, ResNet +13.8 %) — the lighter model suffers more because it has less
-work to hide the interference behind. Same-pairs would answer a different
-question (how residual interference scales with the co-tenant's weight) and are
-an extension, not the core.
+measures in isolation; (iii) the **asymmetry is itself a result** (at 50/50 the
+residual is +34.7 % for MobileNet against +14.1 % for ResNet) — the lighter model
+suffers more because it has less work to hide the interference behind. Same-pairs
+would answer a different question (how residual interference scales with the
+co-tenant's weight) and are an extension, not the core.
 - **Honest caveat for the thesis:** in a mixed pair the co-tenant's SM count
 moves with the split (at 75/25 MobileNet's co-tenant has only 4 SMs), so the
 three splits answer *"which ratio is best?"*, not *"interference at a fixed k
@@ -632,9 +740,12 @@ Outputs, all in `bench/aggregate/`:
 The tables: **Exp 1** (latency vs SM share, ratio vs `whole`), **Exp 2**
 (per network median/p99/std + aggregate throughput), **residual interference**
 (concurrent ÷ isolated at the same SM count), **jitter** (`std`, `p99 − median`,
-`max`), plus **Exp 3** (the two-process MPS runs) and **MPS EFFECTS** (each row
-pairing a control with a measurement). Derived numbers are computed by script,
-never by hand.
+`obs-max`), **Exp 3** (the two-process MPS runs), **DISPERSION** (`std`, `p95`,
+`p99`, `tail` and `obs-max`, each with an `× iso` multiplier against the isolated
+`whole` run, one row per configuration and network), and **MPS EFFECTS** (each row
+pairing a control with a measurement). The `obs-max` column is the observed
+maximum over every inference measured, never the median of the per-run maxima.
+Derived numbers are computed by script, never by hand.
 
 ---
 
@@ -774,24 +885,28 @@ Other established facts:
 
 ## 11. Open items
 
-- **Experiment 3 (MPS)** is written but **never executed**: `sweep.sh` supports
-  it (`--exp 3`, `--static-chunks <total>` for phase 3), validated by dry run and
-  by offline tests of the `lspart` parser against the documented layout. Phase 1
-  waits for the board; phase 3 additionally needs the real `lspart` output to
-  confirm the total chunk count (expected: 8).
+- **The work queue experiment** (§4.6, `concurrent-wq`) is staged and
+  smoke-tested but not yet swept: `--exp wq`, 60 runs. It is the current
+  question — whether the MobileNet tail difference between Experiments 2 and 3 is
+  a work queue configuration artefact, and whether the two experiments differ in
+  the queue budget as well as in the mechanism and the process model.
+- **The process-model bound has not been recomputed for the dispersion.** §6.2
+  bounds the process model at ±2 % on the *median*; the same two unpartitioned
+  rows differ by 3.03× on MobileNet's *tail*, which is the number the work queue
+  question turns on. `unpart_8` vs `unpart_2` in the new family does it at equal
+  queue budget.
 - **`--start-at`** is still unimplemented: the two-process runs are aligned to
-  ~0.5 % by warm-up symmetry rather than exactly (§10.2). Worth adding for the
-  final thesis-quality runs.
+  ~0.5 % by warm-up symmetry rather than exactly (§10.2).
 - **CPU affinity.** The two concurrent networks run in two threads; pinning them
-  to distinct cores would remove the one confound that in-process concurrency
-  introduces.
+  to distinct cores would remove the one confound in-process concurrency adds.
 - **Accuracy.** Not implemented. Needs the ImageNet ground-truth labels
   (`ILSVRC2012_validation_ground_truth.txt`, distinct from the class-name file
   already present), and is the natural companion to the end-to-end mode.
-- **MPS static partitioning** and **nvtaskset / libsmctrl** as alternative
-  mechanisms behind the same `SmAllocation` seam, for the comparison the thesis
-  promises.
-- **`--start-at <epoch>`** if the concurrent experiments are ever moved to two
-  processes.
+- **The auxiliary-stream census** — how many streams TensorRT actually adopts per
+  engine — is the prerequisite for choosing a defensible `wqConcurrencyLimit`
+  instead of guessing one, and for the multi-branch networks (Inception-v3, an
+  FPN detector) that would exercise it.
+- **nvtaskset / libsmctrl** as alternative mechanisms behind the same
+  `SmAllocation` seam, for the comparison the thesis promises.
 - **Nsight Compute** session page for a visual check of the provisioned-SM
   bitmask (the API exposes counts only).

@@ -102,6 +102,30 @@ struct Options {
     //                partitions are disjoint (CUDA 13.1+, granularity 2 SMs)
     std::string allocation = "whole";
 
+    // Green-context work queue configuration, for the experiment that studies
+    // the false-dependency problem.
+    //
+    // Two fields because they are two different knobs, and conflating them is
+    // the easy mistake:
+    //   wqScope  the cudaDevWorkqueueConfigScope of the work queue resource
+    //            placed in each green context's descriptor. "" means put no
+    //            such resource in the descriptor at all, which is what every run
+    //            up to and including Experiment 2 did, so those results stay
+    //            comparable and the new arms differ from them in one documented
+    //            way.
+    //   wqLimit  the wqConcurrencyLimit to declare: how many concurrent
+    //            stream-ordered workloads we tell the driver to expect. This is
+    //            a HINT the driver consults when assigning queues; it is not a
+    //            cap on the number of streams, and setting it to 1 does not
+    //            mean "one stream".
+    //
+    // Deliberately NOT CUDA_DEVICE_MAX_CONNECTIONS, which bounds how many work
+    // queue connections exist at all. That variable is read from the environment
+    // before CUDA initialises, so it stays a property of whoever launches the
+    // process (sweep.sh) rather than an option here.
+    std::string wqScope;      // "device_ctx" | "green_ctx_balanced" | ""
+    unsigned    wqLimit = 0;  // 0 = do not set one
+
     // The networks: one entry is solo, two is concurrent.
     std::vector<NetworkOptions> networks;
 };

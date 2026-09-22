@@ -68,9 +68,14 @@ Stats computeStats(std::vector<float> v) {
 // output full of stray decimals. A format string carries no state to leak, and
 // the widths are visible in one line instead of spread over twenty << operators.
 void printStatsHeader() {
+    // "obs-max" and not "max": the value is the largest sample THIS RUN
+    // actually measured, and the label has to carry the word observed so it is
+    // never read as a worst-case bound. The CSV column keeps the short name
+    // `max`, because every results file already on disk is written that way and
+    // the analysis reads that name; only the human-facing label changed.
     std::cout << std::format(
         "{:<24}{:>7}{:>12}{:>12}{:>12}{:>12}{:>12}{:>12}{:>12}{:>12}\n",
-        "metric", "n", "mean", "median", "std", "p95", "p99", "max", "min", "p99-med");
+        "metric", "n", "mean", "median", "std", "p95", "p99", "obs-max", "min", "p99-med");
     // 24 + 7 + eight 12-wide columns, so the rule matches the table exactly.
     std::cout << std::string(24 + 7 + 12 * 8, '-') << "\n";
 }

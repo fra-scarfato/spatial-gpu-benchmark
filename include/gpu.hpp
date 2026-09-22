@@ -173,6 +173,26 @@ private:
     int minPart_   = 2;
 };
 
+// The work queue half of a green context's resource descriptor.
+//
+// A green context can be provisioned with work queues as well as SMs, and the
+// guide's warning is precise: if independent work — kernels submitted on
+// different CUDA streams — maps to the SAME work queue, a false dependence
+// appears and the work is serialised even when SMs are free. The scope chooses
+// how the driver shares queues between contexts; the limit declares how many
+// concurrent stream-ordered workloads we expect, which the driver consults as a
+// hint when assigning them.
+//
+// `set == false` is the important case: the descriptor then carries the SM group
+// only, exactly as every run up to and including Experiment 2 did. That keeps
+// those results comparable and makes the new arms differ from them in one
+// documented way rather than in whatever the driver felt like doing.
+struct WqConfig {
+    bool                        set   = false;
+    cudaDevWorkqueueConfigScope scope = cudaDevWorkqueueConfigScopeDeviceCtx;
+    unsigned                    limit = 0;
+};
+
 // A green context provisioned with one group of SMs.
 //
 // The workflow, from the CUDA Programming Guide §4.6.4:
@@ -194,7 +214,7 @@ private:
 // really provisioned rather than what was requested.
 class GreenContextAllocation : public SmAllocation {
 public:
-    explicit GreenContextAllocation(const SmPartition& part);
+    explicit GreenContextAllocation(const SmPartition& part, const WqConfig& wq);
     ~GreenContextAllocation() override;
 
     // Not copyable: it owns a CUDA resource.
@@ -212,6 +232,7 @@ private:
     int                    totalSms_     = 0;
     int                    grantedSms_   = 0;
     cudaExecutionContext_t execCtx_      = nullptr;
+    WqConfig               wq_;          // as requested; the grant is logged only
 };
 
 // Build one allocation per network.
@@ -224,7 +245,7 @@ private:
 //
 // This must be the first CUDA-touching call in the process.
 std::vector<std::unique_ptr<SmAllocation>> makeSmAllocations(
-    const std::string& kind, const std::vector<int>& percents);
+    const std::string& kind, const std::vector<int>& percents, const WqConfig& wq);
 
 // The engine, its context, and its device buffers.
 //

@@ -25,6 +25,16 @@ void cudaCheck(cudaError_t err, const char* what) {
         throw std::runtime_error(std::string(what) + " failed: " + cudaGetErrorString(err));
 }
 
+// The driver's scope enum is not printable and the scope is the entire point of
+// the work queue experiment, so it gets a name for the log.
+const char* wqScopeName(cudaDevWorkqueueConfigScope scope) {
+    switch (scope) {
+        case cudaDevWorkqueueConfigScopeDeviceCtx:        return "device_ctx";
+        case cudaDevWorkqueueConfigScopeGreenCtxBalanced: return "green_ctx_balanced";
+        default:                                          return "(unknown)";
+    }
+}
+
 } // namespace
 
 void Logger::log(Severity severity, const char* msg) noexcept {
@@ -82,10 +92,28 @@ bool SmAllocation::enqueue(nvinfer1::IExecutionContext& ctx, cudaStream_t stream
 }
 
 std::vector<std::unique_ptr<SmAllocation>> makeSmAllocations(
-    const std::string& kind, const std::vector<int>& percents)
+    const std::string& kind, const std::vector<int>& percents, const WqConfig& wq)
 {
     if (percents.empty())
         throw std::runtime_error("makeSmAllocations needs at least one network");
+
+    // What the platform offers BEFORE we ask for anything, logged for EVERY
+    // allocation kind — including "whole", which gets no green context and
+    // therefore no descriptor to put a work queue configuration in, but whose
+    // streams still run within the device's queue budget. The default is the
+    // value of CUDA_DEVICE_MAX_CONNECTIONS (8 on this board, 2 under MPS), so
+    // this line is what makes each run's log say which budget it ran with. That
+    // was previously unknowable after the fact, and the two experiments we have
+    // were compared without it.
+    cudaCheck(cudaSetDevice(0), "cudaSetDevice");
+    cudaDevResource deviceWq{};
+    if (cudaDeviceGetDevResource(0, &deviceWq, cudaDevResourceTypeWorkqueueConfig) == cudaSuccess &&
+        deviceWq.type == cudaDevResourceTypeWorkqueueConfig)
+        std::cout << "[info] work queue default: limit "
+                  << deviceWq.wqConfig.wqConcurrencyLimit << ", scope "
+                  << wqScopeName(deviceWq.wqConfig.sharingScope) << "\n";
+    else
+        std::cout << "[info] work queue default: not queryable on this device\n";
 
     if (kind == "whole") {
         // No partitioning: every network is simply on the GPU, and they
@@ -98,6 +126,10 @@ std::vector<std::unique_ptr<SmAllocation>> makeSmAllocations(
     }
 
     if (kind == "greenctx") {
+        if (wq.set)
+            std::cout << "[info] work queue requested: limit " << wq.limit
+                      << ", scope " << wqScopeName(wq.scope) << "\n";
+
         // ONE joint split for every network, so the groups are disjoint by
         // construction. The plan only has to outlive the loop below, since
         // each GreenContextAllocation copies what it needs as it is built.
@@ -116,7 +148,7 @@ std::vector<std::unique_ptr<SmAllocation>> makeSmAllocations(
         std::vector<std::unique_ptr<SmAllocation>> out;
         out.reserve(plan.size());
         for (std::size_t i = 0; i < plan.size(); ++i)
-            out.push_back(std::make_unique<GreenContextAllocation>(plan[i]));
+            out.push_back(std::make_unique<GreenContextAllocation>(plan[i], wq));
         return out;
     }
 
@@ -220,28 +252,47 @@ std::string PartitionPlan::summary() const {
 // has to be the first CUDA-touching call for that context in the process.
 //
 // Exception safety: a constructor that throws does NOT run the destructor, so
-// the green context is created LAST and nothing after it may throw. That is
-// why the readback below ignores its own error instead of checking it.
-GreenContextAllocation::GreenContextAllocation(const SmPartition& part)
+// the green context is created LAST and nothing after it may throw. That is why
+// the READBACKS below ignore their own errors instead of checking them.
+GreenContextAllocation::GreenContextAllocation(const SmPartition& part, const WqConfig& wq)
     : percent_(part.percent),
       requestedSms_(part.requestedSms),
       totalSms_(part.totalSms),
-      grantedSms_(part.grantedSms)
+      grantedSms_(part.grantedSms),
+      wq_(wq)
 {
-    // Finalise the specification, then provision the SMs. The resource itself
-    // came from PartitionPlan, which did the joint split.
+    // Finalise the specification, then provision the SMs and, if asked, the work
+    // queues. The SM resource came from PartitionPlan, which did the joint split.
     //
     // The copy is not redundant: the API takes a mutable pointer and may write
     // through it, and `part` is const.
-    cudaDevResource group = part.resource;
+    //
+    // With wq_.set the descriptor carries a SECOND resource, the work queue
+    // configuration. There is no split API for that one: its fields are set in
+    // place on a resource fetched from the device, and at most one may be present
+    // in a descriptor.
+    cudaDevResource resources[2] = {part.resource, {}};
+    unsigned numResources = 1;
+    if (wq_.set) {
+        resources[1].type                        = cudaDevResourceTypeWorkqueueConfig;
+        resources[1].wqConfig.device             = 0;
+        resources[1].wqConfig.sharingScope       = wq_.scope;
+        resources[1].wqConfig.wqConcurrencyLimit = wq_.limit;
+        numResources = 2;
+    }
     cudaDevResourceDesc_t desc{};
-    cudaCheck(cudaDevResourceGenerateDesc(&desc, &group, 1),
+    // Both of these throw BEFORE the green context exists, so a failure leaves
+    // nothing behind. Every CUDA call after the create must not throw.
+    cudaCheck(cudaDevResourceGenerateDesc(&desc, resources, numResources),
               "cudaDevResourceGenerateDesc");
     cudaCheck(cudaGreenCtxCreate(&execCtx_, desc, /*device=*/0, 0), "cudaGreenCtxCreate");
 
-    // Ask what we actually got. The driver may round or align, so the grant is
-    // recorded rather than the request; if the query fails we keep the number
-    // the split reported, which is the best information available.
+    // Ask what we actually got, for the SMs and for the work queues. The driver
+    // may round or align the SMs; for the queues, what comes back is what the
+    // context was PROVISIONED with, which is not proof that a particular queue
+    // assignment was achieved — the whole request is a hint. It is proof that the
+    // knob was applied, which is what this line is for. If either query fails we
+    // keep what we already knew, which is the best information available.
     cudaDevResource got{};
     if (cudaExecutionCtxGetDevResource(execCtx_, &got, cudaDevResourceTypeSm) == cudaSuccess &&
         got.type == cudaDevResourceTypeSm)
@@ -249,6 +300,17 @@ GreenContextAllocation::GreenContextAllocation(const SmPartition& part)
 
     std::cout << "[info] green context: " << percent_ << "% requested, "
               << grantedSms_ << " of " << totalSms_ << " SMs provisioned\n";
+
+    cudaDevResource gotWq{};
+    if (wq_.set &&
+        cudaExecutionCtxGetDevResource(execCtx_, &gotWq, cudaDevResourceTypeWorkqueueConfig) == cudaSuccess &&
+        gotWq.type == cudaDevResourceTypeWorkqueueConfig)
+        std::cout << "[info] green context: work queues granted limit "
+                  << gotWq.wqConfig.wqConcurrencyLimit << ", scope "
+                  << wqScopeName(gotWq.wqConfig.sharingScope)
+                  << " (requested " << wq_.limit << ", " << wqScopeName(wq_.scope) << ")\n";
+    else if (wq_.set)
+        std::cout << "[info] green context: work queue grant not queryable\n";
 }
 
 GreenContextAllocation::~GreenContextAllocation() {

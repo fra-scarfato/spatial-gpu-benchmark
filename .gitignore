@@ -1,0 +1,27 @@
+# The binary. A build product of `make`, ~230 KB, and regenerated on every
+# build: committing it turns each rebuild into a diff of unreadable bytes and
+# says nothing about whether the source changed.
+runner
+
+# Object files and other build leftovers.
+*.o
+*.d
+
+# Profiling output. ncu and nsys reports are megabytes of binary that are
+# regenerated rather than kept, and their names are not stable.
+*.ncu-rep
+*.nsys-rep
+*.sqlite*
+
+# Python bytecode from aggregate.py.
+__pycache__/
+*.pyc
+
+# Logs from a redirected sweep. The real results tree is bench/, outside this
+# repository, so anything logged here is scratch.
+*.log
+
+# Editor and shell leftovers.
+*~
+*.swp
+.vscode/

@@ -39,6 +39,8 @@
 #   ./sweep.sh                     experiments 1 and 2 (~40 min)
 #   ./sweep.sh --exp mps           a subset: each entry is matched as a
 #   ./sweep.sh --exp isolated,mps  substring of the experiment name
+#   ./sweep.sh --exp wq            the work queue experiment (not in the default
+#                                  set: 60 runs, asked for explicitly)
 #   ./sweep.sh --static-chunks 8   also run the static-partition jobs, passing
 #                                  the device's TOTAL chunk count (read it off
 #                                  `lspart`; a chunk is 2 SMs on an iGPU, so a
@@ -97,7 +99,9 @@ MPS_MODE=off                    # off | on | static
 # 16-SM Orin has 8.
 STATIC_CHUNKS=0
 
-EXPS="isolated,greenctx,mps"    # substrings; these three select everything
+EXPS="isolated,greenctx,mps"    # substrings. The work queue experiment is NOT
+                                # in this list on purpose: it is 60 runs, so it
+                                # is asked for explicitly with --exp wq
 FORCE=0
 DRY=0
 SMOKE=0
@@ -540,6 +544,58 @@ if [ "$STATIC_CHUNKS" -gt 0 ]; then
             "pair|static|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole|$mp"
     done
 fi
+
+# The work queue experiment: Experiment 2's setup with the work queue half of
+# the green context descriptor set EXPLICITLY instead of inherited.
+#
+# Experiment 2 never put a work queue resource in the descriptor at all, so every
+# run of it used the driver default: all contexts sharing one set of queues, with
+# a concurrency limit of CUDA_DEVICE_MAX_CONNECTIONS. Measured on this board that
+# default is 8 normally and 2 under MPS — they are not the same, which is why
+# this is an experiment rather than an assumption.
+#
+# The hypothesis is the guide's own warning: independent work on different
+# streams that maps to the SAME work queue acquires a false dependence and is
+# serialised even when SMs are free. MobileNet's kernels are short and numerous,
+# so it submits far more often per unit of work than ResNet, and it is the
+# network that should show the effect.
+#
+# Three knobs have to be distinguished, and only two of them are runner options:
+#   --wq-scope  how the driver shares queues between contexts
+#   --wq-limit  the concurrency declared to the driver as a HINT (not a stream
+#               limit, and not a cap on anything)
+#   CUDA_DEVICE_MAX_CONNECTIONS is a different thing again: it bounds how many
+#   queues exist at all, is read from the environment before CUDA initialises,
+#   and therefore lives in the env field of the spec. Both knobs are pinned in
+#   every arm so the arms stay comparable.
+#
+# Five arms x two splits = the 2x2 factorial on (scope, limit) plus the
+# limit-1 negative control. `devctx_8` must reproduce Experiment 2's numbers; if
+# it does not, the code path is wrong and the rest is uninterpretable.
+#
+# Select with:  ./sweep.sh --exp wq
+for split in 50:50 75:25; do
+    mp="${split%%:*}"; rp="${split##*:}"
+    for arm in devctx:8:device_ctx balanced:8:green_ctx_balanced \
+               devctx:2:device_ctx balanced:2:green_ctx_balanced \
+               devctx:1:device_ctx; do
+        tag="${arm%%:*}"; rest="${arm#*:}"
+        lim="${rest%%:*}"; scope="${rest##*:}"
+        add "concurrent-wq_${tag}_${lim}_${mp}_${rp}" \
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
+    done
+done
+
+# The unpartitioned pair: no green context, so no scope applies and only the
+# queue BUDGET is set. These are Experiment 2's `baseline` run twice — once at
+# the limit Experiment 2 actually had (8) and once at the one Experiment 3 had
+# (2). That pair measures the process model with the budget held equal, which the
+# Exp 2 versus Exp 3 comparison cannot do because those two differ in both at
+# once. It is the cleanest pair in the whole matrix and it costs 10 runs.
+for lim in 8 2; do
+    add "concurrent-wq_unpart_${lim}" \
+        "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
+done
 
 # Has this configuration already been measured?
 #

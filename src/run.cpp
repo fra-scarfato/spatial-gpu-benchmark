@@ -248,8 +248,24 @@ Run::Run(const Options& opts)
     for (const auto& n : opts_.networks)
         percents.push_back(n.smPercent);
 
+    // The work queue half of the green context descriptor, translated here so
+    // that gpu.cpp never has to know about Options. Unset means the descriptor
+    // carries the SM group only, which is what every run before the work queue
+    // experiment did — and the reason those results stay comparable.
+    //
+    // A limit without a scope still needs a descriptor to carry it, and the
+    // driver's default sharing behaviour is device_ctx.
+    WqConfig wq;
+    if (!opts_.wqScope.empty() || opts_.wqLimit != 0) {
+        wq.set   = true;
+        wq.scope = opts_.wqScope == "green_ctx_balanced"
+                       ? cudaDevWorkqueueConfigScopeGreenCtxBalanced
+                       : cudaDevWorkqueueConfigScopeDeviceCtx;
+        wq.limit = opts_.wqLimit;
+    }
+
     std::vector<std::unique_ptr<SmAllocation>> allocations =
-        makeSmAllocations(opts_.allocation, percents);
+        makeSmAllocations(opts_.allocation, percents, wq);
 
     // 3. One Network per engine. The allocations are already provisioned by
     //    now, so building a network only creates an engine, buffers and a

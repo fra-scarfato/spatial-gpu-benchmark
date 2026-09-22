@@ -18,7 +18,14 @@
 //   median  the middle observation; robust.
 //   std     spread around the mean (sample standard deviation, n-1).
 //   p95/99  the value below which 95%/99% of observations fall.
-//   max     the observed worst case.
+//   max     the OBSERVED MAXIMUM of this run: the largest sample it actually
+//           saw, not a bound and not a typical value. Its whole purpose is to
+//           survive a rare event instead of smoothing it away, so when several
+//           runs are combined it has to be reduced with max over the runs --
+//           max of maxima is the max of the union, i.e. the maximum over every
+//           inference measured. Averaging it, or taking its median, discards
+//           the one observation it exists to expose. See obs_max() in
+//           aggregate.py, which is the only place allowed to combine it.
 //   tail    p99 - median: how fat the worst 1% is. For a real-time system this
 //           is the number that decides deadlines.
 struct Stats {
