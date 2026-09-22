@@ -515,6 +515,14 @@ DISPERSION block), which is also where the thesis tables come from.
 
 ---
 
+One caveat on that column, found by checking it rather than by theory. The
+observed maximum is a single sample, so it takes *any* system event, not only a
+GPU-related one. Run 4 of `concurrent-wq/devctx_8_50_50` has a tail of 2.4 ms on
+**both** networks where its four siblings sit at 0.03 and 0.2 ms --- one event
+hitting two networks at once, with no profiler running. The medians and the
+median-across-runs tails are unaffected by it, which is the aggregation doing its
+job; `obs-max` is not, and that is inherent to the statistic rather than a bug.
+
 ## 7. Things learned the hard way
 
 1. **Engines are not portable across TensorRT versions.** An engine built with
@@ -575,6 +583,21 @@ DISPERSION block), which is also where the thesis tables come from.
     (`getIOTensorName` / `getNbIOTensors`) rather than hard-coding it.
 
 ---
+
+- **The one-process MobileNet tail is host submission time.** Measured directly,
+  by timing the host inside `enqueueV3` for a few runs. The probe was temporary
+  and has been removed, but the numbers are worth keeping: in the unpinned
+  configuration the slowest 1 % of inferences have a submit time of
+  1.05--1.10 ms against a typical 0.33--0.34 ms, a factor of **3.1--3.3**, and
+  84--90 % of them are the *same* inferences as the slowest submissions. With the
+  two threads pinned to one core the same ratio is **1.00** and the overlap is at
+  chance, and the tail is seven times smaller. So the tail is not the GPU being
+  slow: it is the host taking longer to submit, with the queue already drained
+  because every iteration ends in a `cudaStreamSynchronize`. ResNet shows no such
+  correlation, which is why its tail stays thin.
+- **The disk is a shared resource the guard does not watch.** See the note at the
+  end of §9.3. Same class of hazard as another user on the GPU, and the same
+  remedy: remove the dependency rather than measure around it.
 
 ## 8. Environment
 
@@ -689,6 +712,17 @@ job's iterations. **The sentinel is a tripwire, not a guarantee**; the cross-run
 consistency check is the real safety net. The honest fix is social:
 coordinate with the other user (and note the co-tenant is running *the same
 experiment* on `--sm 4/6/8`, which is worth mentioning in the thesis).
+
+**The disk is shared too, and the guard does not watch it.** A flush that ends up
+queued behind another writer can block for hundreds of milliseconds, and because
+the flush happens inside the measured window the GPU idles while it waits. One
+traced run shows `writev` calls of **385 ms and 316 ms**, one per network, with
+both green contexts idle across them; the profiler was the other writer there,
+but the lesson is general. The sweep now writes its CSVs to `/dev/shm` and moves
+them into the results tree when the run finishes, which removes the dependency
+and changes nothing downstream. Measured effect on clean runs: none --- tail
+0.3659 ms with the CSV on disk against 0.3644 ms in RAM, same day, same
+configuration.
 
 ### 9.4 Aggregation: the run is the unit of replication
 

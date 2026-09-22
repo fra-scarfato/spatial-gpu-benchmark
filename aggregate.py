@@ -74,6 +74,15 @@ EXP_DIR = {
     # reproduce is the whole point of running it. Mapping two folders onto one
     # key is what makes that free — the tables see one configuration space.
     "concurrent-wq":       "exp2",
+    # Same idea again: the auxiliary-stream family is Experiment 2's pair with a
+    # different ResNet build, so it needs its own key (its rows are not
+    # comparable to the default build) but the same table shape.
+    "concurrent-aux":      "exp5",
+    # The CPU-pinning arms live in two folders because they were run at
+    # different times; the config names do not collide, so one key is enough and
+    # the aggregate picks up every replicate.
+    "pinning":             "exp6",
+    "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }
 
@@ -199,6 +208,10 @@ def load(outdir):
                 net = config.split("_")[0]
             elif config == "mps_single":
                 net = "mobilenet"
+            elif exp == "exp5" and config == "aux1_whole":
+                # The isolated baseline of the auxiliary-stream family is the
+                # aux-enabled ResNet on its own.
+                net = "resnet"
             else:
                 raise ValueError(f"cannot determine the network for {path!r}")
             assert net in ("mobilenet", "resnet"), f"unexpected config {config!r}"
@@ -518,6 +531,11 @@ def table_dispersion(data, lines):
     for cfg in exp3_configs(data):
         for net in ("mobilenet", "resnet"):
             row("exp3", cfg, net, cfg)
+    lines.append("")
+    lines.append("  -- Experiment 5: the auxiliary-stream family")
+    for cfg in aux_configs(data):
+        for net in ("mobilenet", "resnet"):
+            row("exp5", cfg, net, cfg)
     return lines
 
 
@@ -593,6 +611,116 @@ def table_mps_effects(data, lines):
                  "  static MPS partition is INTER-process, so those rows carry a\n"
                  "  process-model difference as well as a mechanism difference.\n"
                  "  The `Process-model cost` rows bound that difference.")
+    return lines
+
+
+# Experiment 5, the auxiliary-stream family. Ordered so the controlled
+# comparisons come first: the scope at the coherent concurrency, then the same at
+# the per-client reading of it, then the sweep, then the attribution arm.
+EXP5_ARMS = (("devctx",   "3"), ("balanced", "3"),
+             ("devctx",   "2"), ("balanced", "2"),
+             ("balanced", "1"), ("balanced", "8"),
+             ("balanced", "32"), ("devctx", "8"))
+EXP5_SPLITS = ("50_50", "75_25")
+
+
+def aux_configs(data):
+    """Every auxiliary-stream configuration present, baseline first."""
+    present = {c for (e, c, _) in data if e == "exp5"}
+    out = [c for c in ("aux1_whole",) if c in present]
+    for tag, lim in EXP5_ARMS:
+        for split in EXP5_SPLITS:
+            c = f"{tag}_{lim}_{split}"
+            if c in present:
+                out.append(c)
+    return out
+
+
+def aux_pct(cfg):
+    """{network: SM percentage} for an auxiliary-stream configuration."""
+    if cfg == "aux1_whole":
+        return {"resnet": 100}
+    parts = cfg.split("_")
+    return {"mobilenet": int(parts[-2]), "resnet": int(parts[-1])}
+
+
+def table_aux(data, lines):
+    """Experiment 5: the pair on a ResNet that really issues two streams.
+
+    Every column is the one the work queue question needs: median and throughput
+    because those are what the two mechanisms already agreed on, p99, tail and
+    observed maximum because those are where they differed, and the aggregate
+    because a configuration that wins on latency can still lose on throughput.
+    """
+    cfgs = aux_configs(data)
+    if not cfgs:
+        return lines
+    lines.append(hdr("EXPERIMENT 5 - ResNet built with one auxiliary stream"))
+    lines.append(
+        "  Experiment 2's pair, with ResNet built allowing one auxiliary stream so it\n"
+        "  issues two streams of its own; the pair therefore has three concurrent\n"
+        "  stream-ordered workloads. Every other setting is Experiment 4's.\n"
+        "  Select with: sweep.sh --exp aux\n")
+    lines.append(f"  {'config':<22} {'network':<10} {'median ms':>10} {'p99 ms':>8} "
+                 f"{'std ms':>8} {'tail ms':>8} {'obs-max':>9} {'agg inf/s':>10}")
+    for cfg in cfgs:
+        thr = [t for t in (_run_throughput(data, "exp5", cfg, r)
+                           for r in sorted(runs_of(data, "exp5", cfg))) if t]
+        agg = f"{stats.median(thr):.0f}" if thr else "-"
+        for net in ("mobilenet", "resnet"):
+            a = aggr(data, "exp5", cfg, net, "gpu_ms", "median")
+            if a is None:
+                continue
+            lines.append(
+                f"  {cfg:<22} {net:<10} {a[0]:>10.4f} "
+                f"{aggr(data,'exp5',cfg,net,'gpu_ms','p99')[0]:>8.4f} "
+                f"{aggr(data,'exp5',cfg,net,'gpu_ms','std')[0]:>8.4f} "
+                f"{aggr(data,'exp5',cfg,net,'gpu_ms','p99_minus_median')[0]:>8.4f} "
+                f"{obs_max(data,'exp5',cfg,net):>9.4f} {agg:>10}")
+        lines.append("")
+    return lines
+
+
+def pinning_configs(data):
+    """The CPU-affinity arms present, in the order they make sense to read."""
+    present = {c for (e, c, _) in data if e == "exp6"}
+    order = ("unpinned_50_50", "unpinned_75_25", "shm_75_25",
+             "onecore", "onecore_75_25", "twocore")
+    return [c for c in order if c in present] + sorted(present - set(order))
+
+
+def table_pinning(data, lines):
+    """Experiment 6: where the two submitting threads are allowed to run.
+
+    Same engines, same green contexts, same SM split, same queue settings ---
+    CPU affinity is the only variable. If the MobileNet tail is controlled from
+    the host side, it should move here with nothing device-side touched, and the
+    median should not move at all. That is what makes this the controlled test
+    of the tail's origin.
+    """
+    cfgs = pinning_configs(data)
+    if not cfgs:
+        return lines
+    lines.append(hdr("EXPERIMENT 6 - where the two submitting threads may run"))
+    lines.append(
+        "  The 75/25 pair with CPU affinity varied and nothing else. `shm_75_25`\n"
+        "  additionally moves the latency CSV to RAM, to remove the disk as a\n"
+        "  variable; `unpinned_50_50` is the same idea at the other split.\n")
+    lines.append(f"  {'config':<22} {'network':<10} {'median ms':>10} {'p99 ms':>8} "
+                 f"{'tail ms':>8} {'std ms':>8} {'obs-max':>9} {'tail/med':>9}")
+    for cfg in cfgs:
+        for net in ("mobilenet", "resnet"):
+            a = aggr(data, "exp6", cfg, net, "gpu_ms", "median")
+            if a is None:
+                continue
+            med = a[0]
+            tl = aggr(data, "exp6", cfg, net, "gpu_ms", "p99_minus_median")[0]
+            lines.append(
+                f"  {cfg:<22} {net:<10} {med:>10.4f} "
+                f"{aggr(data,'exp6',cfg,net,'gpu_ms','p99')[0]:>8.4f} {tl:>8.4f} "
+                f"{aggr(data,'exp6',cfg,net,'gpu_ms','std')[0]:>8.4f} "
+                f"{obs_max(data,'exp6',cfg,net):>9.4f} {tl/med:>9.3f}")
+        lines.append("")
     return lines
 
 
@@ -729,6 +857,8 @@ def main():
     table_jitter(data, lines)
     table_exp3(data, lines)
     table_dispersion(data, lines)
+    table_aux(data, lines)
+    table_pinning(data, lines)
     table_mps_effects(data, lines)
     check_consistency(data, lines)
 

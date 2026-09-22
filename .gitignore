@@ -17,6 +17,10 @@ runner
 __pycache__/
 *.pyc
 
+# CSVs from a run invoked with the default prefix. The results tree is
+# bench/, outside this repository, so anything like this here is an accident.
+bench_*
+
 # Logs from a redirected sweep. The real results tree is bench/, outside this
 # repository, so anything logged here is scratch.
 *.log

@@ -69,6 +69,11 @@ RUNNER="$HERE/runner"
 DS="$DATA/dataset/imagenet-1k"
 MOB="$DATA/models/mobilenetv2-12.engine"
 RES="$DATA/models/resnet50-v2-7.engine"
+# ResNet with multi-stream explicitly permitted, so it really issues two streams
+# (main + one auxiliary). The default build leaves multi-stream off, so this is a
+# different engine and the numbers are not comparable to the default build except
+# where the job family below deliberately meets it.
+RESAUX="$DATA/models/auxstreams/resnet50-v2-7-aux1.engine"
 
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set
@@ -93,6 +98,18 @@ SENTINEL_INF=500
 MPS_PIPE="${MPS_PIPE:-/tmp/mps-$USER}"
 MPS_LOG="${MPS_LOG:-/tmp/mps-log-$USER}"
 MPS_MODE=off                    # off | on | static
+
+# Where the runner writes its CSVs while a run is in progress. /dev/shm is RAM.
+#
+# The guard watches the GPU; it does not watch the disk, and the disk is shared
+# too. A CSV flush that ends up queued behind another writer can block for
+# hundreds of milliseconds, and because the flush happens inside the measured
+# window the GPU idles while it waits. Measured: 385 ms in one traced run, with
+# the untraced tail identical whether the CSV went to disk or to RAM, so this is
+# about removing a shared dependency rather than about a known bias. The files
+# are moved into the results tree when the run finishes, so nothing downstream
+# sees a difference.
+TMPCSV="${TMPCSV:-/dev/shm/scarfato-csv}"
 
 # 0 = skip the static-partition jobs. Otherwise it is the device's TOTAL chunk
 # count, which only `lspart` knows: a chunk is 2 SMs on an integrated GPU, so a
@@ -597,6 +614,47 @@ for lim in 8 2; do
         "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 done
 
+# The auxiliary-stream family: Experiment 2's pair again, but with ResNet built
+# to allow one auxiliary stream, so it issues two streams of its own.
+#
+# ResNet is the only engine here with any intra-network parallelism: TensorRT
+# says so in its build log ("Number of aux streams is 1", 7 events per
+# inference) and measured against a trace the two streams overlap only about
+# 4.5% of the time. MobileNet reports "cannot find an opportunity to leverage
+# it" under every cap, so it never has more than one stream.
+#
+# That gives the pair three concurrent stream-ordered workloads - ResNet's two
+# plus MobileNet's one - so the declared concurrency can finally be chosen from
+# the measured parallelism rather than guessed. The family is built around three
+# questions:
+#   - the sharing scope at the coherent concurrency (limit 3), which is the
+#     controlled comparison the whole work queue argument rests on;
+#   - the same comparison at the per-client reading of coherence (limit 2), to
+#     settle whether the hint is read per context or device-wide;
+#   - the sweep he asked for: 1, the observed concurrency, and the device's
+#     default (8) and maximum (32).
+# Limit 8 at device_ctx is the attribution arm: it meets Experiment 4's
+# devctx_8 rows at the same limit, scope and ratio, so the difference there is
+# the auxiliary stream and nothing else.
+for split in 50:50 75:25; do
+    mp="${split%%:*}"; rp="${split##*:}"
+    for arm in devctx:3:device_ctx balanced:3:green_ctx_balanced \
+               devctx:2:device_ctx balanced:2:green_ctx_balanced \
+               balanced:1:green_ctx_balanced balanced:8:green_ctx_balanced \
+               balanced:32:green_ctx_balanced devctx:8:device_ctx; do
+        tag="${arm%%:*}"; rest="${arm#*:}"
+        lim="${rest%%:*}"; scope="${rest##*:}"
+        add "concurrent-aux_${tag}_${lim}_${mp}_${rp}" \
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
+    done
+done
+
+# The aux-enabled engine on its own, no green context and nothing else changed:
+# the reference its own pair rows are read against, and the row that says whether
+# permitting the auxiliary stream changed ResNet's own latency at all.
+add "concurrent-aux_aux1_whole" \
+    "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
+
 # Has this configuration already been measured?
 #
 # The number of stats files depends on how many NETWORKS a run has, not on how
@@ -625,8 +683,15 @@ interrupted() {  # $1 = output prefix
     [ -f "$1_latencies.csv" ] || [ -f "$1_mobilenet_latencies.csv" ]
 }
 
-do_job() {  # $1 = spec, $2 = output prefix
-    local spec="$1" out="$2"
+move_back() {  # $1 = tmpfs prefix, $2 = results prefix
+    local f
+    for f in "$1"*.csv; do
+        [ -e "$f" ] || continue
+        mv -f "$f" "$2${f#"$1"}"
+    done
+}
+
+do_job() {  # $1 = spec, $2 = output prefix    local spec="$1" out="$2"
     local kind mps envA envB cmdA cmdB ratio rc_a=0 rc_b=0
     # IFS is scoped to this one read, so it does not leak into the rest of the
     # function. `read` splits on the pipe and leaves empty fields empty.
@@ -641,13 +706,17 @@ do_job() {  # $1 = spec, $2 = output prefix
     local penv=""
     [ "$mps" != off ] && penv="CUDA_MPS_PIPE_DIRECTORY=$MPS_PIPE"
 
+    # The CSVs go to RAM during the run and are moved into the tree afterwards.
+    local tmp="$TMPCSV/$(basename "$out")"
+
     # $penv, $envA and $cmdA are deliberately unquoted: each is a string that
     # must split into separate words for `env`. They are empty when unused, and
     # an empty unquoted expansion simply disappears. (That is also why the
     # shellcheck warnings here are disabled rather than "fixed".)
     if [ "$kind" = solo ]; then
         # shellcheck disable=SC2086
-        env $penv $envA $cmdA $PROTO --csv "$out" > "$out.log" 2>&1 || return 1
+        env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
+        move_back "$tmp" "$out"
         return 0
     fi
 
@@ -656,10 +725,10 @@ do_job() {  # $1 = spec, $2 = output prefix
     # overwrite it, and each exit status is collected separately rather than
     # letting the failure of one mask the other.
     # shellcheck disable=SC2086
-    env $penv $envA $cmdA $PROTO --csv "${out}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
+    env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
     local pid_a=$!
     # shellcheck disable=SC2086
-    env $penv $envB $cmdB $PROTO --csv "${out}_resnet" > "${out}_resnet.log" 2>&1 &
+    env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
     local pid_b=$!
 
     # `|| rc=$?` instead of letting the failure propagate, because `set -e`
@@ -671,10 +740,10 @@ do_job() {  # $1 = spec, $2 = output prefix
         echo "        See ${out}_mobilenet.log / ${out}_resnet.log" >&2
         return 1
     fi
+    move_back "$tmp" "$out"
     return 0
 }
-
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$TMPCSV"
 printf '[sweep] output:  %s\n' "$OUT"
 printf '[sweep] configs: %d, runs each: %d, total runs: %d, experiments: %s\n' \
        "${#JOB_NAME[@]}" "$RUNS" "$(( ${#JOB_NAME[@]} * RUNS ))" "$EXPS"
