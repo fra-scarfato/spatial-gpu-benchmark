@@ -268,7 +268,6 @@ public:
     TrtEngine& operator=(const TrtEngine&) = delete;
 
     std::int64_t inputVolume()  const noexcept { return inputVolume_; }
-    std::int64_t outputVolume() const noexcept { return outputVolume_; }
 
     // The spatial geometry of the input, read from the engine at construction.
     // The preprocessing needs it and must not assume 224, or a square: a network
@@ -279,10 +278,13 @@ public:
     int inputWidth()  const noexcept { return inputWidth_; }
 
     const std::string& inputName()  const noexcept { return inputName_; }
-    const std::string& outputName() const noexcept { return outputName_; }
 
     // The raw output (logits) of the last inference.
-    const float* outputHost() const noexcept { return hostOutput_.data(); }
+    // The engine's outputs. Most networks here have one, RetinaNet has ten (the
+    // FPN's per-level class and box tensors), so the interface is an index rather
+    // than a single tensor.
+    std::size_t outputCount() const noexcept { return outputNames_.size(); }
+    const float* outputHost(std::size_t i) const noexcept { return hostOutputs_[i].data(); }
 
     // One inference.
     //
@@ -309,7 +311,8 @@ private:
     std::unique_ptr<nvinfer1::IRuntime>          runtime_;
     std::unique_ptr<nvinfer1::ICudaEngine>       engine_;
     std::unique_ptr<nvinfer1::IExecutionContext> context_;
-    std::string  inputName_, outputName_;
+    std::string  inputName_;
+    std::vector<std::string>  outputNames_;    // every output, in engine order
     std::int64_t inputVolume_  = 0;
     int          inputHeight_  = 0;   // spatial geometry, from the engine
     int          inputWidth_   = 0;
@@ -317,11 +320,12 @@ private:
 
     // Device staging: both ends are the engine's own working memory.
     void* dInput_  = nullptr;
-    void* dOutput_ = nullptr;
+    std::vector<std::int64_t> outputVolumes_;  // elements per output
+    std::vector<void*>        dOutputs_;       // device buffer per output
 
     // Host side: only the OUTPUT lives here. The input has no host buffer in
     // this class because it belongs to the caller (see infer()).
-    PinnedHostBuffer hostOutput_;
+    std::vector<PinnedHostBuffer> hostOutputs_;
 
     cudaStream_t stream_   = nullptr;
     cudaEvent_t  startEvt_ = nullptr;
