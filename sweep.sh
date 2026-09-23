@@ -507,17 +507,23 @@ done
 
 # Experiment 2: two networks in ONE process, disjoint green contexts.
 #
+# `--submit-threads 2` is stated rather than left to the default. The runner's
+# default is now ONE submitting thread, because that is the configuration that
+# removes the host-side tail; the pair jobs here are the two-thread case that
+# those results were measured with, and a re-run must reproduce them, not
+# quietly measure something else.
+#
 # MobileNet + ResNet rather than mob-mob/res-res: that is the deployment being
 # studied (a scheduler co-locates *different* workloads), and the mixed pair
 # yields each network's co-run latency at 4, 8 and 12 SMs — exactly the points
 # Experiment 1 measures in isolation.
 add "concurrent-greenctx_baseline" \
-    "solo|off|||$RUNNER --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
+    "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
     add "concurrent-greenctx_${mp}_${rp}" \
-        "solo|off|||$RUNNER --dataset $DS --allocation greenctx --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
+        "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
 done
 
 # Experiment 3: MPS, TWO processes.
@@ -599,7 +605,7 @@ for split in 50:50 75:25; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
         add "concurrent-wq_${tag}_${lim}_${mp}_${rp}" \
-            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
     done
 done
 
@@ -611,7 +617,7 @@ done
 # once. It is the cleanest pair in the whole matrix and it costs 10 runs.
 for lim in 8 2; do
     add "concurrent-wq_unpart_${lim}" \
-        "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
+        "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 done
 
 # The auxiliary-stream family: Experiment 2's pair again, but with ResNet built
@@ -645,7 +651,7 @@ for split in 50:50 75:25; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
         add "concurrent-aux_${tag}_${lim}_${mp}_${rp}" \
-            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
     done
 done
 

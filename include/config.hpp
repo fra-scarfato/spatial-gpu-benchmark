@@ -126,12 +126,13 @@ struct Options {
     std::string wqScope;      // "device_ctx" | "green_ctx_balanced" | ""
     unsigned    wqLimit = 0;  // 0 = do not set one
 
-    // How many threads submit work to the GPU. 2 is one thread per network,
-    // which is what every experiment so far used. 1 keeps the networks in
-    // flight but drives them from a single thread, so the launch path is
-    // never entered from two places at once — the control for whether the
-    // two-thread handoff is what produces the tail.
-    unsigned submitThreads = 2;
+    // How many threads submit work to the GPU. 1, the default, drives every
+    // network from a single thread while keeping one inference in flight per
+    // network, so the launch path is never entered from two places at once.
+    // 2 is one thread per network, the naive application: it is what the
+    // two-thread measurements of Experiments 2, 4 and 5 used, and sweep.sh
+    // asks for it explicitly wherever that is what it means.
+    unsigned submitThreads = 1;
 
     // The networks: one entry is solo, two is concurrent.
     std::vector<NetworkOptions> networks;
