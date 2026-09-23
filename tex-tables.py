@@ -65,6 +65,19 @@ def agg_tp(exp, cfg):
     return st.median(vals) if vals else None
 
 
+def net_tp(exp, cfg, net):
+    """The measured throughput of one network: its inference count over the window
+    the runner timed, median across the runs of that configuration. Deliberately not
+    1000/median, which is the GPU-only figure and reads higher."""
+    import statistics as _st
+    vals = []
+    for r in sorted(A.runs_of(DATA, exp, cfg)):
+        rec = DATA[(exp, cfg, r)][net]["gpu_ms"]
+        if rec["duration_s"] > 0:
+            vals.append(rec["count"] / rec["duration_s"])
+    return _st.median(vals) if vals else None
+
+
 def emit(s):
     OUT.append(s)
 
@@ -118,8 +131,9 @@ def t_pair():
         mv, rv = med("exp2-1t", cfg, "mobilenet"), med("exp2-1t", cfg, "resnet")
         emit("    \\texttt{{{}}} & {} & {} & {:.0f} & {} & {} & {:.0f} & {:.0f} \\\\".format(
             cfg.replace("_", "\\_"), "{} shared".format(m) if cfg == "baseline" else str(m), ms(mv),
-            1000.0 / mv if mv else 0, r if cfg == "baseline" else r, ms(rv),
-            1000.0 / rv if rv else 0,
+            net_tp("exp2-1t", cfg, "mobilenet") or 0,
+            "{} shared".format(r) if cfg == "baseline" else str(r), ms(rv),
+            net_tp("exp2-1t", cfg, "resnet") or 0,
             agg_tp("exp2-1t", cfg) or 0))
     emit(r"""    \bottomrule
   \end{tabular}
@@ -147,7 +161,11 @@ def t_residual():
     \midrule""")
     for cfg, m, r in (("baseline", 16, 16), ("50_50", 8, 8), ("75_25", 12, 4), ("25_75", 4, 12)):
         for net, sms in (("mobilenet", m), ("resnet", r)):
-            i = med("exp1", "{}_{}".format(net, "whole"), net)
+            # The isolated reference is the run at the SAME SM count, not the
+            # whole-device one: that is the whole point of the table. The exp1
+            # configurations are named by the percentage each network asked for.
+            iso_cfg = "{}_{}".format(net, "whole" if sms == 16 else "gc{}".format(sms * 100 // 16))
+            i = med("exp1", iso_cfg, net)
             a, b = med("exp2", cfg, net), med("exp2-1t", cfg, net)
             emit("    {} & \\texttt{{{}}} & {} & {} & {} & {}{:+.1f}\\,\\% & {} & {}{:+.1f}\\,\\% \\\\".format(
                 net.capitalize(), cfg.replace("_", "\\_"),
@@ -308,8 +326,8 @@ def t_fourway(label, gc_exp, caption):
             emit("    \\midrule")
         mv, rv = med(exp, cfg, "mobilenet"), med(exp, cfg, "resnet")
         emit("    {} & {} & {} & {:.0f} & {} & {:.0f} & {:.0f} \\\\".format(
-            ratio, mech, ms(mv), 1000.0 / mv if mv else 0,
-            ms(rv), 1000.0 / rv if rv else 0, agg_tp(exp, cfg) or 0))
+            ratio, mech, ms(mv), net_tp(exp, cfg, "mobilenet") or 0,
+            ms(rv), net_tp(exp, cfg, "resnet") or 0, agg_tp(exp, cfg) or 0))
     emit(r"""    \bottomrule
   \end{tabular}
   \caption{""" + caption + r"""}
@@ -356,5 +374,102 @@ t_fourway_dispersion("tab:exp5-fourway-dispersion", "exp2-1t",
 t_fourway_dispersion("tab:exp3-fourway-dispersion", "exp2",
                      'Experiment 3: the dispersion of the comparison above, in the form of Table~\\ref{tab:exp1-dispersion}. Each value is the median across the five runs of that run-level statistic.')
 
+
+# --------------------------------------------------------------- the census
+# One row per network and engine build, so the table reads as a progression in the
+# number of streams rather than as a single number per network. `streams` is what
+# the engine reports per client: one main stream plus the auxiliary streams it
+# adopted. The census takes the numbers from the same source as everything else --
+# the measurements -- with the stream counts, which come from the engines, as the
+# only literals here.
+#
+# (network, input, build label, streams per client, experiment key, config, network key)
+CENSUS_ROWS = (
+    ("MobileNet V2-12", "3$\\times$224$\\times$224", "default, 0 under every cap",
+     1, "exp1", "mobilenet_whole", "mobilenet"),
+    ("ResNet-50 v2-7", "3$\\times$224$\\times$224", "default",
+     1, "exp1", "resnet_whole", "resnet"),
+    ("", "", "cap 1", 2, "exp5", "aux1_whole", "resnet"),
+    ("Inception-v3", "3$\\times$299$\\times$299", "default",
+     1, "exp1", "inception_whole", "inception"),
+    ("", "", "cap 1", 2, "exp1", "inception_aux1_whole", "inception"),
+    ("", "", "cap 2", 3, "exp1", "inception_aux2_whole", "inception"),
+    ("", "", "cap 4", 5, "exp1", "inception_aux4_whole", "inception"),
+    ("", "", "cap 5, saturation", 6, "exp1", "inception_aux5_whole", "inception"),
+    ("ViT-B/16-224", "3$\\times$224$\\times$224", "default, 0 under every cap",
+     1, "exp1", "vit_whole", "vit"),
+    ("RetinaNet-9", "3$\\times$480$\\times$640", "default",
+     1, "exp1", "retinanet_whole", "retinanet"),
+    ("", "", "cap 1", 2, "exp1", "retinanet_aux1_whole", "retinanet"),
+    ("", "", "cap 8", 9, "exp1", "retinanet_aux8_whole", "retinanet"),
+    ("", "", "cap 16, saturation", 10, "exp1", "retinanet_aux16_whole", "retinanet"),
+)
+
+
+def t_census_rates():
+    """What each build costs and delivers, alone on the whole device."""
+    emit(r"""\begin{table}[H]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{l l l r r r}
+    \toprule
+    Network & Input & Build & Streams & Median (ms) & Thr.\ (inf/s) \\
+    \midrule""")
+    for net, inp, build, streams, exp, cfg, key in CENSUS_ROWS:
+        m = med(exp, cfg, key)
+        t = net_tp(exp, cfg, key)
+        emit("    {} & {} & {} & {} & {} & {:.0f} \\\\".format(
+            net, inp, build, streams, ms(m), t if t else 0))
+    emit(r"""    \bottomrule
+  \end{tabular}
+  \caption{The auxiliary-stream census, as cost and throughput. One row per build,
+  measured alone on the whole device, five runs each; the values are medians across
+  the five runs of that run-level statistic. \emph{Streams} is what the built engine
+  reports per client --- one main stream plus the auxiliary streams it adopted --- so
+  the row above and the row below it differ only in how many streams the engine was
+  allowed and chose to use. MobileNet and the ViT adopt none under every cap; ResNet
+  one; Inception up to five and RetinaNet up to nine.}
+  \label{tab:census}
+\end{table}
+""")
+
+
+def t_census_dispersion():
+    """The same builds, by dispersion: what the streams cost in predictability."""
+    emit(r"""\begin{table}[H]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{l r r r r r r r r}
+    \toprule
+    Network & Streams & std & std $\times$iso & p95 & p99 & tail & tail $\times$iso & obs-max \\
+    \midrule""")
+    for net, inp, build, streams, exp, cfg, key in CENSUS_ROWS:
+        base = med("exp1", key + "_whole", key)
+        emit("    {} & {} & {} & {} & {} & {} & {} & {} & {} \\\\".format(
+            net if net else "\\quad " + build, streams,
+            ms(col2(exp, cfg, key, "std")),
+            xr(col2("exp1", key + "_whole", key, "std"), col2(exp, cfg, key, "std")),
+            ms(col2(exp, cfg, key, "p95")), ms(col2(exp, cfg, key, "p99")),
+            ms(tail(exp, cfg, key)), xr(iso(key), tail(exp, cfg, key)),
+            ms(obs(exp, cfg, key))))
+    emit(r"""    \bottomrule
+  \end{tabular}
+  \caption{The same builds, by dispersion, in the form of
+  Table~\ref{tab:exp1-dispersion}. Each row is the build named in the row above it
+  in Table~\ref{tab:census}, and $\times$iso is against that network's own
+  whole-device run. Reading down a network's block shows what the streams cost:
+  the serial build has the thinnest tail of the block, and it grows with the streams
+  while the median barely moves.}
+  \label{tab:census-dispersion}
+\end{table}
+""")
+
+# The census, as rates and as dispersion. Both read the same measurements as
+# everything else; only the stream counts are literals, because they come from
+# the built engines rather than from a run.
+t_census_rates()
+t_census_dispersion()
 
 sys.stdout.write("\n".join(OUT))

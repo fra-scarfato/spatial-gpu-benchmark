@@ -81,12 +81,15 @@ RESAUX="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7-aux1.engine"
 INC="$DATA/models/inception_v3-onnx-float/engine/inception_v3.engine"
 INC1="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux1.engine"
 INC5="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux5.engine"
+INC2="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux2.engine"
+INC4="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux4.engine"
 VIT="$DATA/models/vit-base-patch16-224/engine/vit-base-patch16-224.engine"
 # RetinaNet-9 is a detector: ten output tensors and a 480x640 input, both of
 # which the runner now honours. It adopts more streams than anything else here.
 RN="$DATA/models/retinanet-9/engine/retinanet-9.engine"
 RN1="$DATA/models/retinanet-9/engine/retinanet-9-aux1.engine"
 RN8="$DATA/models/retinanet-9/engine/retinanet-9-aux8.engine"
+RN16="$DATA/models/retinanet-9/engine/retinanet-9-aux16.engine"
 
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set
@@ -537,6 +540,9 @@ add "isolated-scaling_vit_whole"            "solo|off|||$RUNNER $VIT  $DS --allo
 add "isolated-scaling_retinanet_whole"      "solo|off|||$RUNNER $RN  $DS --allocation whole|"
 add "isolated-scaling_retinanet_aux1_whole" "solo|off|||$RUNNER $RN1 $DS --allocation whole|"
 add "isolated-scaling_retinanet_aux8_whole" "solo|off|||$RUNNER $RN8 $DS --allocation whole|"
+add "isolated-scaling_inception_aux2_whole"  "solo|off|||$RUNNER $INC2 $DS --allocation whole|"
+add "isolated-scaling_inception_aux4_whole"  "solo|off|||$RUNNER $INC4 $DS --allocation whole|"
+add "isolated-scaling_retinanet_aux16_whole" "solo|off|||$RUNNER $RN16 $DS --allocation whole|"
 
 add "concurrent-greenctx_baseline" \
     "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
