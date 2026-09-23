@@ -752,7 +752,7 @@ bench/
 │     50_50/r3_latencies.csv   r3_mobilenet_stats.csv   …       (4 configs)
 ├── concurrent-mps/       two networks, TWO processes, MPS
 │     mps_static_50_50/r3_mobilenet_stats.csv   …               (9 configs)
-└── aggregate/            raw.csv   summary.csv   tables.txt
+└── aggregate/            <exp>.csv   summary.csv   tables.txt
 ```
 
 The folder names say what each experiment *is* rather than which number it has
@@ -767,7 +767,7 @@ Outputs, all in `bench/aggregate/`:
 
 | File | Content |
 |---|---|
-| `raw.csv` | tidy/long: one row per (experiment, config, network, run, metric) — for plotting |
+| `<exp>.csv` | per-run detail, tidy/long, **one file per experiment**: one row per (config, network, run, metric) — for plotting. The experiment stays a column, so the files concatenate back into the single table this used to be |
 | `summary.csv` | across-run point estimate and spread per config/network |
 | `tables.txt` | the derived tables (also printed) |
 | `<run>.log` | full stdout of each run (holds the granted SM counts) |

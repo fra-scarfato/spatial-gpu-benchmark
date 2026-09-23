@@ -35,7 +35,8 @@ the configuration come from the DIRECTORY names, so the file names stay short:
 
 Outputs, all into <out>/aggregate/ — derived numbers live beside the data, never
 mixed into them:
-  raw.csv       tidy/long: one row per (experiment, config, network, run, metric)
+  <exp>.csv     tidy/long, one file per experiment: one row per
+                (config, network, run, metric)
   summary.csv   across-run point estimate and spread per config/network
   tables.txt    the derived tables, also printed to stdout
 """
@@ -95,7 +96,7 @@ EXP_DIR = {
 
 # Only gpu_ms is plotted; wall_ms includes the host round trip and prep_ms is
 # zero by construction in fixed-input mode. All three are still carried through
-# to raw.csv so the choice can be revisited without re-running anything.
+# to the per-experiment files so the choice can be revisited without re-running anything.
 METRICS = ("gpu_ms", "wall_ms", "prep_ms")
 
 # The column order Network::writeStats emits. Keeping it in one place means
@@ -794,19 +795,32 @@ def table_submitter(data, lines):
 
 
 def write_raw(data, outdir):
-    """One row per (experiment, config, network, run, metric) — for plotting."""
-    path = os.path.join(outdir, "raw.csv")
-    with open(path, "w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["experiment", "config", "network", "run", "metric"] + list(COLS[1:]))
-        for (exp, config, run) in sorted(data):
-            for net in sorted(data[(exp, config, run)]):
-                for metric in METRICS:
-                    rec = data[(exp, config, run)][net].get(metric)
-                    if rec is None:
-                        continue
-                    w.writerow([exp, config, net, run, metric] + [rec[c] for c in COLS[1:]])
-    return path
+    """One file per experiment: one row per (config, network, run, metric).
+
+    Split by experiment because that is the boundary a reader works inside. The
+    configurations of one experiment were measured against each other, in the same
+    folder, under the same conditions, and nothing outside that experiment is a
+    valid comparison; a file per experiment means a reader never has to filter the
+    other seven out. The experiment stays a column, so the files concatenate back
+    into the single table this used to be.
+    """
+    paths = []
+    for exp in sorted({e for (e, _, _) in data}):
+        path = os.path.join(outdir, "{}.csv".format(exp))
+        with open(path, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["experiment", "config", "network", "run", "metric"] + list(COLS[1:]))
+            for (e, config, run) in sorted(data):
+                if e != exp:
+                    continue
+                for net in sorted(data[(e, config, run)]):
+                    for metric in METRICS:
+                        rec = data[(e, config, run)][net].get(metric)
+                        if rec is None:
+                            continue
+                        w.writerow([e, config, net, run, metric] + [rec[c] for c in COLS[1:]])
+        paths.append(path)
+    return paths
 
 
 def write_summary(data, outdir):
@@ -937,7 +951,8 @@ def main():
     with open(os.path.join(aggdir, "tables.txt"), "w") as fh:
         fh.write(text)
 
-    print(f"[aggregate] wrote {write_raw(data, aggdir)}")
+    for path in write_raw(data, aggdir):
+        print(f"[aggregate] wrote {path}")
     print(f"[aggregate] wrote {write_summary(data, aggdir)}")
     print(f"[aggregate] wrote {os.path.join(aggdir, 'tables.txt')}")
 
