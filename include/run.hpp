@@ -88,6 +88,7 @@ public:
     const std::string& label()          const noexcept { return label_; }
     std::string        allocationName() const { return allocation_->name(); }
     std::size_t        inputCount()     const noexcept { return inputSet_.count(); }
+    int                inputSide()      const noexcept { return engine_.inputSide(); }
     bool               fixedInputs()    const noexcept { return inputSet_.isFixed(); }
 
     void warmup();                    // cfg::numWarmup inferences, not measured

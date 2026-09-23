@@ -30,21 +30,21 @@ std::vector<std::string> inputs::listImages(const std::string& dir) {
 // crash: it quietly degrades accuracy, and the latency is unaffected, so the
 // benchmark would look perfect while the model became a random number
 // generator. That is why it is spelled out step by step.
-void inputs::preprocess(const cv::Mat& bgrImage, float* dst) {
-    const int plane = cfg::imageSize * cfg::imageSize;
+void inputs::preprocess(const cv::Mat& bgrImage, float* dst, int side, int shortSide) {
+    const int plane = side * side;
 
     // 1. Resize so the SHORTEST side becomes 256. The aspect ratio is kept,
     //    so one of the two sides ends up longer than the crop below.
     const int h = bgrImage.rows, w = bgrImage.cols;
-    const float scale = float(cfg::resizeShortSide) / std::min(h, w);
+    const float scale = float(shortSide) / std::min(h, w);
     cv::Mat resized;
     cv::resize(bgrImage, resized, cv::Size(int(w * scale), int(h * scale)));
 
     // 2. Centre-crop 224x224 out of it. The crop can only succeed because step
     //    1 guaranteed both sides are at least 224.
-    const int x0 = (resized.cols - cfg::imageSize) / 2;
-    const int y0 = (resized.rows - cfg::imageSize) / 2;
-    cv::Mat cropped = resized(cv::Rect(x0, y0, cfg::imageSize, cfg::imageSize)).clone();
+    const int x0 = (resized.cols - side) / 2;
+    const int y0 = (resized.rows - side) / 2;
+    cv::Mat cropped = resized(cv::Rect(x0, y0, side, side)).clone();
 
     // 3. OpenCV loads in BGR; the networks were trained on RGB. Swapping the
     //    channels is the single easiest step to forget, and it costs accuracy
@@ -78,11 +78,23 @@ void inputs::preprocess(const cv::Mat& bgrImage, float* dst) {
 // sample.
 inputs::InputSet::InputSet(const Options& opts,
                            const std::vector<std::string>& images,
-                           std::size_t tensorSize)
-    : fixed_(opts.fixedInputs), tensorSize_(tensorSize)
+                           std::size_t tensorSize,
+                           int side)
+    : fixed_(opts.fixedInputs), tensorSize_(tensorSize), side_(side)
 {
     if (tensorSize_ == 0)
         throw std::runtime_error("input tensor size is zero");
+
+    // The resize target is the same recipe the benchmark has always used,
+    // expressed as a ratio rather than as a constant: resize the short side to
+    // 256 for a 224 crop, and to whatever the same ratio gives otherwise. For a
+    // 224 engine this is exactly 256, so nothing about the existing inputs
+    // changes. Integer arithmetic, rounded to nearest.
+    shortSide_ = (side_ * cfg::resizeShortSide + cfg::imageSize / 2) / cfg::imageSize;
+    if (side_ <= 0 ||
+        std::size_t(cfg::channels) * std::size_t(side_) * std::size_t(side_) != tensorSize_)
+        throw std::runtime_error(
+            "input geometry does not match the tensor size it was given");
     if (images.empty())
         throw std::runtime_error("no images available for the input set");
 
@@ -109,7 +121,7 @@ inputs::InputSet::InputSet(const Options& opts,
                 (wanted <= 1) ? 0 : (k * (images.size() - 1)) / (wanted - 1);
             cv::Mat img = cv::imread(images[idx], cv::IMREAD_COLOR);
             if (img.empty()) continue;              // skip unreadable
-            preprocess(img, buffers_.data() + stored * tensorSize_);
+            preprocess(img, buffers_.data() + stored * tensorSize_, side_, shortSide_);
             names_.push_back(fs::path(images[idx]).filename().string());
             ++stored;
         }
@@ -137,7 +149,7 @@ const float* inputs::InputSet::at(std::size_t i) {
     const std::string& path = images_[i % images_.size()];
     cv::Mat img = cv::imread(path, cv::IMREAD_COLOR);
     if (img.empty()) throw std::runtime_error("cannot read image: " + path);
-    preprocess(img, scratch_.data());
+    preprocess(img, scratch_.data(), side_, shortSide_);
     return scratch_.data();
 }
 

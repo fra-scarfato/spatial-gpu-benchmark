@@ -974,3 +974,68 @@ engines, the same images and the same protocol.
 transcribed from `bench/aggregate/tables.txt` and verified against it, but only
 Experiment 5 is rendered by `tex-tables.py`. The numbers are reproducible either
 way, because `tables.txt` is generated from the runs.
+
+## The models
+
+The engines themselves live one level up, in `../models`, because they are data.
+What belongs here is how they were made, which until now was recorded nowhere.
+
+```
+../models/mobilenetv2-12.onnx     the source graph
+../models/mobilenetv2-12.engine   the engine every Experiment 1-5 run loads
+../models/resnet50-v2-7.onnx
+../models/resnet50-v2-7.engine
+../models/auxstreams/<net>-aux<N>.engine    the same graph, built with --maxAuxStreams=N
+../models/auxstreams/<net>-aux<N>.buildlog  trtexec's own log for each of them
+```
+
+`trtexec` is not on `$PATH`; the full path is `/usr/src/tensorrt/bin/trtexec`.
+
+```bash
+/usr/src/tensorrt/bin/trtexec --onnx=models/mobilenetv2-12.onnx --fp16 \
+    --saveEngine=models/mobilenetv2-12.engine
+
+/usr/src/tensorrt/bin/trtexec --onnx=models/resnet50-v2-7.onnx --fp16 \
+    --saveEngine=models/resnet50-v2-7.engine
+```
+
+The census builds are the same line plus `--maxAuxStreams=N` for N in 0, 1, 2 and 4,
+with a different `--saveEngine`. Their build logs are kept because they *are* the
+census result: what the builder decided, and why. MobileNet reports, under every cap,
+
+```
+[TRT] [MS] Multi stream is disabled as cannot find an opportunity to leverage it
+```
+
+and ResNet, with a cap of at least one,
+
+```
+[TRT] [MS] Number of aux streams is 1
+```
+
+Two things about `--fp16`. It is permission, not instruction: TensorRT uses half
+precision where it judges it fastest and leaves the two I/O bindings in FP32, which
+is why a built engine reports 135 FP16 and 2 FP32 layer mentions. And asking for
+strict FP16 instead (`--precisionConstraints=obey --layerPrecisions=*:fp16`) measured
+0.5310 ms against 0.5391 ms, so the engines used here are the permissive build. A
+difference that size is inside run-to-run noise; the point is that it is not a
+different engine in any way that matters.
+
+**Engines are not portable across TensorRT versions.** One built by a newer
+TensorRT fails to load on an older one — `deserializeCudaEngine` returns null and
+the process dies. Always build on the machine that will run it.
+
+### Adding a network
+
+1. Build it the same way, with `--fp16`, and keep `trtexec`'s log beside the engine.
+2. Run `utility/auxprobe <engine>` for the auxiliary-stream count, and build the
+   0/1/2/4 caps if it reports more than zero. That is the census, and it decides
+   whether the declared-concurrency experiments have anything to test on it: a
+   network with one stream cannot exercise them.
+3. Nothing else is needed. The runner reads the input geometry from the engine, so
+   a network whose input is not 224x224 needs no source change, and every log says
+   what it found (`... 8 inputs, 3x224x224 in`).
+4. The preprocessing assumes ImageNet-style inputs: three channels, square, resize
+   the short side to 8/7 of the side, centre-crop. An engine that is not square or
+   not three-channel is refused when it is loaded, with a message saying so, rather
+   than measured and reported as if it had been.
