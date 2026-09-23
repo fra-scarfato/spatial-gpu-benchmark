@@ -69,11 +69,15 @@ inception:
 vit:
 	$(TRTEXEC) --onnx=$(VIT)/vit-base-patch16-224.onnx $(FP16) --shapes=pixel_values:1x3x224x224 --saveEngine=$(VIT)/engine/vit-base-patch16-224.engine > $(VIT)/engine/vit-base-patch16-224.buildlog 2>&1
 
-# RetinaNet-9 builds, and adopts the most streams of any network here, but it is not
-# measurable with the current runner: its input is 480x640, fixed by the graph, and
-# the preprocessing centre-crops a square. Kept so the census is reproducible.
+# RetinaNet-9 is a detector: a 480x640 input, fixed by the graph, and ten output
+# tensors. It adopts more streams than anything else here, and the runner honours
+# both of those -- the input geometry comes from the engine, and every output is
+# bound rather than only the last one.
 retinanet:
 	$(TRTEXEC) --onnx=$(RN)/retinanet-9.onnx $(FP16) --saveEngine=$(RN)/engine/retinanet-9.engine > $(RN)/engine/retinanet-9.buildlog 2>&1
+	for n in 1 8; do \
+		$(TRTEXEC) --onnx=$(RN)/retinanet-9.onnx $(FP16) --maxAuxStreams=$$n --saveEngine=$(RN)/engine/retinanet-9-aux$$n.engine > $(RN)/engine/retinanet-9-aux$$n.buildlog 2>&1; \
+	done
 
 # What every built engine says about itself. This is the census, and it is the
 # reason to keep the engines: it reads them, it does not rebuild them.
