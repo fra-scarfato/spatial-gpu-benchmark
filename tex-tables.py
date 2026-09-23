@@ -141,9 +141,9 @@ def t_residual():
   \setlength{\tabcolsep}{5pt}
   \begin{tabular}{l l c r r r r r}
     \toprule
-    Network & Configuration & SMs & Isolated (ms) & \multicolumn{2}{c}{2 threads} & \multicolumn{2}{c}{1 thread} \\
+    Network & Configuration & SMs & Isolated median (ms) & \multicolumn{2}{c}{2 threads} & \multicolumn{2}{c}{1 thread} \\
     \cmidrule(lr){5-6} \cmidrule(lr){7-8}
-     & & & & Concurrent & Overhead & Concurrent & Overhead \\
+     & & & & Concurrent median & Overhead & Concurrent median & Overhead \\
     \midrule""")
     for cfg, m, r in (("baseline", 16, 16), ("50_50", 8, 8), ("75_25", 12, 4), ("25_75", 4, 12)):
         for net, sms in (("mobilenet", m), ("resnet", r)):
@@ -157,7 +157,8 @@ def t_residual():
         emit("    \\midrule" if cfg != "25_75" else "    \\bottomrule")
     emit(r"""  \end{tabular}
   \caption{Experiment 5: residual interference recomputed with a single
-  submitting thread, against the same isolated runs at the same SM count. Part of
+  submitting thread, against the same isolated runs at the same SM count.
+  Every value is the median across the five runs of that run-level statistic. Part of
   what Table~\ref{tab:exp2-residual} attributed to interference that spatial
   separation could not remove was the submission handoff.}
   \label{tab:exp5-residual}
@@ -203,7 +204,7 @@ def family(title, exp, one, pairs, label, caption):
   \setlength{\tabcolsep}{3pt}
   \begin{tabular}{l l r r r r r r r r}
     \toprule
-    Configuration & Declared & \multicolumn{3}{c}{MobileNet V2-12} & \multicolumn{3}{c}{ResNet-50 v2-7} & \multicolumn{2}{c}{Aggregate} \\
+    Configuration & Declared & \multicolumn{3}{c}{MobileNet V2-12 (median, ms)} & \multicolumn{3}{c}{ResNet-50 v2-7 (median, ms)} & \multicolumn{2}{c}{Aggregate (median, inf/s)} \\
     \cmidrule(lr){3-5} \cmidrule(lr){6-8} \cmidrule(lr){9-10}
      & & 2 th. & 1 th. & $\times$ & 2 th. & 1 th. & $\times$ & 2 th. & 1 th. \\
     \midrule""".replace("2 th.", "2 thr").replace("1 th.", "1 thr"))
@@ -248,7 +249,8 @@ def t_frame():
     emit(r"""    \bottomrule
   \end{tabular}
   \caption{Experiment 5: the tail at the 75/25 split with the submitting thread
-  varied and nothing else, beside the mechanisms of Experiments 2 and 3 in
+  varied and nothing else, each value the median across the five runs of that
+  run-level statistic, beside the mechanisms of Experiments 2 and 3 in
   Table~\ref{tab:exp4-tail}.}
   \label{tab:exp5-tail}
 \end{table}
