@@ -388,21 +388,19 @@ TrtEngine::TrtEngine(const std::string& enginePath, SmAllocation& allocation)
     for (int d = 0; d < inputDims.nbDims; ++d)  inputVolume_  *= inputDims.d[d];
     for (int d = 0; d < outputDims.nbDims; ++d) outputVolume_ *= outputDims.d[d];
 
-    // The input geometry comes from the engine, not from config.hpp, so a
-    // network with any input size works without a source change. What the
-    // preprocessing does assume is a square, three-channel image, because it
-    // splits the tensor into three planes and centre-crops a square; anything
-    // else is refused here. Refused loudly, because getting it wrong is
-    // invisible: the timing is unaffected and only the accuracy quietly dies.
+    // The input geometry comes from the engine, not from config.hpp, so a network
+    // with any input size works without a source change. What the preprocessing
+    // does assume is three channels and two spatial dimensions; anything else is
+    // refused here. Refused loudly, because getting it wrong is invisible: the
+    // timing is unaffected and only the accuracy quietly dies.
     if (inputDims.nbDims < 3)
         throw std::runtime_error("the engine's input has fewer than three dimensions");
-    inputSide_ = inputDims.d[inputDims.nbDims - 1];
+    inputHeight_ = inputDims.d[inputDims.nbDims - 2];
+    inputWidth_  = inputDims.d[inputDims.nbDims - 1];
     const std::int64_t inChannels = inputDims.d[inputDims.nbDims - 3];
-    const bool inSquare =
-        inputDims.d[inputDims.nbDims - 1] == inputDims.d[inputDims.nbDims - 2];
-    if (inChannels != cfg::channels || !inSquare)
+    if (inChannels != cfg::channels || inputHeight_ <= 0 || inputWidth_ <= 0)
         throw std::runtime_error(
-            "the preprocessing assumes three channels and a square input");
+            "the preprocessing assumes three channels and two spatial dimensions");
 
     // 4. Device buffers, plus a pinned host buffer for the output (pinned
     //    because of the async download in infer()).

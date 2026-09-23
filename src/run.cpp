@@ -47,7 +47,8 @@ Network::Network(const NetworkOptions& net,
       // engine_ is built before inputSet_ because declaration order decides,
       // and inputSet_ needs engine_.inputVolume() to size itself.
       engine_(net.enginePath, *allocation_),
-      inputSet_(opts, images, std::size_t(engine_.inputVolume()), engine_.inputSide()),
+      inputSet_(opts, images, std::size_t(engine_.inputVolume()),
+                engine_.inputHeight(), engine_.inputWidth()),
       spec_(spec),
       csv_(spec.csvPrefix + "_latencies.csv")
 {
@@ -382,7 +383,7 @@ Run::Run(const Options& opts)
     for (const auto& n : nets_)
         std::cout << "[info] network '" << n->label() << "': " << n->allocationName()
                   << ", " << n->inputCount() << " inputs, " << cfg::channels << "x"
-                    << n->inputSide() << "x" << n->inputSide() << " in\n";
+                    << n->inputHeight() << "x" << n->inputWidth() << " in\n";
     std::cout << "[info] dataset:     " << images_.size() << " images available\n"
               << "[info] input mode:  "
               << (nets_[0]->fixedInputs() ? "fixed" : "dataset") << "\n";

@@ -55,10 +55,10 @@ std::vector<std::string> listImages(const std::string& dir);
 // what the model expects. And OpenCV loads BGR while the network wants RGB.
 //
 // `dst` must have room for cfg::channels * imageSize * imageSize floats.
-// `side` is the engine's input side and `shortSide` the resize target that
-// precedes the centre crop; both come from the engine, so the geometry is not
-// a property of this file.
-void preprocess(const cv::Mat& bgr, float* dst, int side, int shortSide);
+// `height` and `width` are the engine's input geometry, so it is not a property
+// of this file. The image is resized so that both sides are at least as large as
+// the crop, then cropped centrally to width x height.
+void preprocess(const cv::Mat& bgr, float* dst, int height, int width);
 
 // The set of tensors the timed loop draws from.
 //
@@ -72,7 +72,7 @@ public:
     InputSet(const Options& opts,
              const std::vector<std::string>& images,
              std::size_t tensorSize,           // floats per input (= engine inputVolume)
-             int side);                        // the engine's spatial input side
+             int height, int width);           // the engine's spatial input geometry
 
     const float* at(std::size_t i);
 
@@ -83,8 +83,8 @@ public:
 private:
     bool        fixed_;
     std::size_t tensorSize_;
-    int         side_ = 0;                     // from the engine
-    int         shortSide_ = 0;                // resize before the centre crop
+    int         height_ = 0;                   // from the engine
+    int         width_  = 0;
 
     // Fixed mode.
     PinnedHostBuffer         buffers_;         // nFixed_ * tensorSize_ floats

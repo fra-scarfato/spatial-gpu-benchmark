@@ -270,12 +270,13 @@ public:
     std::int64_t inputVolume()  const noexcept { return inputVolume_; }
     std::int64_t outputVolume() const noexcept { return outputVolume_; }
 
-    // The spatial side of the input, read from the engine at construction.
-    // The preprocessing needs it and must not assume 224: a network with
-    // another input size is a valid subject, and the contract that matters is
+    // The spatial geometry of the input, read from the engine at construction.
+    // The preprocessing needs it and must not assume 224, or a square: a network
+    // with any input size is a valid subject, and the contract that matters is
     // the shape baked into the engine. Validated there, so by the time anyone
-    // asks, the input is known to be three-channel and square.
-    int inputSide() const noexcept { return inputSide_; }
+    // asks, the input is known to be three-channel with two spatial dimensions.
+    int inputHeight() const noexcept { return inputHeight_; }
+    int inputWidth()  const noexcept { return inputWidth_; }
 
     const std::string& inputName()  const noexcept { return inputName_; }
     const std::string& outputName() const noexcept { return outputName_; }
@@ -310,7 +311,8 @@ private:
     std::unique_ptr<nvinfer1::IExecutionContext> context_;
     std::string  inputName_, outputName_;
     std::int64_t inputVolume_  = 0;
-    int          inputSide_    = 0;   // spatial side, from the engine
+    int          inputHeight_  = 0;   // spatial geometry, from the engine
+    int          inputWidth_   = 0;
     std::int64_t outputVolume_ = 0;
 
     // Device staging: both ends are the engine's own working memory.
