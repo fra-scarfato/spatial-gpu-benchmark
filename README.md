@@ -981,22 +981,26 @@ The engines themselves live one level up, in `../models`, because they are data.
 What belongs here is how they were made, which until now was recorded nowhere.
 
 ```
-../models/mobilenetv2-12.onnx     the source graph
-../models/mobilenetv2-12.engine   the engine every Experiment 1-5 run loads
-../models/resnet50-v2-7.onnx
-../models/resnet50-v2-7.engine
-../models/auxstreams/<net>-aux<N>.engine    the same graph, built with --maxAuxStreams=N
-../models/auxstreams/<net>-aux<N>.buildlog  trtexec's own log for each of them
+../models/<model>/          one folder per network: the source graph, an .onnx plus any
+                            data file it needs, and its labels if it ships them
+../models/<model>/engine/   every engine build of that network, with trtexec's own log
+                            beside each one
 ```
 
 `trtexec` is not on `$PATH`; the full path is `/usr/src/tensorrt/bin/trtexec`.
 
-```bash
-/usr/src/tensorrt/bin/trtexec --onnx=models/mobilenetv2-12.onnx --fp16 \
-    --saveEngine=models/mobilenetv2-12.engine
+What is there now: `mobilenetv2-12/engine/` and `resnet50-v2-7/engine/` each hold
+the default engine and the four auxiliary-stream builds; `inception_v3-onnx-float/`
+holds a downloaded graph that has not been built yet, with a 299x299 input and its
+weights in a separate `.data` file beside the `.onnx`, which trtexec picks up on its
+own.
 
-/usr/src/tensorrt/bin/trtexec --onnx=models/resnet50-v2-7.onnx --fp16 \
-    --saveEngine=models/resnet50-v2-7.engine
+```bash
+/usr/src/tensorrt/bin/trtexec --onnx=models/mobilenetv2-12/mobilenetv2-12.onnx --fp16 \
+    --saveEngine=models/mobilenetv2-12/engine/mobilenetv2-12.engine
+
+/usr/src/tensorrt/bin/trtexec --onnx=models/resnet50-v2-7/resnet50-v2-7.onnx --fp16 \
+    --saveEngine=models/resnet50-v2-7/engine/resnet50-v2-7.engine
 ```
 
 The census builds are the same line plus `--maxAuxStreams=N` for N in 0, 1, 2 and 4,

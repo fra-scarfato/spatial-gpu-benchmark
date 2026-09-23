@@ -67,13 +67,13 @@ OUT="${OUT:-$DATA/bench}"       # results go in the data folder, outside the
                                 # git repository
 RUNNER="$HERE/runner"
 DS="$DATA/dataset/imagenet-1k"
-MOB="$DATA/models/mobilenetv2-12.engine"
-RES="$DATA/models/resnet50-v2-7.engine"
+MOB="$DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine"
+RES="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7.engine"
 # ResNet with multi-stream explicitly permitted, so it really issues two streams
 # (main + one auxiliary). The default build leaves multi-stream off, so this is a
 # different engine and the numbers are not comparable to the default build except
 # where the job family below deliberately meets it.
-RESAUX="$DATA/models/auxstreams/resnet50-v2-7-aux1.engine"
+RESAUX="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7-aux1.engine"
 
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set
