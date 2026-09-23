@@ -81,7 +81,7 @@ EXP_DIR = {
     # The CPU-pinning arms live in two folders because they were run at
     # different times; the config names do not collide, so one key is enough and
     # the aggregate picks up every replicate.
-    # The same three intra-process families, re-measured with a single
+    # The same three intra-process families, measured with a single
     # submitting thread. Distinct keys on purpose: mapping them onto exp2/
     # exp4/exp5 would collide with the two-thread runs of the same config
     # names, and one set would silently overwrite the other.

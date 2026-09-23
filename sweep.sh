@@ -656,7 +656,7 @@ add "concurrent-aux_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
 # ---------------------------------------------------------------------------
-# The same three intra-process families, re-measured with ONE submitting
+# The same three intra-process families, measured with ONE submitting
 # thread.
 #
 # The pair has so far always been submitted by two threads, one per network.
