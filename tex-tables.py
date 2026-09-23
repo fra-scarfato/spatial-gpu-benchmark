@@ -279,4 +279,82 @@ family("auxiliary stream", "exp5", "exp5-1t",
        "workloads; the declared concurrency that matches it is three.")
 t_frame()
 
+# ------------------------------------------------- the mechanism comparison
+# Experiment 3's four-way table sets the mechanisms side by side at matched
+# ratios. Experiment 5 repeats it with the green context submitted by a single
+# thread, which is the only row that differs between the two — so both use these.
+def fourway_rows(gc_exp):
+    yield ("--- (none)", "MPS default", "exp3", "mps_default")
+    for ratio, cfg in (("50/50", "50_50"), ("75/25", "75_25"), ("25/75", "25_75")):
+        yield (ratio, "green context", gc_exp, cfg)
+        yield (ratio, "MPS static", "exp3", "mps_static_" + cfg)
+        yield (ratio, "MPS ATP", "exp3", "mps_atp_" + cfg)
+
+
+def t_fourway(label, gc_exp, caption):
+    """The four mechanisms at matched ratios, with the green context from gc_exp."""
+    emit(r"""\begin{table}[H]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{l l r r r r r}
+    \toprule
+    Ratio & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & \multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\
+    \cmidrule(lr){3-4} \cmidrule(lr){5-6}
+     & & Median (ms) & Thr.\ (inf/s) & Median (ms) & Thr.\ (inf/s) & (inf/s) \\
+    \midrule""")
+    for ratio, mech, exp, cfg in fourway_rows(gc_exp):
+        if mech == "green context":
+            emit("    \\midrule")
+        mv, rv = med(exp, cfg, "mobilenet"), med(exp, cfg, "resnet")
+        emit("    {} & {} & {} & {:.0f} & {} & {:.0f} & {:.0f} \\\\".format(
+            ratio, mech, ms(mv), 1000.0 / mv if mv else 0,
+            ms(rv), 1000.0 / rv if rv else 0, agg_tp(exp, cfg) or 0))
+    emit(r"""    \bottomrule
+  \end{tabular}
+  \caption{""" + caption + r"""}
+  \label{""" + label + r"""}
+\end{table}
+""")
+
+
+def t_fourway_dispersion(label, gc_exp, caption):
+    """The dispersion of the same comparison."""
+    emit(r"""\begin{table}[H]
+  \centering
+  \scriptsize
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{l l l r r r r r r r}
+    \toprule
+    Ratio & Mechanism & Network & std & std $\times$iso & p95 & p99 & tail & tail $\times$iso & obs-max \\
+    \midrule""")
+    for ratio, mech, exp, cfg in fourway_rows(gc_exp):
+        if mech == "green context":
+            emit("    \\midrule")
+        for net in ("mobilenet", "resnet"):
+            emit("    {} & {} & {} & {} & {} & {} & {} & {} & {} & {} \\\\".format(
+                ratio, mech, net,
+                ms(col2(exp, cfg, net, "std")),
+                xr(col2("exp1", net + "_whole", net, "std"), col2(exp, cfg, net, "std")),
+                ms(col2(exp, cfg, net, "p95")), ms(col2(exp, cfg, net, "p99")),
+                ms(tail(exp, cfg, net)), xr(iso(net), tail(exp, cfg, net)),
+                ms(obs(exp, cfg, net))))
+    emit(r"""    \bottomrule
+  \end{tabular}
+  \caption{""" + caption + r"""}
+  \label{""" + label + r"""}
+\end{table}
+""")
+
+# The comparison tables. The last one belongs in Experiment 3, not here: it is a
+# dispersion twin of that subsection's four-way table, kept in this script so every
+# LaTeX table in the chapter is produced by one place.
+t_fourway("tab:exp5-fourway", "exp2-1t",
+          "Experiment 5: the mechanisms at matched ratios with the green context submitted by a single thread. The MPS rows are Experiment 3's and do not change, so only the green-context rows differ from Table~\\ref{tab:exp3-fourway}. Each value is the median across the five runs of that run-level statistic.")
+t_fourway_dispersion("tab:exp5-fourway-dispersion", "exp2-1t",
+                     'Experiment 5: the dispersion of the comparison above, with the green context submitted by a single thread, in the form of Table~\\ref{tab:exp1-dispersion}. Each value is the median across the five runs of that run-level statistic.')
+t_fourway_dispersion("tab:exp3-fourway-dispersion", "exp2",
+                     'Experiment 3: the dispersion of the comparison above, in the form of Table~\\ref{tab:exp1-dispersion}. Each value is the median across the five runs of that run-level statistic.')
+
+
 sys.stdout.write("\n".join(OUT))
