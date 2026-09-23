@@ -215,7 +215,7 @@ def load(outdir):
                 net = config.split("_")[0]
             elif config == "mps_single":
                 net = "mobilenet"
-            elif exp == "exp5" and config == "aux1_whole":
+            elif exp.startswith("exp5") and config == "aux1_whole":
                 # The isolated baseline of the auxiliary-stream family is the
                 # aux-enabled ResNet on its own.
                 net = "resnet"
@@ -744,7 +744,10 @@ def table_pinning(data, lines):
 # by several times, while the median moves by a few percent at most.
 SUBMITTER_PAIRS = (
     ("Experiment 2, green contexts",   "exp2", "exp2-1t"),
-    ("Experiment 4, work queues",      "exp4", "exp4-1t"),
+    # The work queue family has no exp4 key of its own: aggregate.py maps its
+    # folder onto exp2 so its rows sit beside the Experiment 2 row each one has to
+    # reproduce. Only the one-thread family is separate, so the pair is exp2 here.
+    ("Experiment 4, work queues",      "exp2", "exp4-1t"),
     ("Experiment 5, auxiliary stream", "exp5", "exp5-1t"),
 )
 

@@ -719,6 +719,22 @@ done
 add "concurrent-aux-1t_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
+# How many jobs the current selection contains. Counted before the loops, so
+# every job line can say "N/M" and `tail -f` becomes a progress indicator on its
+# own. A resumed sweep counts the jobs it skips: they are done, so they are
+# progress, not gaps in the numbering.
+SELECTED=0
+job_no=0
+for n in "${JOB_NAME[@]}"; do
+    e="${n%%_*}"
+    IFS=',' read -ra want <<< "$EXPS"
+    for w in "${want[@]}"; do
+        case "$e" in *"$w"*) SELECTED=$((SELECTED + 1)); break ;; esac
+    done
+done
+printf '[sweep] %d jobs selected, %d runs each, %d runs total\n' \
+       "$SELECTED" "$RUNS" "$((SELECTED * RUNS))"
+
 # Has this configuration already been measured?
 #
 # The number of stats files depends on how many NETWORKS a run has, not on how
@@ -864,13 +880,14 @@ for r in $(seq 1 "$RUNS"); do
             case "$exp" in *"$w"*) selected=1; break ;; esac
         done
         [ "$selected" = 1 ] || continue
+      job_no=$((job_no + 1))
 
         # Kind and mps are needed here for the done-check and the dry-run
         # display; the command fields are only used by the dry run.
         IFS='|' read -r kind mps _eA _eB _cA _cB _ratio <<< "${JOB_SPEC[$i]}"
 
         if job_done "$out" && [ "$FORCE" = 0 ]; then
-            printf '[sweep] skip %s (already done)\n' "$name"
+            printf '[sweep] %d/%d  skip %s (already done)\n' "$job_no" "$((SELECTED * RUNS))" "$name"
             continue
         fi
 
@@ -878,11 +895,11 @@ for r in $(seq 1 "$RUNS"); do
         # twice in the log after a restart looks like a bug rather than the
         # resumability doing its job.
         if interrupted "$out"; then
-            printf '[sweep] re-running %s (a previous attempt was interrupted)\n' "$name"
+            printf '[sweep] %d/%d  re-running %s (a previous attempt was interrupted)\n' "$job_no" "$((SELECTED * RUNS))" "$name"
         fi
 
         if [ "$DRY" = 1 ]; then
-            printf '  %-26s [%s/%s]\n' "$name" "$kind" "$mps"
+            printf '  %d/%d  %-26s [%s/%s]\n' "$job_no" "$((SELECTED * RUNS))" "$name" "$kind" "$mps"
             if [ "$kind" = solo ]; then
                 printf '      A: %s %s --csv %s\n' "$_cA" "$PROTO" "$out"
             else
@@ -905,7 +922,7 @@ for r in $(seq 1 "$RUNS"); do
         # Bring the MPS daemon into the mode this job needs (off/on/static).
         mps_ensure "$mps" || exit 1
 
-        printf '[sweep] %s\n' "$name"
+        printf '[sweep] %d/%d  %s\n' "$job_no" "$((SELECTED * RUNS))" "$name"
         do_job "${JOB_SPEC[$i]}" "$out" || exit 1
 
         [ "$mps" = static ] && mps_remove_partitions
@@ -921,5 +938,5 @@ elif [ "$SMOKE" = 1 ]; then
     echo "[sweep] smoke test complete — the plumbing works."
     echo "        Inspect a log, then run: ./sweep.sh"
 else
-    echo "[sweep] done. Aggregate with:  python3 $HERE/aggregate.py --out $OUT"
+    echo "[sweep] done. $((SELECTED * RUNS)) of $((SELECTED * RUNS)) runs. Aggregate with:  python3 $HERE/aggregate.py --out $OUT"
 fi
