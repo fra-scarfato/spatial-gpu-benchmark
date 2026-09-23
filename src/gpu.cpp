@@ -423,6 +423,10 @@ TrtEngine::TrtEngine(const std::string& enginePath, SmAllocation& allocation)
         throw std::runtime_error("cudaEventCreate (start) failed");
     if (cudaEventCreate(&stopEvt_) != cudaSuccess)
         throw std::runtime_error("cudaEventCreate (stop) failed");
+    if (cudaEventCreate(&spanStartEvt_) != cudaSuccess)
+        throw std::runtime_error("cudaEventCreate (span start) failed");
+    if (cudaEventCreate(&spanStopEvt_) != cudaSuccess)
+        throw std::runtime_error("cudaEventCreate (span stop) failed");
 }
 
 TrtEngine::~TrtEngine() {
@@ -431,13 +435,16 @@ TrtEngine::~TrtEngine() {
 
     if (startEvt_) cudaEventDestroy(startEvt_);
     if (stopEvt_)  cudaEventDestroy(stopEvt_);
+    if (spanStartEvt_) cudaEventDestroy(spanStartEvt_);
+    if (spanStopEvt_)  cudaEventDestroy(spanStopEvt_);
     if (stream_)   cudaStreamDestroy(stream_);
     if (dInput_)   cudaFree(dInput_);
     if (dOutput_)  cudaFree(dOutput_);
     // hostOutput_ (pinned), engine_ and runtime_ free themselves.
 }
 
-double TrtEngine::infer(const float* hostInput) {
+void TrtEngine::submit(const float* hostInput) {
+
     const std::size_t inputBytes  = std::size_t(inputVolume_)  * sizeof(float);
     const std::size_t outputBytes = std::size_t(outputVolume_) * sizeof(float);
 
@@ -460,6 +467,10 @@ double TrtEngine::infer(const float* hostInput) {
     // message only on failure, so the happy path costs one predictable branch
     // per call, and an unchecked CUDA failure here would look like a wrong
     // latency rather than like an error.
+    // The span events bracket the whole step, copies included; the pair below
+    // still brackets the kernel alone, so gpu_ms keeps its meaning.
+    cudaCheck(cudaEventRecord(spanStartEvt_, stream_),
+              "cudaEventRecord (span start)");
     cudaCheck(cudaMemcpyAsync(dInput_, hostInput, inputBytes,
                               cudaMemcpyHostToDevice, stream_),
               "cudaMemcpyAsync (host to device)");
@@ -470,9 +481,49 @@ double TrtEngine::infer(const float* hostInput) {
     cudaCheck(cudaMemcpyAsync(hostOutput_.data(), dOutput_, outputBytes,
                               cudaMemcpyDeviceToHost, stream_),
               "cudaMemcpyAsync (device to host)");
+    cudaCheck(cudaEventRecord(spanStopEvt_, stream_),
+              "cudaEventRecord (span stop)");
+}
+
+// Non-blocking. cudaSuccess means the stream has drained; cudaErrorNotReady
+// means there is still work on it, which is the answer the single-thread
+// driver needs. Anything else is a real error and is raised as one.
+bool TrtEngine::ready() {
+    const cudaError_t st = cudaStreamQuery(stream_);
+    if (st == cudaSuccess)
+        return true;
+    if (st == cudaErrorNotReady)
+        return false;
+    cudaCheck(st, "cudaStreamQuery");
+    return false;   // unreachable: cudaCheck threw
+}
+
+  // The whole stream-side step: H2D + kernel + D2H, from events recorded on
+  // this network's own stream. Valid once the stream has drained, which
+  // finish() has already ensured.
+  //
+  // Events rather than the host clock, deliberately. A host span for the same
+  // step would include whatever the submitting thread was doing between the
+  // copy and the synchronisation: nothing when each network has its own
+  // thread, but the OTHER network's service time when one thread drives both.
+  // Taken on the stream, the number stays a property of the network it is
+  // filed under, whichever way the run was submitted.
+  double TrtEngine::wallMs() {
+      float ms = 0.0f;
+      cudaCheck(cudaEventElapsedTime(&ms, spanStartEvt_, spanStopEvt_),
+                "cudaEventElapsedTime (step)");
+      return double(ms);
+  }
+
+  double TrtEngine::finish() {
     cudaCheck(cudaStreamSynchronize(stream_), "cudaStreamSynchronize");
 
     float ms = 0.0f;
     cudaEventElapsedTime(&ms, startEvt_, stopEvt_);
     return double(ms);
+}
+
+double TrtEngine::infer(const float* hostInput) {
+    submit(hostInput);
+    return finish();
 }

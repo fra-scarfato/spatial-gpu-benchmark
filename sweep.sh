@@ -655,6 +655,70 @@ done
 add "concurrent-aux_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
+# ---------------------------------------------------------------------------
+# The same three intra-process families, re-measured with ONE submitting
+# thread.
+#
+# The pair has so far always been submitted by two threads, one per network.
+# That is the naive application and it stays: every table above is built on it.
+# It is also the source of the MobileNet tail, because two threads contend in
+# the launch path of one CUDA context, a launch is occasionally delayed, and the
+# GPU then idles inside the event window. MPS never showed the tail for the
+# mirror-image reason: it is two processes, and two processes do not share that
+# path.
+#
+# These arms change exactly one thing. A single thread drives both networks'
+# timed loops, keeping one inference in flight per network — the same depth the
+# threaded path has — so the two sets differ in the submitter and in nothing
+# else: same engines, same green contexts, same joint SM split, same queue
+# settings, same protocol. Measured effect on the pair at 75/25: MobileNet's
+# tail falls from 0.348 to 0.050 ms and its median improves slightly, while
+# throughput does not move.
+#
+# Select with:  ./sweep.sh --exp 1t
+ST="--submit-threads 1"
+
+for split in 50:50 75:25 25:75; do
+    mp="${split%%:*}"; rp="${split##*:}"
+    add "concurrent-greenctx-1t_${mp}_${rp}" \
+        "solo|off|||$RUNNER --dataset $DS --allocation greenctx $ST --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
+done
+add "concurrent-greenctx-1t_baseline" \
+    "solo|off|||$RUNNER --dataset $DS --allocation whole $ST --net $MOB:100:mobilenet --net $RES:100:resnet|"
+
+for split in 50:50 75:25; do
+    mp="${split%%:*}"; rp="${split##*:}"
+    for arm in devctx:8:device_ctx balanced:8:green_ctx_balanced \
+               devctx:2:device_ctx balanced:2:green_ctx_balanced \
+               devctx:1:device_ctx; do
+        tag="${arm%%:*}"; rest="${arm#*:}"
+        lim="${rest%%:*}"; scope="${rest##*:}"
+        add "concurrent-wq-1t_${tag}_${lim}_${mp}_${rp}" \
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx $ST --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
+    done
+done
+for lim in 8 2; do
+    add "concurrent-wq-1t_unpart_${lim}" \
+        "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation whole $ST --net $MOB:100:mobilenet --net $RES:100:resnet|"
+done
+
+for split in 50:50 75:25; do
+    mp="${split%%:*}"; rp="${split##*:}"
+    for arm in devctx:3:device_ctx balanced:3:green_ctx_balanced \
+               devctx:2:device_ctx balanced:2:green_ctx_balanced \
+               balanced:1:green_ctx_balanced balanced:8:green_ctx_balanced \
+               balanced:32:green_ctx_balanced devctx:8:device_ctx; do
+        tag="${arm%%:*}"; rest="${arm#*:}"
+        lim="${rest%%:*}"; scope="${rest##*:}"
+        add "concurrent-aux-1t_${tag}_${lim}_${mp}_${rp}" \
+            "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx $ST --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
+    done
+done
+# One network, so this arm has a single submitting thread in both sets; it is
+# repeated here only so the one-thread family stands on its own.
+add "concurrent-aux-1t_aux1_whole" \
+    "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
+
 # Has this configuration already been measured?
 #
 # The number of stats files depends on how many NETWORKS a run has, not on how
@@ -691,7 +755,8 @@ move_back() {  # $1 = tmpfs prefix, $2 = results prefix
     done
 }
 
-do_job() {  # $1 = spec, $2 = output prefix    local spec="$1" out="$2"
+do_job() {  # $1 = spec, $2 = output prefix
+    local spec="$1" out="$2"
     local kind mps envA envB cmdA cmdB ratio rc_a=0 rc_b=0
     # IFS is scoped to this one read, so it does not leak into the rest of the
     # function. `read` splits on the pipe and leaves empty fields empty.

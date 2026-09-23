@@ -74,6 +74,12 @@ void printUsage(const char* prog) {
         << "                        queues exist and is read from the environment before\n"
         << "                        CUDA starts, so set it in the shell).\n"
         << "\n"
+        << "Submission:\n"
+        << "  --submit-threads <N>  1 drives every network from a single thread,\n"
+        << "                        keeping them in flight but never entering the\n"
+        << "                        launch path from two places at once. 2 (default) is\n"
+        << "                        one submitting thread per network.\n"
+        << "\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -210,6 +216,13 @@ Options parseArgs(int argc, char** argv) {
             if (o.wqLimit == 0)
                 throw std::runtime_error(
                     "--wq-limit must be at least 1 (omit it to leave the driver default)");
+        } else if (arg == "--submit-threads") {
+            const unsigned v =
+                static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
+            if (v != 1 && v != 2)
+                throw std::runtime_error("--submit-threads expects 1 or 2, got: " +
+                                         std::to_string(v));
+            o.submitThreads = v;
         } else {
             throw std::runtime_error("unknown option: " + arg);
         }

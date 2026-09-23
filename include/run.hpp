@@ -92,6 +92,12 @@ public:
 
     void warmup();                    // cfg::numWarmup inferences, not measured
     void measure(StartGate& gate);    // the timed phase, aligned with the others
+
+    // The single-submitter variant: one thread serves every network, keeping
+    // one inference in flight per network. Static so that it can reach the
+    // private measurement state of each of them; the loop itself lives in
+    // run.cpp next to measure(), which it deliberately does not replace.
+    static void measureInterleaved(const std::vector<Network*>& nets);
     void report() const;              // statistics table + throughput
     void writeStats() const;          // <prefix>_stats.csv
 

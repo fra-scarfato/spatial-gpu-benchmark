@@ -103,6 +103,7 @@ runner --dataset <dir> --net <engine>:<pct>[:<label>]  # one or more networks
 | `--sm-percent <P>` | with the positional form: SMs for `greenctx`, % of the device |
 | `--wq-scope <s>` | work queue sharing scope for each green context: `device_ctx` (the driver default: all contexts share one set of queues) or `green_ctx_balanced` (the driver tries to give balanced green contexts non-overlapping queues). **Omitted = no work queue resource in the descriptor at all**, which is what every run before Experiment 4 did |
 | `--wq-limit <N>` | how many concurrent stream-ordered workloads to declare to the driver, as a **hint** it consults when assigning queues. Not a stream limit. Needs `--allocation greenctx`. Distinct from `CUDA_DEVICE_MAX_CONNECTIONS`, which bounds how many queues exist and is read from the environment (§4.6) |
+| `--submit-threads <N>` | how many threads submit work to the GPU. `2` (default) is one thread per network, the naive application and what every measurement up to now used. `1` drives every network from a single thread, keeping one inference in flight per network: same engines, same partitions, same protocol, so the two differ in the submitter and nothing else |
 
 Outputs: `<prefix>_latencies.csv` (one row per inference:
 `phase,index,image,prep_ms,wall_ms,gpu_ms`), `<prefix>_stats.csv` (one row per
@@ -182,7 +183,7 @@ the repeated runs are what make the result trustworthy.
 | Metric | What it is | How |
 |---|---|---|
 | `gpu_ms` | **pure GPU compute**: only the inference kernels | CUDA events around the kernel launch |
-| `wall_ms` | the whole step: H2D + infer + D2H + sync | `std::chrono` |
+| `wall_ms` | the whole step **taken on the stream**: H2D + infer + D2H, copies included | CUDA events on that network's own stream |
 | `prep_ms` | decoding + preprocessing (≈0 in fixed mode) | `std::chrono` |
 
 **Why CUDA events for the GPU number:** a wall clock measures CPU time

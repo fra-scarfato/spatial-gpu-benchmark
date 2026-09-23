@@ -68,14 +68,17 @@ Network::Sample Network::step(std::size_t index) {
     const auto t1 = Clock::now();
 
     // H2D + kernel + D2H + sync; returns the pure GPU compute time.
-    const double gpuMs = engine_.infer(input);
-    const auto t2 = Clock::now();
+    const double gpuMs  = engine_.infer(input);
+    const double wallMs = engine_.wallMs();   // the same step, taken on the stream
 
-    // wall_ms spans t0..t2, so it covers the whole step; prep_ms covers t0..t1
-    // only, and is therefore a disjoint slice of it rather than extra time.
+    // prep_ms is the host cost of fetching THIS network's input, and is a
+    // disjoint slice of the step rather than extra time. wall_ms is deliberately
+    // NOT a host span: it comes from events on this network's stream over
+    // H2D + kernel + D2H, so it stays this network's number even when one thread
+    // drives several networks at once.
     Sample s;
     s.prepMs = float(std::chrono::duration<double, std::milli>(t1 - t0).count());
-    s.wallMs = float(std::chrono::duration<double, std::milli>(t2 - t0).count());
+    s.wallMs = float(wallMs);
     s.gpuMs  = float(gpuMs);
     return s;
 }
@@ -228,6 +231,99 @@ void Network::writeStats() const {
     std::cout << "Stats written to: " << path << "\n";
 }
 
+// One thread drives every network of the run.
+//
+// Each network keeps its own stream, its own CUDA events and its own statistics:
+// the number that matters is stamped on the device between that network's own
+// start and stop events, so when the host reads it cannot move it. What changes
+// is only that a single thread enters the launch path, and that it never blocks
+// on one network while the other has work outstanding.
+//
+// The shape is: keep exactly one inference in flight per network — the same
+// depth the threaded path has — harvest whichever network has drained, record
+// its sample, submit its next inference. Each network stops on its own rule, so
+// they can finish at different times.
+void Network::measureInterleaved(const std::vector<Network*>& nets) {
+    const std::size_t n = nets.size();
+
+    std::vector<bool>              enforce(n);
+    std::vector<std::size_t>       onePass(n);
+    std::vector<std::size_t>       count(n, 0);
+    std::vector<bool>              inFlight(n, false);
+    std::vector<double>            doneAt(n, 0.0);
+    std::vector<Clock::time_point> t0(n), t1(n);
+
+    for (std::size_t i = 0; i < n; ++i) {
+        enforce[i] = (nets[i]->spec_.minInferences > 0) ||
+                     (nets[i]->spec_.minDurationS > 0.0);
+        onePass[i] = nets[i]->inputSet_.count();
+        std::cout << "[info] '" << nets[i]->label() << "' timed phase: ";
+        if (enforce[i])
+            std::cout << "at least " << nets[i]->spec_.minInferences
+                      << " inferences AND at least " << nets[i]->spec_.minDurationS
+                      << " s\n";
+        else
+            std::cout << "single pass of " << onePass[i] << " inferences\n";
+    }
+
+    const auto start = Clock::now();
+
+    // Prime one inference per network, so the window begins with both
+    // partitions busy rather than with one of them idle.
+    for (std::size_t i = 0; i < n; ++i) {
+        t0[i] = Clock::now();
+        const float* input = nets[i]->inputSet_.at(0);
+        t1[i] = Clock::now();
+        nets[i]->engine_.submit(input);
+        inFlight[i] = true;
+    }
+
+    std::size_t running = n;
+    while (running > 0) {
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!inFlight[i] || !nets[i]->engine_.ready())
+                continue;
+
+            Sample s;
+            s.gpuMs  = float(nets[i]->engine_.finish());
+            s.wallMs = float(nets[i]->engine_.wallMs());   // per network, not per thread
+            s.prepMs = float(std::chrono::duration<double, std::milli>(t1[i] - t0[i]).count());
+
+            nets[i]->writeRow("bench", count[i], s);
+            nets[i]->gpuTimes_.push_back(s.gpuMs);
+            nets[i]->wallTimes_.push_back(s.wallMs);
+            nets[i]->prepTimes_.push_back(s.prepMs);
+            ++count[i];
+
+            const double elapsed = secondsSince(start);
+            const bool finished =
+                enforce[i]
+                    ? (count[i] >= nets[i]->spec_.minInferences &&
+                       elapsed >= nets[i]->spec_.minDurationS)
+                    : (count[i] >= onePass[i]);
+
+            if (finished) {
+                doneAt[i]   = elapsed;
+                inFlight[i] = false;
+                --running;
+            } else {
+                t0[i] = Clock::now();
+                const float* input = nets[i]->inputSet_.at(count[i]);
+                t1[i] = Clock::now();
+                nets[i]->engine_.submit(input);
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < n; ++i) {
+        nets[i]->timedCount_     = count[i];
+        nets[i]->timedDurationS_ = doneAt[i];
+        nets[i]->csv_.close();
+        std::cout << "[info] '" << nets[i]->label() << "': " << count[i]
+                  << " inferences in " << doneAt[i] << " s\n";
+    }
+}
+
 Run::Run(const Options& opts)
     : opts_(opts)
 {
@@ -304,6 +400,29 @@ void Run::execute() {
         nets_[0]->warmup();
         StartGate solo(1);
         nets_[0]->measure(solo);
+        return;
+    }
+
+    // Single-submitter variant: the timed phase is driven by ONE thread, so
+    // the two networks never enter the launch path at the same time. The
+    // warm-up still runs in parallel, so both reach the same contended
+    // steady state as in the threaded runs and this differs from them in
+    // exactly one thing.
+    if (opts_.submitThreads == 1) {
+        std::cout << "[info] one submitting thread for " << nets_.size()
+                  << " networks, each kept in flight\n";
+        std::vector<Network*> ptrs;
+        ptrs.reserve(nets_.size());
+        for (auto& n : nets_)
+            ptrs.push_back(n.get());
+
+        std::vector<std::thread> warm;
+        for (auto* p : ptrs)
+            warm.emplace_back([p] { p->warmup(); });
+        for (auto& t : warm)
+            t.join();
+
+        Network::measureInterleaved(ptrs);
         return;
     }
 

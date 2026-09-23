@@ -126,6 +126,13 @@ struct Options {
     std::string wqScope;      // "device_ctx" | "green_ctx_balanced" | ""
     unsigned    wqLimit = 0;  // 0 = do not set one
 
+    // How many threads submit work to the GPU. 2 is one thread per network,
+    // which is what every experiment so far used. 1 keeps the networks in
+    // flight but drives them from a single thread, so the launch path is
+    // never entered from two places at once — the control for whether the
+    // two-thread handoff is what produces the tail.
+    unsigned submitThreads = 2;
+
     // The networks: one entry is solo, two is concurrent.
     std::vector<NetworkOptions> networks;
 };

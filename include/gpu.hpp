@@ -286,7 +286,12 @@ public:
     // Uploads, launches, downloads, synchronises. Returns the pure GPU compute
     // time in milliseconds: CUDA events around the kernel launch only, so no
     // copies and no CPU work are included.
-    double infer(const float* hostInput);
+    void   submit(const float* hostInput);   // start it, do not wait
+    double finish();                         // wait for it, return its GPU time
+    double wallMs();                         // H2D + kernel + D2H, from events on
+                                             // this network's stream: per network
+    bool   ready();                          // has the stream drained? (no blocking)
+    double infer(const float* hostInput);    // submit() + finish(): the usual path
 
 private:
     static std::vector<char> readFile(const std::string& path);
@@ -311,4 +316,6 @@ private:
     cudaStream_t stream_   = nullptr;
     cudaEvent_t  startEvt_ = nullptr;
     cudaEvent_t  stopEvt_  = nullptr;
+    cudaEvent_t  spanStartEvt_ = nullptr;   // the whole step, copies included
+    cudaEvent_t  spanStopEvt_  = nullptr;
 };

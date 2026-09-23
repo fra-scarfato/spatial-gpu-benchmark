@@ -81,6 +81,13 @@ EXP_DIR = {
     # The CPU-pinning arms live in two folders because they were run at
     # different times; the config names do not collide, so one key is enough and
     # the aggregate picks up every replicate.
+    # The same three intra-process families, re-measured with a single
+    # submitting thread. Distinct keys on purpose: mapping them onto exp2/
+    # exp4/exp5 would collide with the two-thread runs of the same config
+    # names, and one set would silently overwrite the other.
+    "concurrent-greenctx-1t": "exp2-1t",
+    "concurrent-wq-1t":       "exp4-1t",
+    "concurrent-aux-1t":      "exp5-1t",
     "pinning":             "exp6",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
@@ -724,6 +731,65 @@ def table_pinning(data, lines):
     return lines
 
 
+# Two submitting threads against one.
+#
+# The two-thread runs are the naive application -- one thread per network -- and
+# every table above was built on them. The one-thread runs are the same
+# configurations with a single thread driving both networks, keeping one
+# inference in flight per network. Nothing else differs: same engines, same green
+# contexts, same joint SM split, same queue settings, same protocol.
+#
+# The comparison exists because the difference is not where the medians are. The
+# tail is what a real-time deployment cares about, and it is the tail that moves,
+# by several times, while the median moves by a few percent at most.
+SUBMITTER_PAIRS = (
+    ("Experiment 2, green contexts",   "exp2", "exp2-1t"),
+    ("Experiment 4, work queues",      "exp4", "exp4-1t"),
+    ("Experiment 5, auxiliary stream", "exp5", "exp5-1t"),
+)
+
+
+def table_submitter(data, lines):
+    lines.append(hdr("THE SUBMITTING THREAD: two threads against one"))
+    lines.append(
+        "  `x` is the one-thread value divided by the two-thread value, so below 1\n"
+        "  means the single submitter is better. tail is p99 - median; max is the\n"
+        "  observed maximum. Values in milliseconds unless the column says inf/s.\n")
+    for title, two, one in SUBMITTER_PAIRS:
+        cfgs = sorted({c for (e, c, _) in data if e == two})
+        shared = [c for c in cfgs if any(e == one for (e, c2, _) in data if c2 == c)]
+        if not shared:
+            continue
+        lines.append(f"  {title}:  {two}  vs  {one}")
+        lines.append(f"    {'config':<22} {'net':<10} {'2t med':>8} {'1t med':>8} {'x':>6} "
+                     f"{'2t tail':>8} {'1t tail':>8} {'x':>6} {'2t max':>9} {'1t max':>9}")
+        for cfg in shared:
+            for net in ("mobilenet", "resnet"):
+                a = aggr(data, two, cfg, net, "gpu_ms", "median")
+                b = aggr(data, one, cfg, net, "gpu_ms", "median")
+                if a is None or b is None:
+                    continue
+                at = aggr(data, two, cfg, net, "gpu_ms", "p99_minus_median")[0]
+                bt = aggr(data, one, cfg, net, "gpu_ms", "p99_minus_median")[0]
+                am = obs_max(data, two, cfg, net)
+                bm = obs_max(data, one, cfg, net)
+                lines.append(
+                    f"    {cfg:<22} {net:<10} {a[0]:>8.4f} {b[0]:>8.4f} {b[0] / a[0]:>6.3f} "
+                    f"{at:>8.4f} {bt:>8.4f} {(bt / at if at else 0.0):>6.3f} "
+                    f"{am:>9.4f} {bm:>9.4f}")
+            # The aggregate is a property of the configuration, not of one network.
+            ta = [x for r in sorted(runs_of(data, two, cfg))
+                  if (x := _run_throughput(data, two, cfg, r)) is not None]
+            tb = [x for r in sorted(runs_of(data, one, cfg))
+                  if (x := _run_throughput(data, one, cfg, r)) is not None]
+            if ta and tb:
+                lines.append(f"    {cfg:<22} {'aggregate':<10} "
+                             f"{stats.median(ta):>8.0f} {stats.median(tb):>8.0f} "
+                             f"{stats.median(tb) / stats.median(ta):>6.3f} inf/s")
+            lines.append("")
+    return lines
+
+
 def write_raw(data, outdir):
     """One row per (experiment, config, network, run, metric) — for plotting."""
     path = os.path.join(outdir, "raw.csv")
@@ -859,6 +925,7 @@ def main():
     table_dispersion(data, lines)
     table_aux(data, lines)
     table_pinning(data, lines)
+    table_submitter(data, lines)
     table_mps_effects(data, lines)
     check_consistency(data, lines)
 
