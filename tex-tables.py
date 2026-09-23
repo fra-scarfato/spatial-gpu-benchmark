@@ -141,9 +141,9 @@ def t_residual():
   \setlength{\tabcolsep}{5pt}
   \begin{tabular}{l l c r r r r r}
     \toprule
-    Network & Configuration & SMs & Isolated median (ms) & \multicolumn{2}{c}{2 threads} & \multicolumn{2}{c}{1 thread} \\
+    Network & Configuration & SMs & Isolated (ms) & \multicolumn{2}{c}{2 threads} & \multicolumn{2}{c}{1 thread} \\
     \cmidrule(lr){5-6} \cmidrule(lr){7-8}
-     & & & & Concurrent median & Overhead & Concurrent median & Overhead \\
+     & & & & Concurrent & Overhead & Concurrent & Overhead \\
     \midrule""")
     for cfg, m, r in (("baseline", 16, 16), ("50_50", 8, 8), ("75_25", 12, 4), ("25_75", 4, 12)):
         for net, sms in (("mobilenet", m), ("resnet", r)):
