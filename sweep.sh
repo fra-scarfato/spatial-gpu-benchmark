@@ -75,6 +75,14 @@ RES="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7.engine"
 # where the job family below deliberately meets it.
 RESAUX="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7-aux1.engine"
 
+# The networks added after the first campaign. Inception-v3 takes a 299x299 input
+# and saturates at six concurrent stream-ordered workloads per client; the ViT is
+# a serial chain, so it is here as a control rather than a subject.
+INC="$DATA/models/inception_v3-onnx-float/engine/inception_v3.engine"
+INC1="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux1.engine"
+INC5="$DATA/models/inception_v3-onnx-float/engine/inception_v3-aux5.engine"
+VIT="$DATA/models/vit-base-patch16-224/engine/vit-base-patch16-224.engine"
+
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set
 MIN_INF=5000                    # protocol: at least N inferences...
@@ -517,6 +525,11 @@ done
 # studied (a scheduler co-locates *different* workloads), and the mixed pair
 # yields each network's co-run latency at 4, 8 and 12 SMs — exactly the points
 # Experiment 1 measures in isolation.
+add "isolated-scaling_inception_whole"      "solo|off|||$RUNNER $INC  $DS --allocation whole|"
+add "isolated-scaling_inception_aux1_whole" "solo|off|||$RUNNER $INC1 $DS --allocation whole|"
+add "isolated-scaling_inception_aux5_whole" "solo|off|||$RUNNER $INC5 $DS --allocation whole|"
+add "isolated-scaling_vit_whole"            "solo|off|||$RUNNER $VIT  $DS --allocation whole|"
+
 add "concurrent-greenctx_baseline" \
     "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 

@@ -222,7 +222,11 @@ def load(outdir):
                 net = "resnet"
             else:
                 raise ValueError(f"cannot determine the network for {path!r}")
-            assert net in ("mobilenet", "resnet"), f"unexpected config {config!r}"
+            # The network is the first field of the configuration name. A name that
+            # does not parse must fail loudly rather than be filed under the wrong
+            # network, so this list is the place a new network has to be declared.
+            known = ("mobilenet", "resnet", "inception", "retinanet", "vit")
+            assert net in known, f"unexpected config {config!r}"
         data.setdefault((exp, config, run), {})[net] = read_stats(path)
     return data
 

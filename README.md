@@ -1043,3 +1043,20 @@ the process dies. Always build on the machine that will run it.
    the short side to 8/7 of the side, centre-crop. An engine that is not square or
    not three-channel is refused when it is loaded, with a message saying so, rather
    than measured and reported as if it had been.
+
+### Rebuilding them
+
+`engines.mk`, beside this README, rebuilds every engine from its ONNX:
+
+```bash
+cd runner
+make -f engines.mk            # every engine
+make -f engines.mk census     # what each built engine reports
+make -f engines.mk clean      # remove the engines, keep the build logs
+```
+
+It is a separate file from the main Makefile because it needs the model tree, which
+is not in this repository. Two things it documents by being runnable: every build
+passes `--fp16`, and a dynamic-shape ONNX must be given `--shapes`, or its symbolic
+channel dimension resolves to one and the first convolution fails on a weight-count
+mismatch that reads like a corrupt file.

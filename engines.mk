@@ -1,0 +1,88 @@
+# engines.mk — every TensorRT engine this work measures, rebuilt from its ONNX.
+#
+#   make -f engines.mk              every engine
+#   make -f engines.mk census       what each built engine reports
+#   make -f engines.mk clean        remove the engines, keep the build logs
+#
+# Run it from the runner directory. The model tree is one level up, beside the
+# repository, and is deliberately not in it.
+#
+# Two things that are not obvious, and are most of the reason this file exists:
+#
+#   * Every build passes --fp16. That is permission, not instruction: TensorRT uses
+#     half precision where it judges it fastest and leaves the I/O bindings FP32.
+#     Asking an engine layer by layer confirms it: FP16 tensors, weights and kernel
+#     tactics throughout, with only the input binding FP32.
+#
+#   * A dynamic-shape ONNX has to be told the shape. The ViT exports with all four
+#     dimensions symbolic, and TensorRT resolves a symbolic channel dimension to
+#     ONE, so the patch-embedding convolution is given 1 input channel where its
+#     weights have 3, and the build dies with a weight-count mismatch that reads
+#     like a corrupt file. It is not corrupt: --shapes fixes it. RetinaNet's graph
+#     is static, so the same trick does not apply to it.
+#
+# Engines are not portable across TensorRT versions, and builds are not
+# reproducible: two builds with identical flags produced 75, 76 and 77 layer plans
+# for ResNet. Rebuilding does not give byte-identical engines, which is why results
+# are compared within a build and never across one.
+
+TRTEXEC ?= /usr/src/tensorrt/bin/trtexec
+MODELS  ?= ../models
+AUXPROBE ?= ../utility/auxprobe
+FP16     = --fp16
+
+MB  = $(MODELS)/mobilenetv2-12
+RS  = $(MODELS)/resnet50-v2-7
+INC = $(MODELS)/inception_v3-onnx-float
+VIT = $(MODELS)/vit-base-patch16-224
+RN  = $(MODELS)/retinanet-9
+
+.PHONY: all mobile resnet inception vit retinanet census clean
+
+all: mobile resnet inception vit retinanet
+
+# MobileNet and ResNet: the two networks of the first campaign. Every cap produces
+# a serial engine for both, which is itself the census result.
+mobile:
+	$(TRTEXEC) --onnx=$(MB)/mobilenetv2-12.onnx $(FP16) --saveEngine=$(MB)/engine/mobilenetv2-12.engine > $(MB)/engine/mobilenetv2-12.buildlog 2>&1
+	for n in 0 1 2 4; do \
+		$(TRTEXEC) --onnx=$(MB)/mobilenetv2-12.onnx $(FP16) --maxAuxStreams=$$n --saveEngine=$(MB)/engine/mobilenetv2-12-aux$$n.engine > $(MB)/engine/mobilenetv2-12-aux$$n.buildlog 2>&1; \
+	done
+
+resnet:
+	$(TRTEXEC) --onnx=$(RS)/resnet50-v2-7.onnx $(FP16) --saveEngine=$(RS)/engine/resnet50-v2-7.engine > $(RS)/engine/resnet50-v2-7.buildlog 2>&1
+	for n in 0 1 2 4; do \
+		$(TRTEXEC) --onnx=$(RS)/resnet50-v2-7.onnx $(FP16) --maxAuxStreams=$$n --saveEngine=$(RS)/engine/resnet50-v2-7-aux$$n.engine > $(RS)/engine/resnet50-v2-7-aux$$n.buildlog 2>&1; \
+	done
+
+# Inception-v3: the network that uses streams. It adopts as many as it is allowed
+# up to five, and one is the latency optimum, so the caps go to 16 to show where
+# the allowance stops being used.
+inception:
+	$(TRTEXEC) --onnx=$(INC)/inception_v3.onnx $(FP16) --saveEngine=$(INC)/engine/inception_v3.engine > $(INC)/engine/inception_v3.buildlog 2>&1
+	for n in 0 1 2 4 5 8 16; do \
+		$(TRTEXEC) --onnx=$(INC)/inception_v3.onnx $(FP16) --maxAuxStreams=$$n --saveEngine=$(INC)/engine/inception_v3-aux$$n.engine > $(INC)/engine/inception_v3-aux$$n.buildlog 2>&1; \
+	done
+
+# The ViT is a serial chain — the control, not a subject — and it is the one graph
+# whose shape must be supplied, because its export left every dimension symbolic.
+vit:
+	$(TRTEXEC) --onnx=$(VIT)/vit-base-patch16-224.onnx $(FP16) --shapes=pixel_values:1x3x224x224 --saveEngine=$(VIT)/engine/vit-base-patch16-224.engine > $(VIT)/engine/vit-base-patch16-224.buildlog 2>&1
+
+# RetinaNet-9 builds, and adopts the most streams of any network here, but it is not
+# measurable with the current runner: its input is 480x640, fixed by the graph, and
+# the preprocessing centre-crops a square. Kept so the census is reproducible.
+retinanet:
+	$(TRTEXEC) --onnx=$(RN)/retinanet-9.onnx $(FP16) --saveEngine=$(RN)/engine/retinanet-9.engine > $(RN)/engine/retinanet-9.buildlog 2>&1
+
+# What every built engine says about itself. This is the census, and it is the
+# reason to keep the engines: it reads them, it does not rebuild them.
+census:
+	@for e in $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine; do \
+		[ -e "$$e" ] || continue; \
+		printf '  %-46s %s\n' "$$(basename $$e)" "$$($(AUXPROBE) $$e 2>/dev/null | tail -1)"; \
+	done
+
+# The logs are the census evidence and stay; they are a few tens of kilobytes.
+clean:
+	rm -f $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine
