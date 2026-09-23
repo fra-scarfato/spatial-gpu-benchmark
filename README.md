@@ -945,3 +945,32 @@ Other established facts:
   `SmAllocation` seam, for the comparison the thesis promises.
 - **Nsight Compute** session page for a visual check of the provisioned-SM
   bitmask (the API exposes counts only).
+
+## Reproducing a result
+
+Everything reported in the thesis comes from the runs in `bench/`, and the chain
+from those runs to a number on a page is three commands:
+
+    ./sweep.sh [--exp <family>]     # measure: bench/<experiment>/<config>/r<k>_{latencies,stats}.csv
+    python3 aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv + tables.txt
+    python3 tex-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
+
+Each step reads only what the previous one wrote, so any step can be re-run alone.
+`aggregate.py` reads the `_stats.csv` files each run writes; `tex-tables.py` reads
+the same files through the same module, so a printed table cannot disagree with the
+aggregate beside it.
+
+`--dry-run` prints every command `sweep.sh` would run without running any of it,
+and the `--exp` filter selects a family by substring (`isolated`, `greenctx`, `mps`,
+`wq`, `aux`, `1t`).
+
+What is deliberately NOT in this repository, because it is data rather than code:
+the TensorRT engines (`models/`) and the ImageNet subset (`dataset/`) live one level
+up, in `../models` and `../dataset/`. They do not need to be the same files to
+follow the method, but the numbers will only match with the same board, the same
+engines, the same images and the same protocol.
+
+**Not yet scripted:** the LaTeX for Experiments 1 to 4. Those tables were
+transcribed from `bench/aggregate/tables.txt` and verified against it, but only
+Experiment 5 is rendered by `tex-tables.py`. The numbers are reproducible either
+way, because `tables.txt` is generated from the runs.
