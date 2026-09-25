@@ -96,13 +96,20 @@ def ref(net):
             val("exp1", net + "_whole", net, "std"))
 
 
+# The caption is emitted by close_table, below the tabular. Above a table LaTeX
+# separates the caption with \belowcaptionskip, which is 0pt by default, so a caption
+# placed there sits against the top rule; below the tabular it is separated by
+# \abovecaptionskip, 10pt. It is also the convention the rest of the thesis uses.
+_CAPTION = ""
+
+
 def open_table(cols, spec, caption, label):
+    global _CAPTION
+    _CAPTION = "\\caption{%s}\n\\label{%s}" % (caption, label)
     emit(r"\begin{table}[ht]")
     emit(r"\centering")
     emit(r"\footnotesize")
     emit(r"\setlength{\tabcolsep}{4pt}")
-    emit(r"\caption{%s}" % caption)
-    emit(r"\label{%s}" % label)
     emit(r"\begin{tabular}{%s}" % spec)
     emit(r"\toprule")
     emit(cols)
@@ -112,6 +119,8 @@ def open_table(cols, spec, caption, label):
 def close_table():
     emit(r"\bottomrule")
     emit(r"\end{tabular}")
+    for line in _CAPTION.split("\n"):
+        emit(line)
     emit(r"\end{table}")
     emit()
 
