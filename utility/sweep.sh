@@ -206,9 +206,12 @@ fi
 CPU_LOAD_MAX="${CPU_LOAD_MAX:-1.5}"
 require_quiet_cpu() {
     local one
-    one=$(awk '{print $1}' /proc/loadavg)
+    # The 5-minute average, not the 1-minute: a single transient spike (a build, the
+    # previous run's teardown) must not abort a campaign, while a co-tenant who is
+    # actually working keeps the 5-minute average up for minutes.
+    one=$(awk '{print $2}' /proc/loadavg)
     if awk -v l="$one" -v m="$CPU_LOAD_MAX" 'BEGIN{exit !(l > m)}'; then
-        echo "[sweep] ABORT: 1-minute load average is $one (limit $CPU_LOAD_MAX)." >&2
+        echo "[sweep] ABORT: 5-minute load average is $one (limit $CPU_LOAD_MAX)." >&2
         echo "        The submission-model arms measure host-side scheduling;" >&2
         echo "        something else on the CPU is a different experiment." >&2
         return 1
@@ -798,59 +801,46 @@ add "concurrent-aux-1t_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
 # The submission model. One process, two networks, green contexts, 75/25 -- the
-# split where the two-thread tail is largest. What varies is only where the
-# submitting threads may run and at what priority:
+# split where the two-thread tail is largest. Four arms, one question: where do the
+# submitting threads run, and at what priority.
 #
-#   t2_unpinned   one thread per network, no affinity      (the naive application)
-#   t1_unpinned   a single submitter, no affinity          (the restructuring)
-#   t2_core6      both submitters restricted to one core
-#   t1_core6      the single submitter restricted to one core
-#   t2_core67     both submitters restricted to two cores -- a SET, not a partition:
-#                 taskset cannot pin individual threads, so the scheduler may put
-#                 both on the same core anyway. That is why the one-core arm is the
-#                 sharp one and this is the control for it.
+#   t1_unpinned    a single submitter, no affinity            (the restructuring)
+#   t1_pinfifo99   a single submitter on core 6, SCHED_FIFO 99
+#   t2_unpinned    one thread per network, no affinity        (the naive application)
+#   t2_core67      both submitters allowed cores 6 and 7
+#
+# `--cpu` and `--priority` are applied from INSIDE the process, so they confine the
+# submitting thread alone; `taskset` confines every thread the process has, the CUDA
+# driver's included. The mixture is deliberate: the two-thread arm is what an
+# application can do with a stock tool, and the pinned one-thread arm is what it
+# cannot, which is why that one is a flag here.
 add "submit-model_t2_unpinned" \
     "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
 add "submit-model_t1_unpinned" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-add "submit-model_t2_core${SUBMIT_CORE}" \
-    "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-add "submit-model_t1_core${SUBMIT_CORE}" \
-    "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-# The same placement, made from inside the process instead: only the submitting
-# thread is confined, the CUDA driver's threads stay free. With taskset the
-# submitter shares its core with them; here it is alone. That difference is the
-# experiment -- priority has something to preempt in the first case and nothing
-# in the second -- so the two are measured side by side.
-add "submit-model_t1_thread${SUBMIT_CORE}" \
-    "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-add "submit-model_t2_core${SUBMIT_CORE}${SUBMIT_CORE_B}" \
+add "submit-model_t2_core67" \
     "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
 
-# The one MPS arm of this family. MPS runs one process per network, so each
-# process has exactly one submitter and the 1-thread/2-thread axis does not exist
-# there. What can vary across processes is where each submitter runs: giving
-# each its own core is the cross-process analogue of the green-context pinning,
-# and that is the whole of it. Priority and same-core contention were dropped.
+# The pinned-and-prioritised arm. 99 is the maximum RT priority the kernel offers;
+# the submitting thread blocks on events rather than spinning, so it never approaches
+# the RT runtime throttle, and the run records the policy it was actually granted.
+if [ "$WITH_PRIORITY" = 1 ]; then
+    add "submit-model_t1_pinfifo99" \
+        "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --priority fifo:99 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+fi
+
+# The one MPS arm. MPS runs one process per network, so each has exactly one
+# submitter and the 1-thread/2-thread axis does not exist there. What can vary across
+# processes is where each submitter runs: giving each its own core is the
+# cross-process analogue of the green-context pinning, and that is the whole of it.
 #
 # Needs --static-chunks, like every static arm: the partition count is read off
 # lspart on the real board, so it cannot be assumed.
 if [ "$STATIC_CHUNKS" -gt 0 ]; then
     add "submit-model_mps_owncores" \
-        "pair|static|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 $MOB $DS --allocation whole|taskset -c $SUBMIT_CORE_B $RUNNER --submit-threads 1 $RES $DS --allocation whole|75"
+        "pair|static|||taskset -c $SUBMIT_CORE $RUNNER $MOB $DS --allocation whole --submit-threads 1|taskset -c $SUBMIT_CORE_B $RUNNER $RES $DS --allocation whole --submit-threads 1|75"
 fi
 
-# Same three knobs with the maximum priority available. Unpinned-plus-priority is
-# the arm that separates priority from placement: if the tail falls there, the
-# problem was never which core, but waiting for one.
-if [ "$WITH_PRIORITY" = 1 ]; then
-    add "submit-model_t1_thread${SUBMIT_CORE}_prio" \
-        "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-    add "submit-model_t1_core${SUBMIT_CORE}_prio" \
-        "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-    add "submit-model_t2_unpinned_prio" \
-        "solo|off|||$RUNNER --submit-threads 2 --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-fi
 
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its

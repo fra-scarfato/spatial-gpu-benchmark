@@ -9,6 +9,7 @@ machine where the runner cannot.
 |---|---|
 | `auxprobe.cpp` | **How many auxiliary streams does a built engine use?** Deserializes an engine and prints `ICudaEngine::getNbAuxStreams()` — how many the engine *actually* uses, not the maximum it was allowed at build time, which is a different number and the one that matters for choosing a work queue concurrency. No inference, no timing: a few seconds per engine. |
 | `wqprobe.cpp` | **What does the platform report for work queues, and what does a green context actually get granted?** Prints the device's default configuration, then creates one green context per sharing scope and reads back what each was provisioned with. This is what established that the default is 8 in a plain process and 2 under MPS, and that the two scopes read back distinguishably. |
+| `devprobe.cpp` | **How big is L2, and how much bandwidth does a copy actually reach?** Prints the device facts the memory-interferer experiments are sized on, then measures D2D copy bandwidth across working-set sizes. Also records the trap: on Tegra the API's memory clock is the GPU clock, so a bandwidth derived from it is wrong by more than 2x. |
 | `streams.py` | **Do two streams actually overlap?** Reads an nsys SQLite export and prints per-stream kernel count, busy time and span, plus the cross-stream overlap as a percentage of the time they jointly occupy. A stream count alone proves nothing: high busy time with near-zero overlap is serialisation. |
 
 ## Build

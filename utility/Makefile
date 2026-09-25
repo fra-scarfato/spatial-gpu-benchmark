@@ -11,7 +11,7 @@ CUDA     ?= /usr/local/cuda
 TRT_INC  ?= /usr/include/aarch64-linux-gnu
 TRT_LIB  ?= $(CUDA)/targets/sbsa-linux/lib
 
-BINS = auxprobe wqprobe
+BINS = auxprobe wqprobe devprobe
 
 all: $(BINS)
 
@@ -22,6 +22,11 @@ auxprobe: auxprobe.cpp
 
 # CUDA only: it queries device resources and creates green contexts.
 wqprobe: wqprobe.cpp
+	$(CXX) $(CXXFLAGS) -I$(CUDA)/include $< -o $@ -L$(TRT_LIB) -lcudart
+
+# CUDA runtime only: reads the device's own numbers and measures copy bandwidth
+# across working-set sizes, which is how the memory interferer gets sized.
+devprobe: devprobe.cpp
 	$(CXX) $(CXXFLAGS) -I$(CUDA)/include $< -o $@ -L$(TRT_LIB) -lcudart
 
 clean:
