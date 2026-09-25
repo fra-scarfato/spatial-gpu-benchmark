@@ -134,6 +134,26 @@ struct Options {
     // asks for it explicitly wherever that is what it means.
     unsigned submitThreads = 1;
 
+    // Where the submitting thread(s) run and at what priority, applied from
+    // INSIDE the process and per thread. That is what separates these from
+    // wrapping the whole process:
+    //
+    //   taskset -c 6 runner ...   every thread on one core, the submitter
+    //                             together with the CUDA driver's threads
+    //   runner --cpu 6 ...        only the submitting thread; the driver's
+    //                             threads stay free
+    //
+    // Both matter: priority has something to preempt in the first case and
+    // nothing in the second, so measuring them side by side separates "the
+    // submitter waits for other tasks" from "the submitter waits for the
+    // scheduler".
+    //
+    // -1 and "" mean "leave it alone", so the defaults reproduce every run up
+    // to and including Experiment 5 exactly.
+    int         cpu           = -1;   // core for the submitting thread
+    std::string schedPolicy;          // "" | "fifo" | "rr"
+    int         schedPriority = 10;   // RT priority, 1..99
+
     // The networks: one entry is solo, two is concurrent.
     std::vector<NetworkOptions> networks;
 };

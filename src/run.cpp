@@ -14,6 +14,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sched.h>
+#include <sys/resource.h>
+#include <cerrno>
+#include <cstring>
 
 namespace {
 
@@ -325,6 +329,38 @@ void Network::measureInterleaved(const std::vector<Network*>& nets) {
     }
 }
 
+// Pin this thread and, if asked, raise its scheduling policy.
+//
+// Called by the submitting thread itself, because affinity and scheduling policy are
+// properties of a THREAD: no other thread can set them for it. Threads created
+// afterwards inherit both, which is why one call covers the two-thread path too.
+//
+// It refuses to continue when the setting does not take. That is not defensiveness:
+// `nice` prints a warning and runs the command anyway, so an arm that asked for
+// priority, did not get it and still measured would be indistinguishable from a
+// result showing that priority changes nothing.
+static void applyCpuPolicy(const Options& o) {
+    if (o.cpu >= 0) {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(o.cpu, &set);
+        if (sched_setaffinity(0, sizeof(set), &set) != 0)
+            throw std::runtime_error("--cpu " + std::to_string(o.cpu) +
+                                     " failed: " + std::strerror(errno));
+    }
+    if (!o.schedPolicy.empty()) {
+        struct sched_param sp {};
+        sp.sched_priority = o.schedPriority;
+        const int policy = (o.schedPolicy == "fifo") ? SCHED_FIFO : SCHED_RR;
+        if (sched_setscheduler(0, policy, &sp) != 0)
+            throw std::runtime_error(
+                "--priority " + o.schedPolicy + ":" + std::to_string(o.schedPriority) +
+                " failed: " + std::strerror(errno) +
+                " -- needs CAP_SYS_NICE, e.g. sudo setcap cap_sys_nice+ep runner");
+    }
+}
+
+
 Run::Run(const Options& opts)
     : opts_(opts)
 {
@@ -384,6 +420,39 @@ Run::Run(const Options& opts)
         std::cout << "[info] network '" << n->label() << "': " << n->allocationName()
                   << ", " << n->inputCount() << " inputs, " << cfg::channels << "x"
                     << n->inputHeight() << "x" << n->inputWidth() << " in\n";
+    applyCpuPolicy(opts_);
+
+    // The CPU environment this process actually got. The submission-model arms vary
+    // affinity and priority from OUTSIDE (taskset, nice, chrt), and an externally
+    // imposed setting that silently failed to take would be indistinguishable from
+    // a result. Recorded here so every log answers the question by itself.
+    {
+        cpu_set_t set;
+        std::string cores = "?";
+        if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+            cores.clear();
+            for (int c = 0; c < CPU_SETSIZE; ++c)
+                if (CPU_ISSET(c, &set)) {
+                    if (!cores.empty()) cores += ",";
+                    cores += std::to_string(c);
+                }
+        }
+        const int pol = sched_getscheduler(0);
+        const char* polname = pol == SCHED_FIFO  ? "SCHED_FIFO"
+                            : pol == SCHED_RR    ? "SCHED_RR"
+                            : pol == SCHED_OTHER ? "SCHED_OTHER" : "?";
+        std::cout << "[info] cpu:         cores " << cores
+                  << "  nice " << getpriority(PRIO_PROCESS, 0)
+                  << "  " << polname;
+        if (opts_.cpu >= 0 || !opts_.schedPolicy.empty()) {
+            std::cout << "  (asked for";
+            if (opts_.cpu >= 0) std::cout << " cpu " << opts_.cpu;
+            if (!opts_.schedPolicy.empty())
+                std::cout << " " << opts_.schedPolicy << ":" << opts_.schedPriority;
+            std::cout << ")";
+        }
+        std::cout << "\n";
+    }
     std::cout << "[info] dataset:     " << images_.size() << " images available\n"
               << "[info] input mode:  "
               << (nets_[0]->fixedInputs() ? "fixed" : "dataset") << "\n";

@@ -152,6 +152,14 @@ DRY=0
 SMOKE=0
 OUT_GIVEN=0
 
+# The submission-model arms are the only ones that care where the submitting
+# thread runs and at what priority, so the core is a parameter (recorded in
+# the configuration name, because a result you cannot re-derive is not one).
+WITH_PRIORITY=0                  # --with-priority: measure them at all
+PRIO=nice                        # nice | fifo, the mechanism if we do
+SUBMIT_CORE="${SUBMIT_CORE:-6}"   # one core, for the pinned arms
+SUBMIT_CORE_B="${SUBMIT_CORE_B:-7}"
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)       DRY=1 ;;
@@ -163,6 +171,8 @@ while [ $# -gt 0 ]; do
         --out)           OUT="$2"; OUT_GIVEN=1; shift ;;
         --exp)           EXPS="$2"; shift ;;
         --static-chunks) STATIC_CHUNKS="$2"; shift ;;
+        --with-priority) WITH_PRIORITY=1 ;;
+        --submit-core)   SUBMIT_CORE="$2"; shift ;;
         --sentinel-ref)  SENTINEL_REF_MS="$2"; shift ;;
         # Print the header comment as the usage text. Stopping at the first
         # non-comment line means this never has to be kept in sync with however
@@ -188,6 +198,29 @@ if [ "$SMOKE" = 1 ]; then
     [ "$OUT_GIVEN" = 1 ] || OUT="$DATA/bench-smoke"
 fi
 
+# A quiet CPU. These arms measure host-side scheduling, so a co-tenant doing work
+# on the CPU is not background noise here, it is a different experiment -- and the
+# GPU check cannot see it. Loose on purpose: our own run contributes about one, and
+# this runs before the runner starts, so it sees the ambient load plus the previous
+# run's teardown.
+CPU_LOAD_MAX="${CPU_LOAD_MAX:-1.5}"
+require_quiet_cpu() {
+    local one
+    one=$(awk '{print $1}' /proc/loadavg)
+    if awk -v l="$one" -v m="$CPU_LOAD_MAX" 'BEGIN{exit !(l > m)}'; then
+        echo "[sweep] ABORT: 1-minute load average is $one (limit $CPU_LOAD_MAX)." >&2
+        echo "        The submission-model arms measure host-side scheduling;" >&2
+        echo "        something else on the CPU is a different experiment." >&2
+        return 1
+    fi
+    return 0
+}
+
+case "$EXPS" in *submit*) CPU_GUARD=1 ;; *) CPU_GUARD=0 ;; esac
+
+# The priority arms need CAP_SYS_NICE, and nothing here tests for it: the runner
+# refuses at startup with the remedy in the message. Failing on the first arm of
+# the first configuration is early enough, and it keeps the knowledge in one place.
 check_clocks() {
     local ok=1 gmin gmax cmin cmax cpu
     if [ -r "$GPU_DEVFREQ/min_freq" ]; then
@@ -764,6 +797,48 @@ done
 add "concurrent-aux-1t_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
+# The submission model. One process, two networks, green contexts, 75/25 -- the
+# split where the two-thread tail is largest. What varies is only where the
+# submitting threads may run and at what priority:
+#
+#   t2_unpinned   one thread per network, no affinity      (the naive application)
+#   t1_unpinned   a single submitter, no affinity          (the restructuring)
+#   t2_core6      both submitters restricted to one core
+#   t1_core6      the single submitter restricted to one core
+#   t2_core67     both submitters restricted to two cores -- a SET, not a partition:
+#                 taskset cannot pin individual threads, so the scheduler may put
+#                 both on the same core anyway. That is why the one-core arm is the
+#                 sharp one and this is the control for it.
+add "submit-model_t2_unpinned" \
+    "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+add "submit-model_t1_unpinned" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+add "submit-model_t2_core${SUBMIT_CORE}" \
+    "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+add "submit-model_t1_core${SUBMIT_CORE}" \
+    "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+# The same placement, made from inside the process instead: only the submitting
+# thread is confined, the CUDA driver's threads stay free. With taskset the
+# submitter shares its core with them; here it is alone. That difference is the
+# experiment -- priority has something to preempt in the first case and nothing
+# in the second -- so the two are measured side by side.
+add "submit-model_t1_thread${SUBMIT_CORE}" \
+    "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+add "submit-model_t2_core${SUBMIT_CORE}${SUBMIT_CORE_B}" \
+    "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+
+# Same three knobs with the maximum priority available. Unpinned-plus-priority is
+# the arm that separates priority from placement: if the tail falls there, the
+# problem was never which core, but waiting for one.
+if [ "$WITH_PRIORITY" = 1 ]; then
+    add "submit-model_t1_thread${SUBMIT_CORE}_prio" \
+        "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+    add "submit-model_t1_core${SUBMIT_CORE}_prio" \
+        "solo|off|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+    add "submit-model_t2_unpinned_prio" \
+        "solo|off|||$RUNNER --submit-threads 2 --priority fifo:10 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
+fi
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are
@@ -962,6 +1037,7 @@ for r in $(seq 1 "$RUNS"); do
         # mid-sweep is exactly what a single startup check would miss.
         if [ "$SMOKE" = 0 ]; then
             require_quiet_gpu || exit 1
+            [ "$CPU_GUARD" = 1 ] && { require_quiet_cpu || exit 1; }
         fi
 
         # Bring the MPS daemon into the mode this job needs (off/on/static).

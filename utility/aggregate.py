@@ -95,6 +95,7 @@ EXP_DIR = {
     "concurrent-wq-1t":       "exp4-1t",
     "concurrent-aux-1t":      "exp5-1t",
     "pinning":             "exp6",
+    "submit-model":        "exp7",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }

@@ -82,6 +82,16 @@ void printUsage(const char* prog) {
         << "                        network, the naive application; sweep.sh states it\n"
         << "                        wherever that is what it means.\n"
         << "\n"
+        << "  --cpu <N>             pin the submitting thread to core N. Applied\n"
+        << "                        from inside the process, so it confines the\n"
+        << "                        submitter alone; `taskset -c N` confines every\n"
+        << "                        thread, the driver's included. Both are used,\n"
+        << "                        and they are different experiments.\n"
+        << "  --priority <p>:<n>    raise the submitting thread's scheduling policy:\n"
+        << "                        fifo:<1-99> or rr:<1-99>. Needs CAP_SYS_NICE\n"
+        << "                        (sudo setcap cap_sys_nice+ep runner) and FAILS\n"
+        << "                        LOUDLY without it, rather than measuring at\n"
+        << "                        normal priority and looking like a null result.\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -218,6 +228,23 @@ Options parseArgs(int argc, char** argv) {
             if (o.wqLimit == 0)
                 throw std::runtime_error(
                     "--wq-limit must be at least 1 (omit it to leave the driver default)");
+        } else if (arg == "--cpu") {
+            o.cpu = std::stoi(nextValue(i, argc, argv, arg));
+            if (o.cpu < 0 || o.cpu > 255)
+                throw std::runtime_error("--cpu expects a core index, got: " + std::to_string(o.cpu));
+        } else if (arg == "--priority") {
+            const std::string spec = nextValue(i, argc, argv, arg);
+            const auto colon = spec.find(':');
+            if (colon == std::string::npos)
+                throw std::runtime_error("--priority expects fifo:<1-99> or rr:<1-99>, got: " + spec);
+            const std::string pol = spec.substr(0, colon);
+            if (pol != "fifo" && pol != "rr")
+                throw std::runtime_error("--priority expects fifo or rr, got: " + spec);
+            const int prio = std::stoi(spec.substr(colon + 1));
+            if (prio < 1 || prio > 99)
+                throw std::runtime_error("--priority must be 1..99, got: " + std::to_string(prio));
+            o.schedPolicy   = pol;
+            o.schedPriority = prio;
         } else if (arg == "--submit-threads") {
             const unsigned v =
                 static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
