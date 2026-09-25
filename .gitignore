@@ -18,12 +18,17 @@ __pycache__/
 *.pyc
 
 # CSVs from a run invoked with the default prefix. The results tree is
-# bench/, outside this repository, so anything like this here is an accident.
+# $DATA/bench ($DATA = /mnt/nvme/f.scarfato), outside this repository, so anything here is scratch.
 bench_*
 
-# Logs from a redirected sweep. The real results tree is bench/, outside this
+# Logs from a redirected sweep. The real results tree is $DATA/bench, outside this
 # repository, so anything logged here is scratch.
 *.log
+
+# The two probe binaries. Build products of utility/Makefile, like `runner` is of
+# this one: committed they would only be a diff of unreadable bytes.
+utility/auxprobe
+utility/wqprobe
 
 # Editor and shell leftovers.
 *~

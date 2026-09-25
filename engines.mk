@@ -27,8 +27,10 @@
 # are compared within a build and never across one.
 
 TRTEXEC ?= /usr/src/tensorrt/bin/trtexec
-MODELS  ?= ../models
-AUXPROBE ?= ../utility/auxprobe
+# The graphs and the engines are data, so they are on the NVMe with the rest of it.
+DATA     ?= /mnt/nvme/f.scarfato
+MODELS   ?= $(DATA)/models
+AUXPROBE ?= utility/auxprobe
 FP16     = --fp16
 
 MB  = $(MODELS)/mobilenetv2-12

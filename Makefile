@@ -14,9 +14,10 @@
 #
 # which prints exactly what it would execute.
 #
-# Layout: the sources are here (include/, src/, utility/); the data and the
-# results are one level up, in models/, dataset/ and bench/. sweep.sh is what
-# tells the runner where they are.
+# Layout: the sources are here (include/, src/, utility/) and so is the binary.
+# The data and the results are NOT: models/, dataset/, labels/ and bench/ are on
+# the NVMe, in /mnt/nvme/f.scarfato, because the root filesystem is small and shared.
+# sweep.sh is what tells the runner where they are, and it takes that root from $DATA.
 
 CXX      := g++
 CXXFLAGS := -O2 -std=c++20 -Wall

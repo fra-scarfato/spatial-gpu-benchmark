@@ -60,12 +60,24 @@ set -euo pipefail
 # from another directory. cd'ing into its directory and asking pwd gives an
 # absolute path with no ".." left in it, which matters because the paths below
 # are built by appending to it.
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA="$(cd "$HERE/.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # .../runner/utility
+ROOT="$(cd "$HERE/.." && pwd)"                          # .../runner, the repository
+
+# The data is NOT in the repository and not on the system disk. The engines, the
+# image set, the labels and the results live on the NVMe, which is a separate mount:
+# the root filesystem is small and shared, and it once filled up under a campaign's
+# worth of CSVs. Everything below is built by appending to this root, so DATA
+# repoints the whole chain.
+DATA="${DATA:-/mnt/nvme/f.scarfato}"
+
+if [ ! -d "$DATA" ]; then
+    echo "sweep.sh: data root not found: $DATA" >&2
+    exit 1
+fi
 
 OUT="${OUT:-$DATA/bench}"       # results go in the data folder, outside the
                                 # git repository
-RUNNER="$HERE/runner"
+RUNNER="$ROOT/runner"
 DS="$DATA/dataset/imagenet-1k"
 MOB="$DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine"
 RES="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7.engine"

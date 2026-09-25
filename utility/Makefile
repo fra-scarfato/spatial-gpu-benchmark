@@ -1,0 +1,30 @@
+# utility/ — tools that answer questions the runner cannot answer about itself.
+#
+# Standalone, and built independently of the runner, so that rebuilding the
+# runner does not invalidate a measurement tool and vice versa. The paths below
+# are for this board (aarch64 Linux, sbsa libraries); override TRT_INC and
+# TRT_LIB on another machine.
+
+CXX      ?= g++
+CXXFLAGS ?= -O2 -std=c++17 -Wall
+CUDA     ?= /usr/local/cuda
+TRT_INC  ?= /usr/include/aarch64-linux-gnu
+TRT_LIB  ?= $(CUDA)/targets/sbsa-linux/lib
+
+BINS = auxprobe wqprobe
+
+all: $(BINS)
+
+# Links TensorRT: it deserializes engines and asks them about their streams.
+auxprobe: auxprobe.cpp
+	$(CXX) $(CXXFLAGS) -I$(CUDA)/include -I$(TRT_INC) $< -o $@ \
+		-L$(TRT_LIB) -lnvinfer -lcudart
+
+# CUDA only: it queries device resources and creates green contexts.
+wqprobe: wqprobe.cpp
+	$(CXX) $(CXXFLAGS) -I$(CUDA)/include $< -o $@ -L$(TRT_LIB) -lcudart
+
+clean:
+	rm -f $(BINS)
+
+.PHONY: all clean

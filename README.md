@@ -103,7 +103,7 @@ runner --dataset <dir> --net <engine>:<pct>[:<label>]  # one or more networks
 | `--sm-percent <P>` | with the positional form: SMs for `greenctx`, % of the device |
 | `--wq-scope <s>` | work queue sharing scope for each green context: `device_ctx` (the driver default: all contexts share one set of queues) or `green_ctx_balanced` (the driver tries to give balanced green contexts non-overlapping queues). **Omitted = no work queue resource in the descriptor at all**, which is what every run before Experiment 4 did |
 | `--wq-limit <N>` | how many concurrent stream-ordered workloads to declare to the driver, as a **hint** it consults when assigning queues. Not a stream limit. Needs `--allocation greenctx`. Distinct from `CUDA_DEVICE_MAX_CONNECTIONS`, which bounds how many queues exist and is read from the environment (§4.6) |
-| `--submit-threads <N>` | how many threads submit work to the GPU. `1` (default) drives every network from a single thread, keeping one inference in flight per network. `2` is one thread per network, the naive application: it is what the two-thread measurements of Experiments 2, 4 and 5 used, and `sweep.sh` states it explicitly wherever that is what it means. Same engines, same partitions, same protocol, so the two differ in the submitter and nothing else |
+| `--submit-threads <N>` | how many threads submit work to the GPU. `1` (default) drives every network from a single thread, keeping one inference in flight per network. `2` is one thread per network, the naive application: it is what the two-thread measurements of Experiments 2, 4 and 5 used, and `utility/sweep.sh` states it explicitly wherever that is what it means. Same engines, same partitions, same protocol, so the two differ in the submitter and nothing else |
 
 Outputs: `<prefix>_latencies.csv` (one row per inference:
 `phase,index,image,prep_ms,wall_ms,gpu_ms`), `<prefix>_stats.csv` (one row per
@@ -336,7 +336,7 @@ Three knobs, and conflating them is the easy mistake:
 | `CUDA_DEVICE_MAX_CONNECTIONS` | how many queue connections exist **at all** | the environment, read before CUDA initialises |
 
 `--wq-scope` and `--wq-limit` set the first two; the third is set by whoever
-launches the process (`sweep.sh`).
+launches the process (`utility/sweep.sh`).
 
 **Measured on this board (CUDA 13.2), because the defaults are not what one would
 guess:**
@@ -419,8 +419,8 @@ stream genuinely governs the work.
 Board: Jetson AGX Orin 64 GB, 16 SMs, CC 8.7, clocks locked at 1.3005 GHz.
 **Five runs per configuration, 30 s windows, one fresh process each**; every
 number is the median of the five run medians and the run-to-run spread is under
-1 % throughout. Raw data in `bench/`, derived tables in
-`bench/aggregate/tables.txt`.
+1 % throughout. Raw data in `$DATA/bench/`, derived tables in
+`$DATA/bench/aggregate/tables.txt`.
 
 ### 6.1 Experiment 1 — one network, varying the SM budget (medians, ms)
 
@@ -511,7 +511,7 @@ The **observed maximum** (§3.5) is a different view, and the p99 does not bound
 it: it exceeds the p99 by up to 4.0× in the isolated MobileNet runs (2.7468 ms at
 8 SMs against a 0.6816 ms p99), and `mps_default` holds the worst single event in
 the campaign — 4.6940 ms for ResNet, 3.09× isolated. Per-configuration numbers
-with their `× iso` multipliers are in `bench/aggregate/tables.txt` (the
+with their `× iso` multipliers are in `$DATA/bench/aggregate/tables.txt` (the
 DISPERSION block), which is also where the thesis tables come from.
 
 ---
@@ -617,9 +617,9 @@ job; `obs-max` is not, and that is inherent to the statistic rather than a bug.
 
 ---
 
-## 9. The measurement protocol: `sweep.sh` + `aggregate.py`
+## 9. The measurement protocol: `utility/sweep.sh` + `utility/aggregate.py`
 
-Two scripts, deliberately separate: `sweep.sh` only *measures*,
+Two scripts, deliberately separate: `utility/sweep.sh` only *measures*,
 `aggregate.py` only *analyses*. The analysis is therefore repeatable without
 re-running two hours of GPU work.
 
@@ -639,7 +639,7 @@ because the chunk count has to come off `lspart` on the real board first.
 The work queue family is deliberately **not** in the default selection: it is 60
 runs, and a routine re-run should not start it by accident. Ask for it:
 
-    ./sweep.sh --exp wq
+    ./utility/sweep.sh --exp wq
 
 ### 9.2 Why these choices
 
@@ -745,7 +745,7 @@ run's files inside it. The point is that the file name only has to carry the run
 number — the directory already says which experiment and which configuration.
 
 ```
-bench/
+$DATA/bench/
 ├── isolated-scaling/     one network, alone, varying the SM budget
 │     mobilenet_whole/r1_latencies.csv   r1_stats.csv   r1.log    (10 configs)
 ├── concurrent-greenctx/  two networks, ONE process, disjoint green contexts
@@ -763,7 +763,7 @@ internal keys and maps them once, in `aggregate.py`'s `EXP_DIR`.
 Data and derived numbers never mix: measurements live in the tree, everything
 generated from them lives in `aggregate/`.
 
-Outputs, all in `bench/aggregate/`:
+Outputs, all in `$DATA/bench/aggregate/`:
 
 | File | Content |
 |---|---|
@@ -909,7 +909,7 @@ Other established facts:
   to end a probe: using it in a probe loop silently kills the daemon, and the
   next command reports *"Cannot find MPS control daemon process"*. The driver
   uses it only to shut down.
-- **The pipe directory is the isolation boundary.** `sweep.sh` uses a private
+- **The pipe directory is the isolation boundary.** `utility/sweep.sh` uses a private
   `CUDA_MPS_PIPE_DIRECTORY` (`/tmp/mps-$USER`), which makes this daemon
   invisible to every other user of the shared board: a client joins a server
   only if it was told about the same directory. That is what makes running MPS
@@ -948,42 +948,43 @@ Other established facts:
 
 ## Reproducing a result
 
-Everything reported in the thesis comes from the runs in `bench/`, and the chain
+Everything reported in the thesis comes from the runs in `$DATA/bench/`, and the chain
 from those runs to a number on a page is three commands:
 
-    ./sweep.sh [--exp <family>]     # measure: bench/<experiment>/<config>/r<k>_{latencies,stats}.csv
-    python3 aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv + tables.txt
-    python3 tex-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
+    ./utility/sweep.sh [--exp <family>]     # measure: bench/<experiment>/<config>/r<k>_{latencies,stats}.csv
+    python3 utility/aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv + tables.txt
+    python3 utility/tex-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
 
 Each step reads only what the previous one wrote, so any step can be re-run alone.
 `aggregate.py` reads the `_stats.csv` files each run writes; `tex-tables.py` reads
 the same files through the same module, so a printed table cannot disagree with the
 aggregate beside it.
 
-`--dry-run` prints every command `sweep.sh` would run without running any of it,
+`--dry-run` prints every command `utility/sweep.sh` would run without running any of it,
 and the `--exp` filter selects a family by substring (`isolated`, `greenctx`, `mps`,
 `wq`, `aux`, `1t`).
 
 What is deliberately NOT in this repository, because it is data rather than code:
-the TensorRT engines (`models/`) and the ImageNet subset (`dataset/`) live one level
-up, in `../models` and `../dataset/`. They do not need to be the same files to
+the TensorRT engines, the ImageNet subset and the results are on the NVMe, in `$DATA`
+— `models/`, `dataset/`, `labels/` and `bench/`. Not on the root filesystem, which is
+small and shared, and not in this repository, which stays code. They do not need to
 follow the method, but the numbers will only match with the same board, the same
 engines, the same images and the same protocol.
 
 **Not yet scripted:** the LaTeX for Experiments 1 to 4. Those tables were
-transcribed from `bench/aggregate/tables.txt` and verified against it, but only
+transcribed from `$DATA/bench/aggregate/tables.txt` and verified against it, but only
 Experiment 5 is rendered by `tex-tables.py`. The numbers are reproducible either
 way, because `tables.txt` is generated from the runs.
 
 ## The models
 
-The engines themselves live one level up, in `../models`, because they are data.
+The engines themselves live in `$DATA/models`, because they are data.
 What belongs here is how they were made, which until now was recorded nowhere.
 
 ```
-../models/<model>/          one folder per network: the source graph, an .onnx plus any
+$DATA/models/<model>/          one folder per network: the source graph, an .onnx plus any
                             data file it needs, and its labels if it ships them
-../models/<model>/engine/   every engine build of that network, with trtexec's own log
+$DATA/models/<model>/engine/   every engine build of that network, with trtexec's own log
                             beside each one
 ```
 

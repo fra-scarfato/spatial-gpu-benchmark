@@ -49,6 +49,11 @@ import re
 import statistics as stats
 import sys
 
+# Where the data lives. Not on the root filesystem, which is small and shared,
+# and not in this repository, which is code: the engines, the image set, the
+# labels and the results are on the NVMe. Override with the DATA variable.
+DATA_ROOT = os.environ.get("DATA", "/mnt/nvme/f.scarfato")
+
 # The file name carries only the run number and the optional network label:
 #
 #   r3_stats.csv             one network per process, or a process holding one
@@ -906,13 +911,12 @@ def check_consistency(data, lines):
 
 
 def main():
-    # Defaulting relative to the script's own location, so the tool works from
-    # any working directory: the results live beside the runner, not here.
+    # The results tree is on the NVMe: not in this repository, and not on the
+    # root filesystem either. DATA_ROOT is where every tool agrees it lives.
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", default=os.path.join(os.path.dirname(
-        os.path.abspath(__file__)), "..", "bench"),
-        help="directory holding the *_stats.csv files (default: ../bench)")
+    ap.add_argument("--out", default=os.path.join(DATA_ROOT, "bench"),
+        help="directory holding the *_stats.csv files (default: $DATA/bench)")
     args = ap.parse_args()
 
     data = load(args.out)

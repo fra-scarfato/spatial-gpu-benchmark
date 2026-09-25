@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Emit the Experiment 5 tables as LaTeX, from the same data the aggregator uses.
 
-Run from the runner directory (it imports aggregate.py and reads ../bench). Every
+Run it from anywhere: it imports aggregate.py from its own directory and reads the
+results tree under $DATA. Every
 number is read out of the measurements, so nothing here can drift from the
 aggregate's own tables.
 """
@@ -12,10 +13,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import aggregate as A
 
-# The data lives beside the RUNNER, not beside this script: locate it from the
-# aggregate module, which always sits in the runner directory.
-RUNNER = os.path.dirname(os.path.abspath(A.__file__))
-DATA = A.load(os.path.join(RUNNER, "..", "bench"))
+# The data root comes from the aggregate module, so the two tools cannot
+# disagree about where the results are.
+DATA = A.load(os.path.join(A.DATA_ROOT, "bench"))
 OUT = []
 if not DATA:
     sys.exit("no data: nothing was read from the results tree")
