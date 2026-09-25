@@ -827,6 +827,19 @@ add "submit-model_t1_thread${SUBMIT_CORE}" \
 add "submit-model_t2_core${SUBMIT_CORE}${SUBMIT_CORE_B}" \
     "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
 
+# The one MPS arm of this family. MPS runs one process per network, so each
+# process has exactly one submitter and the 1-thread/2-thread axis does not exist
+# there. What can vary across processes is where each submitter runs: giving
+# each its own core is the cross-process analogue of the green-context pinning,
+# and that is the whole of it. Priority and same-core contention were dropped.
+#
+# Needs --static-chunks, like every static arm: the partition count is read off
+# lspart on the real board, so it cannot be assumed.
+if [ "$STATIC_CHUNKS" -gt 0 ]; then
+    add "submit-model_mps_owncores" \
+        "pair|static|||taskset -c $SUBMIT_CORE $RUNNER --submit-threads 1 $MOB $DS --allocation whole|taskset -c $SUBMIT_CORE_B $RUNNER --submit-threads 1 $RES $DS --allocation whole|75"
+fi
+
 # Same three knobs with the maximum priority available. Unpinned-plus-priority is
 # the arm that separates priority from placement: if the tail falls there, the
 # problem was never which core, but waiting for one.
