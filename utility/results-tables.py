@@ -106,7 +106,7 @@ _CAPTION = ""
 def open_table(cols, spec, caption, label):
     global _CAPTION
     _CAPTION = "\\caption{%s}\n\\label{%s}" % (caption, label)
-    emit(r"\begin{table}[ht]")
+    emit(r"\begin{table}[H]")
     emit(r"\centering")
     emit(r"\footnotesize")
     emit(r"\setlength{\tabcolsep}{4pt}")
