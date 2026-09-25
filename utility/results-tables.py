@@ -71,6 +71,25 @@ def tails(exp, cfg, net):
     return vals
 
 
+def family(exp, cfg, desc):
+    """The family a row belongs to. A \\midrule marks a change of family, so this is
+    what the rules mean; a change of network means nothing unless the network's rows
+    form a block."""
+    if exp == "exp1":
+        return "isolated"
+    if exp == "exp2-1t":
+        return "unpartitioned" if cfg == "baseline" else "partitioned"
+    if exp == "exp3":
+        if cfg in ("mps_single", "mps_off", "mps_default"):
+            return "references"
+        return "atp" if cfg.startswith("mps_atp") else "static"
+    if exp == "exp7":
+        return "mps" if cfg == "mps_owncores" else "in-process"
+    if exp == "":
+        return "references"
+    return desc.split(",")[0]
+
+
 def ref(net):
     """The isolated reference for xiso: the network alone on the whole device."""
     return (val("exp1", net + "_whole", net, "p99_minus_median"),
@@ -97,38 +116,41 @@ def close_table():
     emit()
 
 
-def rates(rows, group=False):
-    """rows: (net, desc, exp, cfg, sms). Column 1 is the network on every row. A rule
-    separates one network's block from the next; with `group`, a lighter indented rule
-    separates the mechanisms inside a block."""
-    prev = prevgroup = None
-    for net, desc, exp, cfg, sms in rows:
-        if prev is not None and net != prev:
+def separators(rows, by_network):
+    """Which row indices should be preceded by a rule. With by_network, a network change
+    is the boundary and the network's rows are a block; otherwise the family is, and a
+    change of network means nothing."""
+    marks = []
+    prev_net = prev_fam = None
+    for i, (net, desc, exp, cfg, sms) in enumerate(rows):
+        fam = family(exp, cfg, desc)
+        mark = False
+        if prev_net is not None:
+            if by_network:
+                mark = net != prev_net
+            else:
+                mark = fam != prev_fam
+        marks.append(mark)
+        prev_net, prev_fam = net, fam
+    return marks
+
+
+def rates(rows, by_network=False):
+    """rows: (net, desc, exp, cfg, sms). Column 1 is the network on every row."""
+    marks = separators(rows, by_network)
+    for mark, (net, desc, exp, cfg, sms) in zip(marks, rows):
+        if mark:
             emit(r"\midrule")
-            prevgroup = None
-        if group:
-            g = desc.split(",")[0]
-            if prevgroup is not None and g != prevgroup:
-                emit(r"\cmidrule(lr){2-5}")
-            prevgroup = g
-        prev = net
         emit(r"{} & {} & {} & {} & {} \\".format(
             net, desc, "---" if sms is None else str(sms),
             ms(val(exp, cfg, net, "median")), "{:.0f}".format(thr(exp, cfg, net) or 0)))
 
 
-def dispersion(rows, group=False):
-    prev = prevgroup = None
-    for net, desc, exp, cfg, sms in rows:
-        if prev is not None and net != prev:
+def dispersion(rows, by_network=False):
+    marks = separators(rows, by_network)
+    for mark, (net, desc, exp, cfg, sms) in zip(marks, rows):
+        if mark:
             emit(r"\midrule")
-            prevgroup = None
-        if group:
-            g = desc.split(",")[0]
-            if prevgroup is not None and g != prevgroup:
-                emit(r"\cmidrule(lr){2-5}")
-            prevgroup = g
-        prev = net
         cells = [net, desc]
         t, s = ref(net)
         tail = val(exp, cfg, net, "p99_minus_median")
@@ -156,7 +178,7 @@ open_table(r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\", "l
            "the green context. Percentages are of the device's sixteen SMs. Whole device "
            "and a 100\\,\\% green context are the same reservation, measured twice, so "
            "the pair also shows the run-to-run spread of a single configuration.", "tab:iso-rates")
-rates(ISO)
+rates(ISO, by_network=True)
 close_table()
 
 open_table(r"Network & Configuration & std & std $\times$iso & p95 & p99 & tail & "
@@ -164,7 +186,7 @@ open_table(r"Network & Configuration & std & std $\times$iso & p95 & p99 & tail 
            "The same builds by dispersion. \\emph{tail} is $p99-\\mathrm{median}$; "
            "$\\times$iso is against the network's own whole-device run.",
            "tab:iso-dispersion")
-dispersion(ISO)
+dispersion(ISO, by_network=True)
 close_table()
 
 # ------------------------------------------ two networks on green contexts
@@ -261,14 +283,14 @@ open_table(r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\",
            "ratios, with one submitting thread. The isolation rows are the floor: the "
            "same network alone on the same share of the device.",
            "tab:compare-rates")
-rates(CMP, group=True)
+rates(CMP)
 close_table()
 
 open_table(r"Network & Configuration & std & std $\times$iso & p95 & p99 & "
            r"tail & tail $\times$iso & obs-max \\", "llrrrrrrr",
            "The comparison by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:compare-dispersion")
-dispersion(CMP, group=True)
+dispersion(CMP)
 close_table()
 
 # --------------------------------------------------------------- the CPU side
@@ -284,6 +306,8 @@ open_table(r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\", "l
            "tab:cpu-rates")
 for cfg, desc in CPU:
     for net in ("mobilenet", "resnet"):
+        if cfg == "mps_owncores" and net == "mobilenet":
+            emit(r"\midrule")
         emit(r"{} & {} & {} & {} & {:.0f} \\".format(
             net, desc, 12 if net == "mobilenet" else 4,
             ms(val("exp7", cfg, net, "median")), thr("exp7", cfg, net) or 0))
@@ -296,6 +320,8 @@ open_table(r"Network & Configuration & tail (ms) & the five run-level tails & "
            "tab:cpu-dispersion")
 for cfg, desc in CPU:
     for net in ("mobilenet", "resnet"):
+        if cfg == "mps_owncores" and net == "mobilenet":
+            emit(r"\midrule")
         t, _ = ref(net)
         tail = val("exp7", cfg, net, "p99_minus_median")
         runs = tails("exp7", cfg, net)
