@@ -78,8 +78,10 @@ def ref(net):
 
 
 def open_table(cols, spec, caption, label):
-    emit(r"\begin{table}[H]")
+    emit(r"\begin{table}[ht]")
     emit(r"\centering")
+    emit(r"\footnotesize")
+    emit(r"\setlength{\tabcolsep}{4pt}")
     emit(r"\caption{%s}" % caption)
     emit(r"\label{%s}" % label)
     emit(r"\begin{tabular}{%s}" % spec)
@@ -95,16 +97,38 @@ def close_table():
     emit()
 
 
-def rates(rows):
-    """rows: (net, desc, exp, cfg, sms). Column 1 is the network, on every row."""
+def rates(rows, group=False):
+    """rows: (net, desc, exp, cfg, sms). Column 1 is the network on every row. A rule
+    separates one network's block from the next; with `group`, a lighter indented rule
+    separates the mechanisms inside a block."""
+    prev = prevgroup = None
     for net, desc, exp, cfg, sms in rows:
+        if prev is not None and net != prev:
+            emit(r"\midrule")
+            prevgroup = None
+        if group:
+            g = desc.split(",")[0]
+            if prevgroup is not None and g != prevgroup:
+                emit(r"\cmidrule(lr){2-5}")
+            prevgroup = g
+        prev = net
         emit(r"{} & {} & {} & {} & {} \\".format(
             net, desc, "---" if sms is None else str(sms),
             ms(val(exp, cfg, net, "median")), "{:.0f}".format(thr(exp, cfg, net) or 0)))
 
 
-def dispersion(rows):
+def dispersion(rows, group=False):
+    prev = prevgroup = None
     for net, desc, exp, cfg, sms in rows:
+        if prev is not None and net != prev:
+            emit(r"\midrule")
+            prevgroup = None
+        if group:
+            g = desc.split(",")[0]
+            if prevgroup is not None and g != prevgroup:
+                emit(r"\cmidrule(lr){2-5}")
+            prevgroup = g
+        prev = net
         cells = [net, desc]
         t, s = ref(net)
         tail = val(exp, cfg, net, "p99_minus_median")
@@ -124,19 +148,8 @@ for net in ("mobilenet", "resnet"):
     for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
         ISO.append((net, "green context, %d\\,\\%% of the device" % pct, "exp1",
                     "%s_gc%d" % (net, pct), sm))
-for net, cfgs in (
-        ("inception", [("inception_whole", "default build (no aux stream)"),
-                       ("inception_aux1_whole", "1 aux stream (build \\texttt{aux1})"),
-                       ("inception_aux2_whole", "2 aux streams (\\texttt{aux2})"),
-                       ("inception_aux4_whole", "4 aux streams (\\texttt{aux4})"),
-                       ("inception_aux5_whole", "5 aux streams, saturation (\\texttt{aux5})")]),
-        ("vit", [("vit_whole", "default build (no aux stream)")]),
-        ("retinanet", [("retinanet_whole", "default build (no aux stream)"),
-                       ("retinanet_aux1_whole", "1 aux stream (\\texttt{aux1})"),
-                       ("retinanet_aux8_whole", "8 aux streams (\\texttt{aux8})"),
-                       ("retinanet_aux16_whole", "9 aux streams, saturation (\\texttt{aux16})")])):
-    for cfg, desc in cfgs:
-        ISO.append((net, desc, "exp1", cfg, 16))
+# Inception, ViT and RetinaNet are deliberately absent: they belong to the
+# auxiliary-stream work. This section is about two networks.
 
 open_table(r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\", "llrrr",
            "The five networks in isolation: latency and throughput against the size of "
@@ -248,14 +261,14 @@ open_table(r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\",
            "ratios, with one submitting thread. The isolation rows are the floor: the "
            "same network alone on the same share of the device.",
            "tab:compare-rates")
-rates(CMP)
+rates(CMP, group=True)
 close_table()
 
 open_table(r"Network & Configuration & std & std $\times$iso & p95 & p99 & "
            r"tail & tail $\times$iso & obs-max \\", "llrrrrrrr",
            "The comparison by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:compare-dispersion")
-dispersion(CMP)
+dispersion(CMP, group=True)
 close_table()
 
 # --------------------------------------------------------------- the CPU side
