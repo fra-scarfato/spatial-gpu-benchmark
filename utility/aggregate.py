@@ -677,7 +677,7 @@ def table_aux(data, lines):
         "  Experiment 2's pair, with ResNet built allowing one auxiliary stream so it\n"
         "  issues two streams of its own; the pair therefore has three concurrent\n"
         "  stream-ordered workloads. Every other setting is Experiment 4's.\n"
-        "  Select with: sweep.sh --exp aux\n")
+        "  Select with: utility/sweep.sh --exp aux\n")
     lines.append(f"  {'config':<22} {'network':<10} {'median ms':>10} {'p99 ms':>8} "
                  f"{'std ms':>8} {'tail ms':>8} {'obs-max':>9} {'agg inf/s':>10}")
     for cfg in cfgs:
@@ -903,7 +903,7 @@ def check_consistency(data, lines):
     if flagged:
         lines.append(hdr("WARNING - SUSPECT RUNS (median > 25% above the family median)"))
         lines.append("  These were very likely taken while something else used the GPU.\n"
-                     "  Re-run them (delete the *_stats.csv and re-run ./sweep.sh).\n")
+                     "  Re-run them (delete the *_stats.csv and re-run ./utility/sweep.sh).\n")
         for exp, config, net, r, v, m in flagged:
             lines.append(f"  {exp} {config} {net} run {r}: {v:.4f} ms "
                          f"vs family median {m:.4f} ms  ({100*(v/m-1):+.0f}%)")

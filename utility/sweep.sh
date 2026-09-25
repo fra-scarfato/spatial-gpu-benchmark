@@ -36,21 +36,21 @@
 #      inflating the median from 0.53 ms to 2.83 ms.
 #
 # Usage:
-#   ./sweep.sh                     experiments 1 and 2 (~40 min)
-#   ./sweep.sh --exp mps           a subset: each entry is matched as a
-#   ./sweep.sh --exp isolated,mps  substring of the experiment name
-#   ./sweep.sh --exp wq            the work queue experiment (not in the default
+#   ./utility/sweep.sh                     experiments 1 and 2 (~40 min)
+#   ./utility/sweep.sh --exp mps           a subset: each entry is matched as a
+#   ./utility/sweep.sh --exp isolated,mps  substring of the experiment name
+#   ./utility/sweep.sh --exp wq            the work queue experiment (not in the default
 #                                  set: 60 runs, asked for explicitly)
-#   ./sweep.sh --static-chunks 8   also run the static-partition jobs, passing
+#   ./utility/sweep.sh --static-chunks 8   also run the static-partition jobs, passing
 #                                  the device's TOTAL chunk count (read it off
 #                                  `lspart`; a chunk is 2 SMs on an iGPU, so a
 #                                  16-SM Orin has 8)
-#   ./sweep.sh --dry-run           print every command, run nothing
-#   ./sweep.sh --smoke             one fast run per configuration, to validate
+#   ./utility/sweep.sh --dry-run           print every command, run nothing
+#   ./utility/sweep.sh --smoke             one fast run per configuration, to validate
 #                                  the plumbing (writes to a SEPARATE directory:
 #                                  it is not data)
-#   ./sweep.sh --runs 3            fewer repetitions
-#   ./sweep.sh --force             re-run configurations whose output exists
+#   ./utility/sweep.sh --runs 3            fewer repetitions
+#   ./utility/sweep.sh --force             re-run configurations whose output exists
 #
 # The sweep is RESUMABLE: a run whose output already exists is skipped, so an
 # interrupted sweep can simply be restarted.
@@ -635,7 +635,7 @@ fi
 # limit-1 negative control. `devctx_8` must reproduce Experiment 2's numbers; if
 # it does not, the code path is wrong and the rest is uninterpretable.
 #
-# Select with:  ./sweep.sh --exp wq
+# Select with:  ./utility/sweep.sh --exp wq
 for split in 50:50 75:25; do
     mp="${split%%:*}"; rp="${split##*:}"
     for arm in devctx:8:device_ctx balanced:8:green_ctx_balanced \
@@ -720,7 +720,7 @@ add "concurrent-aux_aux1_whole" \
 # tail falls from 0.348 to 0.050 ms and its median improves slightly, while
 # throughput does not move.
 #
-# Select with:  ./sweep.sh --exp 1t
+# Select with:  ./utility/sweep.sh --exp 1t
 ST="--submit-threads 1"
 
 for split in 50:50 75:25 25:75; do
@@ -981,7 +981,7 @@ if [ "$DRY" = 1 ]; then
     echo "[sweep] dry run: nothing was executed."
 elif [ "$SMOKE" = 1 ]; then
     echo "[sweep] smoke test complete — the plumbing works."
-    echo "        Inspect a log, then run: ./sweep.sh"
+    echo "        Inspect a log, then run: ./utility/sweep.sh"
 else
     echo "[sweep] done. $((SELECTED * RUNS)) of $((SELECTED * RUNS)) runs. Aggregate with:  python3 $HERE/aggregate.py --out $OUT"
 fi
