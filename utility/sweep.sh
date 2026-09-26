@@ -842,6 +842,21 @@ if [ "$STATIC_CHUNKS" -gt 0 ]; then
 fi
 
 
+# The declared-concurrency block. The subject is RetinaNet's aux8 build, the only
+# engine in the corpus whose stream demand (9) exceeds the platform's default
+# declaration (8), and therefore the only one where the work-queue half of a green
+# context descriptor can bind. MobileNet is the co-runner: one stream, so it never
+# competes for the declaration, and it is the network whose tail is best characterised.
+#
+# The three rows walk the ladder 8 -> 10, and then hold the number and change the
+# scope, so each step varies exactly one thing.
+add "wq-s1_pair_smsonly" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
+add "wq-s1_pair_dev10" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope device_ctx --wq-limit 10 --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
+add "wq-s1_pair_bal10" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope green_ctx_balanced --wq-limit 10 --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are

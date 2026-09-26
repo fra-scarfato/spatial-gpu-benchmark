@@ -63,7 +63,11 @@ DATA_ROOT = os.environ.get("DATA", "/mnt/nvme/f.scarfato")
 # The experiment and the configuration are NOT in the file name: they are the two
 # directory levels above it. That is what keeps these short and the tree
 # readable, and it is why the parser below walks paths rather than names.
-RUN_RE = re.compile(r'^r(?P<run>\d+)(?:_(?P<net>mobilenet|resnet))?_stats\.csv$')
+# The label is whatever the runner was given with --net ...[:<label>], not a
+# fixed pair: the regex used to name mobilenet and resnet only, which silently
+# dropped every row of a run labelled with any other network. The known-name
+# assertion below is what keeps a typo from entering as a new network.
+RUN_RE = re.compile(r'^r(?P<run>\d+)(?:_(?P<net>[A-Za-z][A-Za-z0-9_+-]*))?_stats\.csv$')
 
 # Results-tree folder -> the short key used throughout this file.
 #
@@ -96,6 +100,7 @@ EXP_DIR = {
     "concurrent-aux-1t":      "exp5-1t",
     "pinning":             "exp6",
     "submit-model":        "exp7",
+    "wq-s1":                "exp8",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }

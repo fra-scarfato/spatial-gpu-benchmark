@@ -97,6 +97,19 @@ def agg_thr(exp, cfg, nets):
     return st.median(vals) if vals else None
 
 
+def must(v, what):
+    """Refuse to emit a missing measurement.
+
+    A table cell that is None because a file was not parsed looks exactly like a cell
+    that is legitimately "not applicable", and one of these reached a table before it
+    was caught: the aggregate was skipping every row labelled with a third network, and
+    the table printed dashes. Where a value is required, say so.
+    """
+    if v is None:
+        raise SystemExit("results-tables.py: no measurement for " + what)
+    return v
+
+
 def ref(net):
     """The isolated reference for xiso: the network alone on the whole device."""
     return (val("exp1", net + "_whole", net, "p99_minus_median"),
@@ -463,6 +476,54 @@ open_table(DISP_COLS, DISP_SPEC,
            "The same arms by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:cpu-dispersion")
 dispersion(cpudisp)
+close_table()
+
+
+# ------------------------------------------------- the work-queue configuration
+# The subject is RetinaNet's aux8 build, the only engine in the corpus whose stream
+# count (9) exceeds the platform's default declaration (8), with MobileNet as the
+# co-runner at 50/50: one stream, so it never competes for the declaration.
+WQ = [("pair_smsonly", "SMs only (descriptor carries no work queues, declaration 8)"),
+      ("pair_dev10", "declared 10, \\texttt{device\\_ctx}"),
+      ("pair_bal10", "declared 10, \\texttt{green\\_ctx\\_balanced}")]
+open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) & "
+            r"tail (ms) \\"], "llrrrr",
+           "The work-queue half of a green context descriptor varied on the pair whose "
+           "client has more streams than the platform declares by default: RetinaNet's "
+           "\\texttt{aux8} build with nine stream-ordered workloads against a default "
+           "declaration of eight, and MobileNet as the co-runner, 50\\,\\% each, one "
+           "submitting thread. The first row is the descriptor every earlier measurement "
+           "used.",
+           "tab:wq-rows")
+for cfg, desc in WQ:
+    for net in ("retinanet", "mobilenet"):
+        what = "exp8 {} {}".format(cfg, net)
+        emit(r"{} & {} & {} & {:.0f} & {} & {} \\".format(
+            net, desc, ms(must(val("exp8", cfg, net, "median"), what)),
+            must(thr("exp8", cfg, net), what) or 0,
+            ms(must(val("exp8", cfg, net, "p99"), what)),
+            ms(must(val("exp8", cfg, net, "p99_minus_median"), what))))
+close_table()
+
+AUX = [("inception", "inception_whole", "default build, no auxiliary stream"),
+       ("inception", "inception_aux1_whole", "1 auxiliary stream (\\texttt{aux1})"),
+       ("inception", "inception_aux2_whole", "2 auxiliary streams (\\texttt{aux2})"),
+       ("inception", "inception_aux4_whole", "4 auxiliary streams (\\texttt{aux4})"),
+       ("inception", "inception_aux5_whole", "5 auxiliary streams (\\texttt{aux5})"),
+       ("retinanet", "retinanet_whole", "default build, no auxiliary stream"),
+       ("retinanet", "retinanet_aux1_whole", "1 auxiliary stream (\\texttt{aux1})"),
+       ("retinanet", "retinanet_aux8_whole", "8 auxiliary streams (\\texttt{aux8})"),
+       ("retinanet", "retinanet_aux16_whole", "9 auxiliary streams (\\texttt{aux16})")]
+open_table([r"Network & Build & Median (ms) & Thr.\ (inf/s) & tail (ms) \\"], "llrrr",
+           "What the auxiliary streams themselves buy, per engine build, each measured "
+           "alone on the whole device. The builds differ only in how many auxiliary "
+           "streams the builder was allowed to use, and TensorRT then creates and uses "
+           "them itself.",
+           "tab:aux-builds")
+for net, cfg, desc in AUX:
+    emit(r"{} & {} & {} & {:.0f} & {} \\".format(
+        net, desc, ms(val("exp1", cfg, net, "median")), thr("exp1", cfg, net) or 0,
+        ms(val("exp1", cfg, net, "p99_minus_median"))))
 close_table()
 
 sys.stdout.write("\n".join(OUT))
