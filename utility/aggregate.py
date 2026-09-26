@@ -101,6 +101,7 @@ EXP_DIR = {
     "pinning":             "exp6",
     "submit-model":        "exp7",
     "wq-s1":                "exp8",
+    "wq-s4":                "exp8",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }

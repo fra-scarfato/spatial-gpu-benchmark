@@ -526,4 +526,26 @@ for net, cfg, desc in AUX:
         ms(val("exp1", cfg, net, "p99_minus_median"))))
 close_table()
 
+
+# Three clients in one split: 1 + 3 + 9 = 13 stream-ordered workloads against a default
+# declaration of 8. The gain attempt, since a gain is only possible where the default
+# budget is exceeded.
+MULTI = [("multi_default", "default declaration, inherited 8"),
+         ("multi_bal13", "declared 13, \\texttt{green\\_ctx\\_balanced}"),
+         ("multi_dev13", "declared 13, \\texttt{device\\_ctx}")]
+open_table([r"Network & Configuration & Median (ms) & p99 (ms) & tail (ms) \\"], "llrrr",
+           "Three clients in one green-context split, one submitting thread: MobileNet "
+           "6\\,SMs, Inception\\,aux2 6, RetinaNet\\,aux8 4, so the three together ask for "
+           "thirteen stream-ordered workloads against a platform default declaration of "
+           "eight. Aggregate throughput is 129 inferences per second in every row.",
+           "tab:wq-multi")
+for cfg, desc in MULTI:
+    for net in ("mobilenet", "inception", "retinanet"):
+        what = "exp8 {} {}".format(cfg, net)
+        emit(r"{} & {} & {} & {} & {} \\".format(
+            net, desc, ms(must(val("exp8", cfg, net, "median"), what)),
+            ms(must(val("exp8", cfg, net, "p99"), what)),
+            ms(must(val("exp8", cfg, net, "p99_minus_median"), what))))
+close_table()
+
 sys.stdout.write("\n".join(OUT))

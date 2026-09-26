@@ -857,6 +857,19 @@ add "wq-s1_pair_dev10" \
 add "wq-s1_pair_bal10" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope green_ctx_balanced --wq-limit 10 --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
 
+# The gain attempt: three clients in one split, whose streams together ask for more
+# concurrency than the platform declares by default (1 + 3 + 9 = 13 against 8). The
+# split rounds up to 6 + 6 + 4 SMs, which is 16: percentages are rounded up to the
+# 2-SM alignment, so 40/30/30 would ask for 20 SMs and be refused.
+# declaration is worth anything, this is where it should show, because a gain is only
+# possible where the default budget is exceeded.
+add "wq-s4_multi_default" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
+add "wq-s4_multi_bal13" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope green_ctx_balanced --wq-limit 13 --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
+add "wq-s4_multi_dev13" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope device_ctx --wq-limit 13 --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are
