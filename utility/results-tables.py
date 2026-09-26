@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """results-tables.py — the tables of the Results section, from the measurements.
 
-Two layouts, each used where it reads best.
+PERFORMANCE tables put the two networks on top, side by side, with the aggregate at
+the right; each network's columns are its own SM count, median and throughput. That is
+the layout of the comparison tables already in the thesis, and it is the one that shows
+a difference between two networks at the same configuration as a row of numbers rather
+than as two rows to be compared in the head.
 
-NETWORK FIRST, for the tables that describe one technology:
+    Configuration | SMs | MobileNet (median, thr) | SMs | ResNet (median, thr) | Aggregate
 
-    Network | Configuration | SMs | Median (ms) | Thr. (inf/s)
-    Network | Configuration | std | std xiso | p95 | p99 | tail | tail xiso | obs-max
+DISPERSION tables are read one network at a time instead, because there each row is a
+statistic of a single distribution:
 
-Four-way, for the comparison tables, because there the question is what one mechanism
-does to one network at one split, and that is a row:
+    Network | Configuration | std | xiso | p95 | p99 | tail | xiso | obs-max
 
-    Ratio | Mechanism | MobileNet (median, thr) | ResNet (median, thr) | Aggregate
-    Ratio | Mechanism | Network | std | xiso | p95 | p99 | tail | xiso | obs-max
+The comparison tables keep the four-way layout (ratio x mechanism), for the same reason
+the performance tables are wide: what a mechanism does to one network at one split is
+a row.
 
-The Configuration column always names the mechanism — GC, MPS static, MPS ATP, MPS
-default, no MPS, or whole/alone for the unpartitioned and isolated references — so no
-row has to be read against a caption to know what it is.
+Every configuration cell names its mechanism — GC, MPS static, MPS ATP, MPS default,
+no MPS, whole or alone — so no row needs the caption to be identified.
 
-Submission model, frozen by the submission-model section: one submitting thread.
-isolation and MPS have one process per network and therefore one submitter by
-construction; green context is measured as exp2-1t.
+Submission model, frozen earlier: one submitting thread. Isolation and MPS have one
+process per network, so one submitter by construction; green context is exp2-1t.
 
-Run from anywhere: it imports aggregate.py from its own directory and reads the
-results tree under $DATA. No number is typed by hand.
+Run from anywhere: it imports aggregate.py from its own directory and reads the results
+tree under $DATA. No number is typed by hand.
 """
 import os
 import statistics as st
@@ -37,8 +39,8 @@ if not DATA:
     sys.exit("results-tables.py: no measurements found under $DATA/bench")
 
 OUT = []
-_SMS = 16
 _CAPTION = ""
+NETS = ("mobilenet", "resnet")
 
 
 def emit(line=""):
@@ -68,22 +70,18 @@ def runs_of(exp, cfg, net):
 
 
 def thr(exp, cfg, net):
-    """Measured inferences per second: count over the window the runner timed.
-
-    Not 1000/median, which is the GPU-only figure and reads higher because it ignores
-    the gap the host leaves between inferences.
-    """
+    """Measured inferences per second: count over the window the runner timed. Not
+    1000/median, which is the GPU-only figure and reads higher because it ignores the
+    gap the host leaves between inferences."""
     vals = [m["count"] / m["duration_s"] for m in runs_of(exp, cfg, net)
             if m.get("duration_s", 0) > 0]
     return st.median(vals) if vals else None
 
 
 def agg_thr(exp, cfg, nets):
-    """Aggregate throughput: both networks' inferences over the window they shared.
-
-    max(duration) is that window, because the processes start together. Dividing by
-    the sum, or by the shorter duration, would invent throughput that never happened.
-    """
+    """Both networks' inferences over the window they shared; max(duration) is that
+    window, because the processes start together. Dividing by the sum, or by the
+    shorter duration, would invent throughput that never happened."""
     vals = []
     for r in sorted(A.runs_of(DATA, exp, cfg)):
         total, longest = 0, 0.0
@@ -123,10 +121,8 @@ def family(exp, cfg, desc):
 
 
 def open_table(cols, spec, caption, label):
-    """The caption goes BELOW the tabular. Above a table LaTeX separates it with
-    \\belowcaptionskip, which is 0pt by default, so it sits against the top rule;
-    below, it is separated by \\abovecaptionskip, 10pt. It is also what the rest of
-    the thesis does."""
+    """The caption goes BELOW the tabular: above a table LaTeX separates it with
+    \\belowcaptionskip, which is 0pt by default, so it sits against the top rule."""
     global _CAPTION
     _CAPTION = "\\caption{%s}\n\\label{%s}" % (caption, label)
     emit(r"\begin{table}[H]")
@@ -149,31 +145,107 @@ def close_table():
     emit()
 
 
-def separators(rows, by_network):
-    marks, prev_net, prev_fam = [], None, None
+# ---------------------------------------------------------------- performance
+def wide_head(lead, one_sm, agg):
+    """Two header rows: the networks as column groups, then the statistic names.
+
+    one_sm: the two networks share one SM column (isolation, where both receive the
+    same share). Otherwise each network carries its own, which the pair needs because
+    75/25 gives MobileNet twelve SMs and ResNet four.
+
+    The row terminator ends the LAST cell rather than being a cell of its own: with no
+    aggregate column, a separate one produced seven cells in a six-column table.
+    """
+    nlead = len(lead)
+    if one_sm:
+        g1, g2 = "%d-%d" % (nlead + 2, nlead + 3), "%d-%d" % (nlead + 4, nlead + 5)
+        row1 = lead + [r"SMs", r"\multicolumn{2}{c}{MobileNet V2-12}",
+                       r"\multicolumn{2}{c}{ResNet-50 v2-7}"]
+        row2 = [""] * nlead + ["", r"Median (ms)", r"Thr.\ (inf/s)", r"Median (ms)",
+                               r"Thr.\ (inf/s)"]
+    else:
+        g1, g2 = "%d-%d" % (nlead + 1, nlead + 3), "%d-%d" % (nlead + 4, nlead + 6)
+        row1 = lead + [r"\multicolumn{3}{c}{MobileNet V2-12}",
+                       r"\multicolumn{3}{c}{ResNet-50 v2-7}"]
+        row2 = [""] * nlead + [r"SMs", r"Median (ms)", r"Thr.\ (inf/s)", r"SMs",
+                               r"Median (ms)", r"Thr.\ (inf/s)"]
+    if agg:
+        row1.append(r"Aggregate \\")
+        row2.append(r"(inf/s) \\")
+    else:
+        row1[-1] += r" \\"
+        row2[-1] += r" \\"
+    cols = [" & ".join(row1), r"\cmidrule(lr){%s} \cmidrule(lr){%s}" % (g1, g2),
+            " & ".join(row2)]
+    spec = "l" * nlead + ("rrrrr" if one_sm else "rrrrrr") + ("r" if agg else "")
+    return cols, spec
+
+
+def wide_row(lead, rows):
+    """rows: (which network, sms, exp, cfg) in order, MobileNet then ResNet."""
+    cells = list(lead)
+    for _, sms, exp, cfg in rows:
+        cells += ["---" if sms is None else str(sms),
+                  ms(val(exp, cfg, _, "median")), "{:.0f}".format(thr(exp, cfg, _) or 0)]
+    return cells
+
+
+def wide_table(cols, spec, caption, label, body, agg=False, agg_exp=None, agg_cfg=None):
+    open_table(cols, spec, caption, label)
+    prev = None
+    for lead, rows, fam in body:
+        if prev is not None and fam != prev:
+            emit(r"\midrule")
+        prev = fam
+        cells = wide_row(lead, rows)
+        if agg:
+            cells.append("{:.0f}".format(agg_thr(agg_exp, agg_cfg or "", NETS) or 0)
+                         if agg_cfg else "---")
+        emit(" & ".join(cells) + r" \\")
+    close_table()
+
+
+# ------------------------------------------------------------------ isolation
+ISO = []
+for net in NETS:
+    pass
+ISO_ROWS = []
+for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
+    ISO_ROWS.append(("GC %d\\,\\%%" % pct, sm, "exp1", "%s_gc%d" % ("mobilenet", pct),
+                     "exp1", "%s_gc%d" % ("resnet", pct)))
+cols, spec = wide_head([r"Configuration"], True, False)
+open_table(cols, spec,
+           "The two networks in isolation: latency and throughput against the size of the "
+           "green context, which both networks receive in full. \\texttt{GC} is a green "
+           "context and the percentage is the share of the device's sixteen SMs it "
+           "reserves. \\texttt{whole device} is no reservation at all, and the pair "
+           "\\texttt{whole device} and \\texttt{GC 100\\,\\%} is the same reservation "
+           "measured twice, so it also shows the run-to-run spread of one configuration.",
+           "tab:iso-rates")
+emit(r"whole device & 16 & {} & {:.0f} & {} & {:.0f} \\".format(
+    ms(val("exp1", "mobilenet_whole", "mobilenet", "median")),
+    thr("exp1", "mobilenet_whole", "mobilenet") or 0,
+    ms(val("exp1", "resnet_whole", "resnet", "median")),
+    thr("exp1", "resnet_whole", "resnet") or 0))
+for desc, sm, mo_e, mo_c, re_e, re_c in ISO_ROWS:
+    emit(r"{} & {} & {} & {:.0f} & {} & {:.0f} \\".format(
+        desc, sm, ms(val(mo_e, mo_c, "mobilenet", "median")),
+        thr(mo_e, mo_c, "mobilenet") or 0,
+        ms(val(re_e, re_c, "resnet", "median")), thr(re_e, re_c, "resnet") or 0))
+close_table()
+
+DISP_COLS = [r"Network & Configuration & std & std $\times$iso & p95 & p99 & tail & "
+             r"tail $\times$iso & obs-max \\"]
+DISP_SPEC = "llrrrrrrr"
+
+
+def dispersion(rows):
+    prev = None
     for net, desc, exp, cfg, sms in rows:
         fam = family(exp, cfg, desc)
-        mark = False
-        if prev_net is not None:
-            mark = (net != prev_net) if by_network else (fam != prev_fam)
-        marks.append(mark)
-        prev_net, prev_fam = net, fam
-    return marks
-
-
-def rates(rows, by_network=False):
-    for mark, (net, desc, exp, cfg, sms) in zip(separators(rows, by_network), rows):
-        if mark:
+        if prev is not None and fam != prev:
             emit(r"\midrule")
-        emit(r"{} & {} & {} & {} & {} \\".format(
-            net, desc, "---" if sms is None else str(sms),
-            ms(val(exp, cfg, net, "median")), "{:.0f}".format(thr(exp, cfg, net) or 0)))
-
-
-def dispersion(rows, by_network=False):
-    for mark, (net, desc, exp, cfg, sms) in zip(separators(rows, by_network), rows):
-        if mark:
-            emit(r"\midrule")
+        prev = fam
         t, s = ref(net)
         tail = val(exp, cfg, net, "p99_minus_median")
         std = val(exp, cfg, net, "std")
@@ -183,39 +255,16 @@ def dispersion(rows, by_network=False):
             ms(A.obs_max(DATA, exp, cfg, net))))
 
 
-# ------------------------------------------------------------------ isolation
-# One network alone, the SMs it may use restricted with a green context. gc100 is a
-# green context over the whole device and separates the cost of the mechanism from the
-# cost of the budget. The other three networks are not in this section: they belong to
-# the auxiliary-stream work.
-ISO = []
-for net in ("mobilenet", "resnet"):
-    ISO.append((net, "whole device", "exp1", net + "_whole", 16))
+disp_rows = []
+for net in NETS:
+    disp_rows.append((net, "whole device", "exp1", net + "_whole", 16))
     for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
-        ISO.append((net, "GC %d\\,\\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
-
-RATES_SPEC = "llrrr"
-RATES_COLS = [r"Network & Configuration & SMs & Median (ms) & Thr.\ (inf/s) \\"]
-DISP_SPEC = "llrrrrrrr"
-DISP_COLS = [r"Network & Configuration & std & std $\times$iso & p95 & p99 & tail & "
-             r"tail $\times$iso & obs-max \\"]
-
-open_table(RATES_COLS, RATES_SPEC,
-           "The two networks in isolation: latency and throughput against the size of "
-           "the green context. \\texttt{GC} is a green context, and the percentage is "
-           "the share of the device's sixteen SMs it reserves; \\texttt{whole device} "
-           "is no reservation at all. The pair \\texttt{whole device} and \\texttt{GC "
-           "100\\,\\%} is the same reservation measured twice, so it also shows the "
-           "run-to-run spread of a single configuration.",
-           "tab:iso-rates")
-rates(ISO, by_network=True)
-close_table()
-
+        disp_rows.append((net, "GC %d\\,\\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
 open_table(DISP_COLS, DISP_SPEC,
            "The same builds by dispersion. \\emph{tail} is $p99-\\mathrm{median}$; "
            "$\\times$iso is against the network's own whole-device run.",
            "tab:iso-dispersion")
-dispersion(ISO, by_network=True)
+dispersion(disp_rows)
 close_table()
 
 # ------------------------------------------- two networks on green contexts
@@ -224,23 +273,30 @@ PAIRS = [("baseline", "baseline", 16, 16),
          ("50_50", "GC 50/50", 8, 8),
          ("75_25", "GC 75/25", 12, 4),
          ("25_75", "GC 25/75", 4, 12)]
-PAIR = []
-for cfg, desc, mob_sm, res_sm in PAIRS:
-    for net, sm in (("mobilenet", mob_sm), ("resnet", res_sm)):
-        PAIR.append((net, desc, PAIR_EXP, cfg, sm))
-
-open_table(RATES_COLS, RATES_SPEC,
-           "Two networks on disjoint green contexts, one submitting thread. A ratio "
-           "is MobileNet's share of the device then ResNet's: \texttt{GC 75/25} is a "
-           r"green context of 12\,SMs for MobileNet and 4 for ResNet.",
+cols, spec = wide_head([r"Configuration"], False, True)
+open_table(cols, spec,
+           "Two networks on disjoint green contexts, one submitting thread. A ratio is "
+           "MobileNet's share of the device then ResNet's: \\texttt{GC 75/25} is a green "
+           "context of 12\\,SMs for MobileNet and 4 for ResNet. Aggregate throughput is "
+           "both networks' inferences over the window they shared, so it is close to the "
+           "sum of the two throughput columns and a check that nothing is counted twice.",
            "tab:two-rates")
-rates(PAIR)
+for cfg, desc, mob_sm, res_sm in PAIRS:
+    emit(r"{} & {} & {} & {:.0f} & {} & {} & {:.0f} & {} \\".format(
+        desc, mob_sm, ms(val(PAIR_EXP, cfg, "mobilenet", "median")),
+        thr(PAIR_EXP, cfg, "mobilenet") or 0, res_sm,
+        ms(val(PAIR_EXP, cfg, "resnet", "median")), thr(PAIR_EXP, cfg, "resnet") or 0,
+        "{:.0f}".format(agg_thr(PAIR_EXP, cfg, NETS) or 0)))
 close_table()
 
+pairdisp = []
+for cfg, desc, mob_sm, res_sm in PAIRS:
+    pairdisp += [(n, desc, PAIR_EXP, cfg, mob_sm if n == "mobilenet" else res_sm)
+                 for n in NETS]
 open_table(DISP_COLS, DISP_SPEC,
            "The pair by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:two-dispersion")
-dispersion(PAIR)
+dispersion(pairdisp)
 close_table()
 
 # ------------------------------------------------------------------------ MPS
@@ -253,34 +309,45 @@ MPS = [("mps_single", "MPS alone", None, None, True),
        ("mps_static_50_50", "MPS static 50/50", 8, 8, False),
        ("mps_static_75_25", "MPS static 75/25", 12, 4, False),
        ("mps_static_25_75", "MPS static 25/75", 4, 12, False)]
-MPSROWS = []
-for cfg, desc, mob_sm, res_sm, solo in MPS:
-    nets = (("mobilenet", mob_sm),) if solo else (("mobilenet", mob_sm), ("resnet", res_sm))
-    for net, sm in nets:
-        MPSROWS.append((net, desc, "exp3", cfg, sm))
-
-open_table(RATES_COLS, RATES_SPEC,
-           "Two processes under MPS, one submitter per process. \\texttt{MPS ATP} caps "
-           "the fraction of the SM's thread slots a client may occupy, which reserves "
-           "no particular SMs, so no SM count applies to those rows and the ratio is "
-           "of occupancy rather than of SMs. \\texttt{MPS static} assigns exclusive "
-           "partitions and is the spatial analogue of a green context. \\texttt{MPS "
-           "alone} is one client with nothing to share the device with, and "
-           "\\texttt{no MPS} is the same two processes with MPS disabled.",
+cols, spec = wide_head([r"Configuration"], False, True)
+open_table(cols, spec,
+           "Two processes under MPS, one submitter per process. \\texttt{MPS ATP} caps the "
+           "fraction of the SM's thread slots a client may occupy, which reserves no "
+           "particular SMs, so the ratio is of occupancy rather than of SMs and no SM "
+           "count applies. \\texttt{MPS static} assigns exclusive partitions and is the "
+           "spatial analogue of a green context. \\texttt{MPS alone} is one client with "
+           "nothing to share the device with.",
            "tab:mps-rates")
-rates(MPSROWS)
+prev = None
+for cfg, desc, mob_sm, res_sm, solo in MPS:
+    fam = family("exp3", cfg, desc)
+    if prev is not None and fam != prev:
+        emit(r"\midrule")
+    prev = fam
+    if solo:
+        emit(r"{} & --- & {} & {:.0f} & --- & --- & --- & --- \\".format(
+            desc, ms(val("exp3", cfg, "mobilenet", "median")),
+            thr("exp3", cfg, "mobilenet") or 0))
+    else:
+        emit(r"{} & {} & {} & {:.0f} & {} & {} & {:.0f} & {} \\".format(
+            desc, "---" if mob_sm is None else mob_sm,
+            ms(val("exp3", cfg, "mobilenet", "median")), thr("exp3", cfg, "mobilenet") or 0,
+            "---" if res_sm is None else res_sm,
+            ms(val("exp3", cfg, "resnet", "median")), thr("exp3", cfg, "resnet") or 0,
+            "{:.0f}".format(agg_thr("exp3", cfg, NETS) or 0)))
 close_table()
 
+mpsdisp = []
+for cfg, desc, mob_sm, res_sm, solo in MPS:
+    for n in (("mobilenet",) if solo else NETS):
+        mpsdisp.append((n, desc, "exp3", cfg, mob_sm if n == "mobilenet" else res_sm))
 open_table(DISP_COLS, DISP_SPEC,
            "The MPS arms by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:mps-dispersion")
-dispersion(MPSROWS)
+dispersion(mpsdisp)
 close_table()
 
 # --------------------------------------------------------- green context vs MPS
-# Four-way, because the question is what each mechanism does to one network at one
-# split, and here that is a row: the mechanisms run down the block for a fixed ratio,
-# and the two networks sit side by side.
 SHARE = {("50_50", "mobilenet"): 8, ("50_50", "resnet"): 8,
          ("75_25", "mobilenet"): 12, ("75_25", "resnet"): 4,
          ("25_75", "mobilenet"): 4, ("25_75", "resnet"): 12}
@@ -289,64 +356,48 @@ FLOOR = {("50_50", "mobilenet"): "mobilenet_gc50", ("50_50", "resnet"): "resnet_
          ("25_75", "mobilenet"): "mobilenet_gc25", ("25_75", "resnet"): "resnet_gc75"}
 RATIOS = [("50_50", "50\\,\\% / 50\\,\\%"), ("75_25", "75\\,\\% / 25\\,\\%"),
           ("25_75", "25\\,\\% / 75\\,\\%")]
-
 FOUR_COLS = [
     r"Ratio & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
     r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
     r"\cmidrule(lr){3-4} \cmidrule(lr){5-6}",
     r" & & Median (ms) & Thr.\ (inf/s) & Median (ms) & Thr.\ (inf/s) & (inf/s) \\",
 ]
-FOUR_SPEC = "llrrrrr"
-
-open_table(FOUR_COLS, FOUR_SPEC,
-           "Green context against MPS static, MPS ATP and MPS default, at matched "
-           "ratios, with one submitting thread. Within a ratio block the rows differ "
-           "only in the mechanism, so a column can be read down them directly. "
-           "\\texttt{MPS default} and \\texttt{no MPS} have no ratio: the first lets "
-           "MPS co-schedule the two clients on the whole device, the second is two "
-           "plain processes. \\texttt{alone} is the floor: each network on the same "
-           "share of the device with nothing else running, which is what its own "
-           "partition costs.",
+open_table(FOUR_COLS, "llrrrrr",
+           "Green context against MPS static, MPS ATP and MPS default, at matched ratios, "
+           "with one submitting thread. Within a ratio block the rows differ only in the "
+           "mechanism, so a column can be read straight down them. \\texttt{MPS default} "
+           "and \\texttt{no MPS} have no ratio: the first lets MPS co-schedule the two "
+           "clients on the whole device, the second is two plain processes. \\texttt{alone} "
+           "is the floor, each network on the same share of the device with nothing else "
+           "running.",
            "tab:compare-rates")
-
 for ci, (cfg, ratio) in enumerate(RATIOS):
     if ci:
         emit(r"\midrule")
-    for mech, exp, mcfg in (("GC", PAIR_EXP, cfg),
-                            ("MPS static", "exp3", "mps_static_" + cfg),
+    for mech, exp, mcfg in (("GC", PAIR_EXP, cfg), ("MPS static", "exp3", "mps_static_" + cfg),
                             ("MPS ATP", "exp3", "mps_atp_" + cfg)):
-        nets = ("mobilenet", "resnet")
         emit(r"{} & {} & {} & {:.0f} & {} & {:.0f} & {} \\".format(
-            ratio, mech,
-            ms(val(exp, mcfg, "mobilenet", "median")), thr(exp, mcfg, "mobilenet") or 0,
-            ms(val(exp, mcfg, "resnet", "median")), thr(exp, mcfg, "resnet") or 0,
-            "{:.0f}".format(agg_thr(exp, mcfg, nets) or 0)))
-
+            ratio, mech, ms(val(exp, mcfg, "mobilenet", "median")),
+            thr(exp, mcfg, "mobilenet") or 0, ms(val(exp, mcfg, "resnet", "median")),
+            thr(exp, mcfg, "resnet") or 0, "{:.0f}".format(agg_thr(exp, mcfg, NETS) or 0)))
 emit(r"\midrule")
-for mech, exp, mcfg in (("MPS default", "exp3", "mps_default"),
-                        ("no MPS", "exp3", "mps_off")):
+for mech, mcfg in (("MPS default", "mps_default"), ("no MPS", "mps_off")):
     emit(r"--- & {} & {} & {:.0f} & {} & {:.0f} & {} \\".format(
-        mech,
-        ms(val(exp, mcfg, "mobilenet", "median")), thr(exp, mcfg, "mobilenet") or 0,
-        ms(val(exp, mcfg, "resnet", "median")), thr(exp, mcfg, "resnet") or 0,
-        "{:.0f}".format(agg_thr(exp, mcfg, ("mobilenet", "resnet")) or 0)))
+        mech, ms(val("exp3", mcfg, "mobilenet", "median")), thr("exp3", mcfg, "mobilenet") or 0,
+        ms(val("exp3", mcfg, "resnet", "median")), thr("exp3", mcfg, "resnet") or 0,
+        "{:.0f}".format(agg_thr("exp3", mcfg, NETS) or 0)))
 emit(r"\midrule")
-for ci, (cfg, ratio) in enumerate(RATIOS):
+for cfg, ratio in RATIOS:
     emit(r"{} & alone & {} & {:.0f} & {} & {:.0f} & --- \\".format(
-        ratio,
-        ms(val("exp1", FLOOR[(cfg, "mobilenet")], "mobilenet", "median")),
+        ratio, ms(val("exp1", FLOOR[(cfg, "mobilenet")], "mobilenet", "median")),
         thr("exp1", FLOOR[(cfg, "mobilenet")], "mobilenet") or 0,
         ms(val("exp1", FLOOR[(cfg, "resnet")], "resnet", "median")),
         thr("exp1", FLOOR[(cfg, "resnet")], "resnet") or 0))
 close_table()
 
-FOUR_DISP_COLS = [
-    r"Ratio & Mechanism & Network & std & std $\times$iso & p95 & p99 & tail & "
-    r"tail $\times$iso & obs-max \\"]
-open_table(FOUR_DISP_COLS, "lllrrrrrrr",
-           "The comparison by dispersion, as in Table~\\ref{tab:iso-dispersion}. The "
-           "two rows of a mechanism are its two networks, so the mechanisms can also "
-           "be compared within one network by reading every second row.",
+open_table([r"Ratio & Mechanism & Network & std & std $\times$iso & p95 & p99 & tail & "
+            r"tail $\times$iso & obs-max \\"], "lllrrrrrrr",
+           "The comparison by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:compare-dispersion")
 
 
@@ -364,15 +415,15 @@ def four_disp(ratio, mech, pairs):
 for ci, (cfg, ratio) in enumerate(RATIOS):
     if ci:
         emit(r"\midrule")
-    four_disp(ratio, "GC", [(n, PAIR_EXP, cfg) for n in ("mobilenet", "resnet")])
-    four_disp(ratio, "MPS static", [(n, "exp3", "mps_static_" + cfg) for n in ("mobilenet", "resnet")])
-    four_disp(ratio, "MPS ATP", [(n, "exp3", "mps_atp_" + cfg) for n in ("mobilenet", "resnet")])
+    four_disp(ratio, "GC", [(n, PAIR_EXP, cfg) for n in NETS])
+    four_disp(ratio, "MPS static", [(n, "exp3", "mps_static_" + cfg) for n in NETS])
+    four_disp(ratio, "MPS ATP", [(n, "exp3", "mps_atp_" + cfg) for n in NETS])
 emit(r"\midrule")
 for mech, mcfg in (("MPS default", "mps_default"), ("no MPS", "mps_off")):
-    four_disp("---", mech, [(n, "exp3", mcfg) for n in ("mobilenet", "resnet")])
+    four_disp("---", mech, [(n, "exp3", mcfg) for n in NETS])
 emit(r"\midrule")
 for cfg, ratio in RATIOS:
-    four_disp(ratio, "alone", [(n, "exp1", FLOOR[(cfg, n)]) for n in ("mobilenet", "resnet")])
+    four_disp(ratio, "alone", [(n, "exp1", FLOOR[(cfg, n)]) for n in NETS])
 close_table()
 
 # --------------------------------------------------------------- the CPU side
@@ -381,59 +432,37 @@ CPU = [("t1_unpinned", "GC", "1 thread"),
        ("t2_unpinned", "GC", "2 threads"),
        ("t2_core67", "GC", "2 threads, cores 6-7"),
        ("mps_owncores", "MPS static", "1 core each")]
-CPUROWS = []
-for cfg, mech, desc in CPU:
-    for net in ("mobilenet", "resnet"):
-        CPUROWS.append((net, mech, desc, "exp7", cfg, 12 if net == "mobilenet" else 4))
-
-
-def cpu_rates(rows):
-    """Six columns: the mechanism is its own column, because this table holds both."""
-    prev = None
-    for net, mech, desc, exp, cfg, sms in rows:
-        if prev is not None and mech != prev:
-            emit(r"\midrule")
-        prev = mech
-        emit(r"{} & {} & {} & {} & {} & {} \\".format(
-            net, mech, desc, sms, ms(val(exp, cfg, net, "median")),
-            "{:.0f}".format(thr(exp, cfg, net) or 0)))
-
-
-def cpu_dispersion(rows):
-    """As the other dispersion tables, except p95, which is dropped so that the extra
-    mechanism column still fits the text width."""
-    prev = None
-    for net, mech, desc, exp, cfg, sms in rows:
-        if prev is not None and mech != prev:
-            emit(r"\midrule")
-        prev = mech
-        t, sd = ref(net)
-        tail = val(exp, cfg, net, "p99_minus_median")
-        std = val(exp, cfg, net, "std")
-        emit(r"{} & {} & {} & {} & {} & {} & {} & {} & {} \\".format(
-            net, mech, desc, ms(std), xr(std, sd), ms(val(exp, cfg, net, "p99")),
-            ms(tail), xr(tail, t), ms(A.obs_max(DATA, exp, cfg, net))))
-
-open_table([r"Network & Mechanism & Configuration & SMs & Median (ms) & "
-                r"Thr.\ (inf/s) \\"], "lllrrr",
+cols, spec = wide_head([r"Mechanism", r"Configuration"], False, True)
+open_table(cols, spec,
            "Two networks at 75\\,\\% / 25\\,\\% with the submission model as the only "
            "variable. \\texttt{1 thread} drives both networks from one thread while "
-           "keeping one inference in flight per network; \\texttt{2 threads} gives "
-           "each network its own thread, which is what an application does by "
-           "accident, and \\texttt{FIFO 99} additionally pins the submitter to one "
-           "core at the highest real-time priority the kernel offers. The last row is "
-           "the same split under MPS static, one process per network and one core "
-           "each, for comparison with the green-context rows above it.",
+           "keeping one inference in flight per network; \\texttt{2 threads} gives each "
+           "network its own thread, which is what an application does by accident, and "
+           "\\texttt{FIFO 99} additionally pins the submitter to one core at the highest "
+           "real-time priority the kernel offers. The last row is the same split under MPS "
+           "static, one process per network and one core each.",
            "tab:cpu-rates")
-cpu_rates(CPUROWS)
+prev = None
+for cfg, mech, desc in CPU:
+    fam = family("exp7", cfg, desc)
+    if prev is not None and fam != prev:
+        emit(r"\midrule")
+    prev = fam
+    emit(r"{} & {} & 12 & {} & {:.0f} & 4 & {} & {:.0f} & {} \\".format(
+        mech, desc, ms(val("exp7", cfg, "mobilenet", "median")),
+        thr("exp7", cfg, "mobilenet") or 0, ms(val("exp7", cfg, "resnet", "median")),
+        thr("exp7", cfg, "resnet") or 0, "{:.0f}".format(agg_thr("exp7", cfg, NETS) or 0)))
 close_table()
 
-open_table([r"Network & Mechanism & Configuration & std & std $\times$iso & p99 & "
-                r"tail & tail $\times$iso & obs-max \\"], "lllrrrrrr",
-           "The same arms by dispersion, as in Table~\\ref{tab:iso-dispersion}, without "
-           "p95 so that the mechanism column fits the text width.",
+cpudisp = []
+for cfg, mech, desc in CPU:
+    for n in NETS:
+        cpudisp.append((n, "{} {}".format(mech, desc), "exp7", cfg,
+                        12 if n == "mobilenet" else 4))
+open_table(DISP_COLS, DISP_SPEC,
+           "The same arms by dispersion, as in Table~\\ref{tab:iso-dispersion}.",
            "tab:cpu-dispersion")
-cpu_dispersion(CPUROWS)
+dispersion(cpudisp)
 close_table()
 
 sys.stdout.write("\n".join(OUT))
