@@ -556,6 +556,7 @@ close_table()
 
 
 
+
 # ------------------------------------------- memory contention: the target's budget
 # The target holds 8 SMs in every row, so the rows differ in the co-runner alone. Both
 # multipliers are against MobileNet alone at the same 8 SMs, which is the isolated run at the
@@ -584,8 +585,12 @@ for _desc, _exp, _cfg, _pair in MEMROWS:
 close_table()
 
 # ------------------------------------------------- memory contention: the matrix
-# The participant and its budget are the variables. The participant writes no stats file, so
-# its own load is read from the run's log, where it reports the bytes or the FLOPs it moved.
+# The target's partition is fixed at 8 SMs; what varies is the participant's kind, its budget,
+# and the mechanism that confines it. The two mechanisms cannot be compared at a participant
+# budget other than 8 SMs, because an MPS static partition divides the device in two parts, so
+# the mechanism rows appear at 8 SMs and the budget rows under green contexts. The participant
+# writes no stats file, so its own load is read from the run's log, where it reports the bytes
+# or the FLOPs it moved. Each mechanism's multipliers are against its own reference row.
 _BENCH = os.environ.get("BENCH", "/mnt/nvme/f.scarfato/bench")
 
 
@@ -607,31 +612,41 @@ def itf_load(family, cfg, unit):
     return statistics.median(found) if found else None
 
 
-_mx_med = must(val("exp1", "mobilenet_gc50", "mobilenet", "median"), "isolated median")
-_mx_tail = must(val("exp1", "mobilenet_gc50", "mobilenet", "p99_minus_median"),
-                "isolated tail")
+_mx_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
+_mx_base = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mx_ref.items()}
+_mx_base_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
+                 for k, (e, c) in _mx_ref.items()}
+MX_ROWS = [("participant none", "GC", "exp1", "mobilenet_gc50", None, None),
+           (r"\texttt{mem\_saxpy} at 4\,SMs", "GC", "exp9", "mem4", "GB/s", "mem-s2"),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "GC", "exp9", "mem8", "GB/s", "mem-s2"),
+           (r"\texttt{compute\_gemm} at 4\,SMs", "GC", "exp9", "compute4", "TFLOP/s", "mem-s2"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "GC", "exp9", "compute8", "TFLOP/s", "mem-s2"),
+           ("participant none", "MPS static", "exp9", "mps_alone", None, None),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "MPS static", "exp9", "mps_mem8", "GB/s", "mem-s3"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "MPS static", "exp9", "mps_compute8",
+            "TFLOP/s", "mem-s3")]
 
-open_table([r"Network & Configuration & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
+open_table([r"Co-runner & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
             r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
-           "What a participant's kind and budget cost a target holding its own 8\,SMs. The "
-           "configuration carries the load the participant reported for itself, the bytes "
-           "the memory kind moved or the FLOPs the compute kind performed. Both multipliers "
-           "are against the target alone at the same 8\,SMs.",
+           "What a participant's kind and budget cost a target holding its own 8\,SMs, under "
+           "each mechanism. The configuration carries the load the participant reported for "
+           "itself, the bytes the memory kind moved or the FLOPs the compute kind performed. "
+           "The budget is varied under green contexts, since an MPS static partition divides "
+           "the device in two parts and fixes the participant at 8\,SMs; each mechanism's "
+           "multipliers are against its own target alone.",
            "tab:mem-matrix")
-emit(r"mobilenet & participant none & {} & 1.000 & {:.0f} & {} & 1.000 \\".format(
-    ms(_mx_med), must(thr("exp1", "mobilenet_gc50", "mobilenet"), "isolated rate") or 0,
-    ms(_mx_tail)))
-for _cfg, _label, _unit in (("mem4", r"\texttt{mem\_saxpy} at 4\,SMs", "GB/s"),
-                            ("mem8", r"\texttt{mem\_saxpy} at 8\,SMs", "GB/s"),
-                            ("compute4", r"\texttt{compute\_gemm} at 4\,SMs", "TFLOP/s"),
-                            ("compute8", r"\texttt{compute\_gemm} at 8\,SMs", "TFLOP/s")):
-    _m = must(val("exp9", _cfg, "mobilenet", "median"), _cfg + " median")
-    _t = must(val("exp9", _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
-    _thr = must(thr("exp9", _cfg, "mobilenet"), _cfg + " rate") or 0
-    _l = itf_load("mem-s2", _cfg, _unit)
-    emit(r"mobilenet & {} ({}) & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
-        _label, "{:.1f} {}".format(_l, _unit) if _l else "load not logged", ms(_m),
-        _m / _mx_med, _thr, ms(_t), _t / _mx_tail))
+_mx_mech = None
+for _label, _mech, _exp, _cfg, _unit, _fam in MX_ROWS:
+    if _mx_mech is not None and _mech != _mx_mech:
+        emit(r"\midrule")
+    _mx_mech = _mech
+    _m = must(val(_exp, _cfg, "mobilenet", "median"), _cfg + " median")
+    _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
+    _thr = must(thr(_exp, _cfg, "mobilenet"), _cfg + " rate") or 0
+    _load = itf_load(_fam, _cfg, _unit) if _fam else None
+    _desc = _label + (" ({:.1f} {})".format(_load, _unit) if _load else "")
+    emit(r"{} & {} & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
+        _desc, _mech, ms(_m), _m / _mx_base[_mech], _thr, ms(_t), _t / _mx_base_tail[_mech]))
 close_table()
 
 # --------------------------------------------------- memory contention: the trace
