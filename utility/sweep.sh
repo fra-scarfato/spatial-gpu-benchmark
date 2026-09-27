@@ -1132,10 +1132,8 @@ for r in $(seq 1 "$RUNS"); do
             if [ "$kind" = solo ]; then
                 printf '      A: %s %s --csv %s\n' "$_cA" "$PROTO" "$out"
             elif [ "$kind" = itf ]; then
-                printf '      A: %s %s --csv %s   (measured)
-' "\$_cA" "\$PROTO" "\$out"
-                printf '      B: %s   (co-runner process, stopped when A exits)
-' "\$_cB"
+                printf '      A: %s %s --csv %s   (measured)\n' "$_cA" "$PROTO" "$out"
+                printf '      B: %s   (co-runner process, stopped when A exits)\n' "$_cB"
             else
                 printf '      A: %s %s --csv %s_mobilenet\n' "$_cA" "$PROTO" "$out"
                 printf '      B: %s %s --csv %s_resnet\n' "$_cB" "$PROTO" "$out"
