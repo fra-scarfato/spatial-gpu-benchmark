@@ -882,6 +882,27 @@ add "wq-s4_multi_dev13" \
 add "mem-s1_target8_co4" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --net $RES:25:resnet|"
 
+# The interferer matrix. The target holds 8 SMs in every row — the same partition as the
+# isolated reference and as the 8+4 and 8+8 rows of the budget arm — and the participant is
+# a third client in the same joint split, doing one kind of work at one of two budgets.
+#
+#   mem_saxpy    256 MB buffers, three times its working set per pass: memory-bound, its
+#                arithmetic negligible
+#   compute_gemm 512 cubed fp32 with three 1 MB operands resident in L2: arithmetic-bound,
+#                its DRAM traffic negligible
+#
+# The run's own log carries the participant's report — units, bytes, FLOPs and the rates
+# they imply — so each row records not only what the target lost but how much load was
+# actually applied to make it lose it.
+add "mem-s2_mem4" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer mem_saxpy:25|"
+add "mem-s2_mem8" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer mem_saxpy:50|"
+add "mem-s2_compute4" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:25|"
+add "mem-s2_compute8" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are

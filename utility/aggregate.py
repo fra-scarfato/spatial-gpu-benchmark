@@ -103,6 +103,7 @@ EXP_DIR = {
     "wq-s1":                "exp8",
     "wq-s4":                "exp8",
     "mem-s1":               "exp9",
+    "mem-s2":               "exp9",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }
@@ -228,6 +229,13 @@ def load(outdir):
             if exp == "exp1":
                 net = config.split("_")[0]
             elif config == "mps_single":
+                net = "mobilenet"
+            # The interferer matrix: one network plus the synthetic participant, which
+            # writes no stats file of its own. The participant is not a network, so the
+            # single unlabelled stats file here is MobileNet. Every arm of this family
+            # runs MobileNet; the other exp9 family (the budget arm) has two networks
+            # and its files are labelled.
+            elif exp == "exp9" and config.startswith(("mem", "compute")):
                 net = "mobilenet"
             elif exp.startswith("exp5") and config == "aux1_whole":
                 # The isolated baseline of the auxiliary-stream family is the
