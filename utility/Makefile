@@ -11,7 +11,7 @@ CUDA     ?= /usr/local/cuda
 TRT_INC  ?= /usr/include/aarch64-linux-gnu
 TRT_LIB  ?= $(CUDA)/targets/sbsa-linux/lib
 
-BINS = auxprobe wqprobe devprobe
+BINS = auxprobe wqprobe devprobe itfproc
 
 all: $(BINS)
 
@@ -28,6 +28,10 @@ wqprobe: wqprobe.cpp
 # across working-set sizes, which is how the memory interferer gets sized.
 devprobe: devprobe.cpp
 	$(CXX) $(CXXFLAGS) -I$(CUDA)/include $< -o $@ -L$(TRT_LIB) -lcudart
+
+# cuBLAS only: the interferer as a separate client process, for the MPS arms.
+itfproc: itfproc.cpp
+	$(CXX) $(CXXFLAGS) -I$(CUDA)/include $< -o $@ -L$(TRT_LIB) -lcublas -lcudart
 
 clean:
 	rm -f $(BINS)

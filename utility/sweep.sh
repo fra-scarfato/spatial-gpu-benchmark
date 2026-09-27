@@ -903,6 +903,27 @@ add "mem-s2_compute4" \
 add "mem-s2_compute8" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
 
+# The same two kinds of co-runner, in a separate process under MPS static partitions.
+#
+# Partitions cover the whole device in two parts, so the split the daemon can express is
+# 50/50: MobileNet confined to 8 SMs through its own partition and the co-runner to the
+# other 8. Those are exactly the shares of the two green-context rows already measured
+# (`mem_saxpy` at 8 SMs and `compute_gemm` at 8 SMs), so the process model is the only
+# difference between the two sets of rows.
+#
+# The co-runner is utility/itfproc: the same work as the in-process interferer, written as
+# its own program, because a co-tenant is a process and not a thread. Same kernels, same
+# buffer sizes, same reporting, so its own log states the load it applied.
+#
+# `mps_alone` is the reference that separates the cost of the mechanism from the cost of
+# the co-runner: the same target, in the same 8-SM partition, with the other partition idle.
+add "mem-s3_mps_alone" \
+    "solo|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet||50"
+add "mem-s3_mps_mem8" \
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50"
+add "mem-s3_mps_compute8" \
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are
@@ -983,6 +1004,30 @@ do_job() {  # $1 = spec, $2 = output prefix
         env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
         move_back "$tmp" "$out"
         return 0
+    fi
+
+    # One measured client plus a co-runner that is a SEPARATE PROCESS. This is the
+    # shape the MPS arms need: MPS is a service for multiple processes, so a
+    # co-runner inside the measured process would be the arrangement the MPS arm
+    # exists to contrast with.
+    #
+    # The co-runner is started first, so it is in its steady state before the
+    # target's timed phase begins, and it is stopped as soon as the target exits,
+    # while the daemon and its partitions are still up. The lead is 3 s: long
+    # enough for the co-runner's own allocation and warm-up, short enough not to
+    # matter to a 30 s window, and it is before the target starts so it cannot
+    # fall inside the measurement.
+    if [ "$kind" = itf ]; then
+        # shellcheck disable=SC2086
+        env $penv $envB $cmdB > "${out}_itf.log" 2>&1 &
+        local pid_b=$!
+        sleep 3
+        # shellcheck disable=SC2086
+        env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
+        kill -TERM "$pid_b" 2>/dev/null || true
+        wait "$pid_b" 2>/dev/null || true
+        move_back "$tmp" "$out"
+        return "$rc_a"
     fi
 
     # Two processes, launched back to back so their warm-ups overlap as far as
@@ -1086,6 +1131,11 @@ for r in $(seq 1 "$RUNS"); do
             printf '  %d/%d  %-26s [%s/%s]\n' "$job_no" "$((SELECTED * RUNS))" "$name" "$kind" "$mps"
             if [ "$kind" = solo ]; then
                 printf '      A: %s %s --csv %s\n' "$_cA" "$PROTO" "$out"
+            elif [ "$kind" = itf ]; then
+                printf '      A: %s %s --csv %s   (measured)
+' "\$_cA" "\$PROTO" "\$out"
+                printf '      B: %s   (co-runner process, stopped when A exits)
+' "\$_cB"
             else
                 printf '      A: %s %s --csv %s_mobilenet\n' "$_cA" "$PROTO" "$out"
                 printf '      B: %s %s --csv %s_resnet\n' "$_cB" "$PROTO" "$out"
