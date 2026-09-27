@@ -551,6 +551,10 @@ close_table()
 
 
 
+
+
+
+
 # ------------------------------------------- memory contention: the target's budget
 # The target holds 8 SMs in every row, so the rows differ in the co-runner alone. Both
 # multipliers are against MobileNet alone at the same 8 SMs, which is the isolated run at the
@@ -640,8 +644,8 @@ if os.path.exists(_TRACE_CSV):
     import csv as _csv
     _conf = {"alone": "participant none", "mem4": r"\texttt{mem\_saxpy} at 4\,SMs",
              "compute4": r"\texttt{compute\_gemm} at 4\,SMs"}
-    open_table([r"Network & Configuration & Inference & Span (\textmu s) & Kernels "
-                r"(\textmu s) & Gaps (\textmu s) & Host-late gaps (\textmu s) \\"], "lllrrrr",
+    open_table([r"Network & Configuration & Inference & Span (ms) & Kernels "
+                r"(ms) & Gaps (ms) & Host-late gaps (ms) \\"], "lllrrrr",
                "One inference, decomposed, from a trace of the target alone and of the "
                "target with each participant. The trace is sliced into inferences by the "
                "period of its own kernel sequence, fifty-five kernels in all three, so the "
@@ -654,11 +658,11 @@ if os.path.exists(_TRACE_CSV):
         if _last is not None and _row["trace"] != _last:
             emit(r"\midrule")
         _last = _row["trace"]
-        emit(r"mobilenet & {} & {} & {:.1f} & {:.1f} & {:.1f} & {:.1f} \\".format(
+        emit(r"mobilenet & {} & {} & {:.4f} & {:.4f} & {:.4f} & {:.4f} \\".format(
             _conf.get(_row["trace"], _row["trace"]),
             "slowest 1\,\%" if _row["quantile"] != "median inference" else "median",
-            float(_row["span"]), float(_row["kernels"]), float(_row["gaps"]),
-            float(_row["host_gaps"])))
+            float(_row["span_ms"]), float(_row["kernels_ms"]), float(_row["gaps_ms"]),
+            float(_row["host_gaps_ms"])))
     close_table()
 
 # ------------------------------------------- memory contention: the process model

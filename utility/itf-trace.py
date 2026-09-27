@@ -117,7 +117,8 @@ def main():
             rows.append(dict(trace=name, label=label, quantile=quantile,
                              inferences=a["n"], slow=a["slow"], kpi=a["kpi"],
                              agree=a["agree"], participant=a["participant"],
-                             span=span, kernels=kernels_us, gaps=gaps, host_gaps=late))
+                             span_ms=span / 1000.0, kernels_ms=kernels_us / 1000.0,
+                             gaps_ms=gaps / 1000.0, host_gaps_ms=late / 1000.0))
         print("  {:<10} {:<6} inferences {:>5}  kernels/inference {} ({:.0f}% agree)  "
               "participant kernels {}".format(label, "", a["n"], a["kpi"],
                                               100 * a["agree"], a["participant"]))
