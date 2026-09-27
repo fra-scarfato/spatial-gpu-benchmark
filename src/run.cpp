@@ -397,6 +397,12 @@ Run::Run(const Options& opts)
         wq.limit = opts_.wqLimit;
     }
 
+    // The interferer, if any, is a participant in the same joint split: appending
+    // its percentage makes its partition disjoint from the networks', exactly as
+    // theirs are from each other.
+    if (!opts_.interferer.kind.empty())
+        percents.push_back(opts_.interferer.smPercent);
+
     std::vector<std::unique_ptr<SmAllocation>> allocations =
         makeSmAllocations(opts_.allocation, percents, wq);
 
@@ -410,6 +416,14 @@ Run::Run(const Options& opts)
         nets_.push_back(std::make_unique<Network>(opts_.networks[k],
                                                   std::move(allocations[k]),
                                                   opts_, spec, images_));
+    }
+
+    if (!opts_.interferer.kind.empty()) {
+        Interferer::Kind k = Interferer::Kind::MemSaxpy;
+        if (opts_.interferer.kind == "compute_gemm")  k = Interferer::Kind::ComputeGemm;
+        else if (opts_.interferer.kind == "mem_copy")  k = Interferer::Kind::MemCopy;
+        const std::size_t megabytes = 256;   // far above L2: the traffic leaves the chip
+        interferer_ = std::make_unique<Interferer>(k, std::move(allocations[nets_.size()]), megabytes);
     }
 
     // 4. Say what is about to be measured. This log is the record of the
@@ -470,7 +484,9 @@ void Run::execute() {
         // one-participant no-op.
         nets_[0]->warmup();
         StartGate solo(1);
+        if (interferer_) interferer_->start();   // a participant either way
         nets_[0]->measure(solo);
+        if (interferer_) interferer_->stop();
         return;
     }
 
@@ -493,7 +509,9 @@ void Run::execute() {
         for (auto& t : warm)
             t.join();
 
+        if (interferer_) interferer_->start();
         Network::measureInterleaved(ptrs);
+        if (interferer_) interferer_->stop();
         return;
     }
 
@@ -520,6 +538,7 @@ void Run::execute() {
 }
 
 void Run::report() const {
+    if (interferer_) interferer_->report();
     for (const auto& n : nets_) {
         std::cout << "\n--- network '" << n->label() << "' ---\n";
         n->report();

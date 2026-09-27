@@ -47,7 +47,7 @@ INCLUDES := -I$(INCDIR) \
             -isystem /usr/include/opencv4 \
             -I/usr/local/cuda/include
 LIBS     := -L/usr/local/cuda/targets/sbsa-linux/lib \
-            -lnvinfer -lcudart \
+            -lnvinfer -lcudart -lcublas \
             -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
 
 .PHONY: all clean

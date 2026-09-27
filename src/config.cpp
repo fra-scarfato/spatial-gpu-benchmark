@@ -92,6 +92,13 @@ void printUsage(const char* prog) {
         << "                        (sudo setcap cap_sys_nice+ep runner) and FAILS\n"
         << "                        LOUDLY without it, rather than measuring at\n"
         << "                        normal priority and looking like a null result.\n"
+        << "  --interferer <k>:<p>  add a synthetic participant to the joint SM\n"
+        << "                        split: mem_saxpy or compute_gemm (or\n"
+        << "                        mem_copy, which is DMA and takes no SMs),\n"
+        << "                        with its percentage of the device. The first\n"
+        << "                        two move memory and do arithmetic respec-\n"
+        << "                        tively, which is the point: a real co-runner\n"
+        << "                        varies both at once. Needs greenctx.\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -245,6 +252,20 @@ Options parseArgs(int argc, char** argv) {
                 throw std::runtime_error("--priority must be 1..99, got: " + std::to_string(prio));
             o.schedPolicy   = pol;
             o.schedPriority = prio;
+        } else if (arg == "--interferer") {
+            const std::string spec = nextValue(i, argc, argv, arg);
+            const auto a = spec.find(':');
+            if (a == std::string::npos)
+                throw std::runtime_error("--interferer expects <kind>:<pct>[:<label>], got: " + spec);
+            const std::string kind = spec.substr(0, a);
+            if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "mem_copy")
+                throw std::runtime_error(
+                    "--interferer expects mem_saxpy, compute_gemm or mem_copy, got: " + kind);
+            const auto b = spec.find(':', a + 1);
+            o.interferer.kind = kind;
+            o.interferer.smPercent = std::stoi(
+                spec.substr(a + 1, (b == std::string::npos) ? std::string::npos : b - a - 1));
+            if (b != std::string::npos) o.interferer.label = spec.substr(b + 1);
         } else if (arg == "--submit-threads") {
             const unsigned v =
                 static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
@@ -275,6 +296,9 @@ Options parseArgs(int argc, char** argv) {
     // unpartitioned allocation there is no descriptor to put them in. Refusing
     // is the honest outcome: ignoring them would produce a run that looks like a
     // work queue arm and measures plain whole-GPU contention.
+    if (!o.interferer.kind.empty() && o.allocation != "greenctx")
+        throw std::runtime_error(
+            "--interferer occupies an SM partition, so it needs --allocation greenctx");
     if ((!o.wqScope.empty() || o.wqLimit != 0) && o.allocation != "greenctx")
         throw std::runtime_error(
             "--wq-scope/--wq-limit configure a green context, so they need "

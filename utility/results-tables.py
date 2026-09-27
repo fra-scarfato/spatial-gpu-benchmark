@@ -224,7 +224,7 @@ for net in NETS:
     pass
 ISO_ROWS = []
 for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
-    ISO_ROWS.append(("GC %d\\,\\%%" % pct, sm, "exp1", "%s_gc%d" % ("mobilenet", pct),
+    ISO_ROWS.append(("GC %d\,\%%" % pct, sm, "exp1", "%s_gc%d" % ("mobilenet", pct),
                      "exp1", "%s_gc%d" % ("resnet", pct)))
 cols, spec = wide_head([r"Configuration"], True, False)
 open_table(cols, spec,
@@ -232,7 +232,7 @@ open_table(cols, spec,
            "green context, which both networks receive in full. \\texttt{GC} is a green "
            "context and the percentage is the share of the device's sixteen SMs it "
            "reserves. \\texttt{whole device} is no reservation at all, and the pair "
-           "\\texttt{whole device} and \\texttt{GC 100\\,\\%} is the same reservation "
+           "\\texttt{whole device} and \\texttt{GC 100\,\%} is the same reservation "
            "measured twice, so it also shows the run-to-run spread of one configuration.",
            "tab:iso-rates")
 emit(r"whole device & 16 & {} & {:.0f} & {} & {:.0f} \\".format(
@@ -272,7 +272,7 @@ disp_rows = []
 for net in NETS:
     disp_rows.append((net, "whole device", "exp1", net + "_whole", 16))
     for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
-        disp_rows.append((net, "GC %d\\,\\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
+        disp_rows.append((net, "GC %d\,\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
 open_table(DISP_COLS, DISP_SPEC,
            "The same builds by dispersion. \\emph{tail} is $p99-\\mathrm{median}$; "
            "$\\times$iso is against the network's own whole-device run.",
@@ -367,8 +367,8 @@ SHARE = {("50_50", "mobilenet"): 8, ("50_50", "resnet"): 8,
 FLOOR = {("50_50", "mobilenet"): "mobilenet_gc50", ("50_50", "resnet"): "resnet_gc50",
          ("75_25", "mobilenet"): "mobilenet_gc75", ("75_25", "resnet"): "resnet_gc25",
          ("25_75", "mobilenet"): "mobilenet_gc25", ("25_75", "resnet"): "resnet_gc75"}
-RATIOS = [("50_50", "50\\,\\% / 50\\,\\%"), ("75_25", "75\\,\\% / 25\\,\\%"),
-          ("25_75", "25\\,\\% / 75\\,\\%")]
+RATIOS = [("50_50", "50\,\% / 50\,\%"), ("75_25", "75\,\% / 25\,\%"),
+          ("25_75", "25\,\% / 75\,\%")]
 FOUR_COLS = [
     r"Ratio & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
     r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
@@ -447,7 +447,7 @@ CPU = [("t1_unpinned", "GC", "1 thread"),
        ("mps_owncores", "MPS static", "1 core each")]
 cols, spec = wide_head([r"Mechanism", r"Configuration"], False, True)
 open_table(cols, spec,
-           "Two networks at 75\\,\\% / 25\\,\\% with the submission model as the only "
+           "Two networks at 75\,\% / 25\,\% with the submission model as the only "
            "variable. \\texttt{1 thread} drives both networks from one thread while "
            "keeping one inference in flight per network; \\texttt{2 threads} gives each "
            "network its own thread, which is what an application does by accident, and "
@@ -491,7 +491,7 @@ open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) &
            "The work-queue half of a green context descriptor varied on the pair whose "
            "client has more streams than the platform declares by default: RetinaNet's "
            "\\texttt{aux8} build with nine stream-ordered workloads against a default "
-           "declaration of eight, and MobileNet as the co-runner, 50\\,\\% each, one "
+           "declaration of eight, and MobileNet as the co-runner, 50\,\% each, one "
            "submitting thread. The first row is the descriptor every earlier measurement "
            "used.",
            "tab:wq-rows")
@@ -546,6 +546,33 @@ for cfg, desc in MULTI:
             net, desc, ms(must(val("exp8", cfg, net, "median"), what)),
             ms(must(val("exp8", cfg, net, "p99"), what)),
             ms(must(val("exp8", cfg, net, "p99_minus_median"), what))))
+close_table()
+
+
+# ------------------------------------------- memory contention: the target's budget
+# The target's partition is identical in every row — MobileNet on 8 SMs — so the rows
+# differ in the co-runner alone. That is the point of the arm: the residual cannot be the
+# target's own budget, because its budget never changes.
+MEMROWS = [("none, MobileNet alone on 8 SMs", "exp1", "mobilenet_gc50", False),
+           ("ResNet at 4\,SMs (4 left idle)", "exp9", "target8_co4", True),
+           ("ResNet at 8 SMs", "exp2-1t", "50_50", True)]
+open_table([r"Co-runner & Median (ms) & Residual & tail (ms) & MobileNet (inf/s) & "
+            r"Aggregate (inf/s) \\"], "lrrrrr",
+           "Memory contention with the target's budget fixed. MobileNet holds the same "
+           "8 SMs in every row, so the rows differ in the co-runner alone; the residual "
+           "is its median against its own isolated run at the same size, which is the "
+           "column of Table~\\ref{tab:iso-rates} for \\texttt{GC 50\,\%}.",
+           "tab:mem-budget")
+_iso = val("exp1", "mobilenet_gc50", "mobilenet", "median")
+for _desc, _exp, _cfg, _pair in MEMROWS:
+    _what = "exp {} {} mobilenet".format(_exp, _cfg)
+    _med = must(val(_exp, _cfg, "mobilenet", "median"), _what)
+    _agg = agg_thr(_exp, _cfg, NETS) if _pair else agg_thr(_exp, _cfg, ("mobilenet",))
+    emit(r"{} & {} & {:+.1f}\,\% & {} & {:.0f} & {} \\".format(
+        _desc, ms(_med), 100.0 * (_med / _iso - 1.0),
+        ms(must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what)),
+        must(thr(_exp, _cfg, "mobilenet"), _what) or 0,
+        "{:.0f}".format(_agg or 0)))
 close_table()
 
 sys.stdout.write("\n".join(OUT))

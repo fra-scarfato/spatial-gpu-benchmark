@@ -140,4 +140,6 @@ private:
     Options                               opts_;
     std::vector<std::string>              images_;
     std::vector<std::unique_ptr<Network>> nets_;
+
+    std::unique_ptr<Interferer>           interferer_;   // optional participant
 };

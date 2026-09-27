@@ -156,6 +156,17 @@ struct Options {
 
     // The networks: one entry is solo, two is concurrent.
     std::vector<NetworkOptions> networks;
+
+    // An optional interferer: a synthetic participant that occupies an SM partition and
+    // does one kind of work only, so that the cost of moving memory can be told apart
+    // from the cost of doing arithmetic. It takes a share of the same joint split as a
+    // network does, because a second process would serialise.
+    struct InterfererOptions {
+        std::string kind;           // "" | mem_saxpy | compute_gemm | mem_copy
+        int         smPercent = 0;  // its share of the device
+        std::string label = "interferer";
+    };
+    InterfererOptions interferer;
 };
 
 // The parser, the usage text and the defaults all describe the same thing

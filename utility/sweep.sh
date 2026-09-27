@@ -870,6 +870,18 @@ add "wq-s4_multi_bal13" \
 add "wq-s4_multi_dev13" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope device_ctx --wq-limit 13 --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
 
+# Memory contention, block 1: the target's partition is FIXED at 8 SMs and only the
+# co-runner's budget varies, so the three rows differ in the co-runner alone.
+#
+#   mobilenet_gc50 alone            exp1, already measured
+#   mobilenet 50 + resnet 25        this arm: 8 + 4 SMs, four left idle
+#   mobilenet 50 + resnet 50        exp2-1t 50_50, already measured
+#
+# The residual is then the target's concurrent latency over its isolated latency at the
+# SAME SM count, and the question is whether it grows with the co-runner's budget.
+add "mem-s1_target8_co4" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --net $RES:25:resnet|"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are

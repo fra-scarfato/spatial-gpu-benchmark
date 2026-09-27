@@ -102,6 +102,7 @@ EXP_DIR = {
     "submit-model":        "exp7",
     "wq-s1":                "exp8",
     "wq-s4":                "exp8",
+    "mem-s1":               "exp9",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }
