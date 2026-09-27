@@ -549,39 +549,38 @@ for cfg, desc in MULTI:
 close_table()
 
 
+
+
 # ------------------------------------------- memory contention: the target's budget
-# The target's partition is identical in every row — MobileNet on 8 SMs — so the rows
-# differ in the co-runner alone. That is the point of the arm: the residual cannot be the
-# target's own budget, because its budget never changes.
-MEMROWS = [("none, MobileNet alone on 8 SMs", "exp1", "mobilenet_gc50", False),
+# The target holds 8 SMs in every row, so the rows differ in the co-runner alone. Both
+# multipliers are against MobileNet alone at the same 8 SMs, which is the isolated run at the
+# target's own SM count.
+MEMROWS = [("participant none", "exp1", "mobilenet_gc50", False),
            ("ResNet at 4\,SMs (4 left idle)", "exp9", "target8_co4", True),
-           ("ResNet at 8 SMs", "exp2-1t", "50_50", True)]
-open_table([r"Co-runner & Median (ms) & Residual & tail (ms) & MobileNet (inf/s) & "
-            r"Aggregate (inf/s) \\"], "lrrrrr",
+           ("ResNet at 8\,SMs", "exp2-1t", "50_50", True)]
+_mb_tail = must(val("exp1", "mobilenet_gc50", "mobilenet", "p99_minus_median"), "isolated tail")
+
+open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & tail (ms) & "
+            r"tail $\times$iso & Aggregate (inf/s) \\"], "llrrrrr",
            "Memory contention with the target's budget fixed. MobileNet holds the same "
-           "8 SMs in every row, so the rows differ in the co-runner alone; the residual "
-           "is its median against its own isolated run at the same size, which is the "
-           "column of Table~\\ref{tab:iso-rates} for \\texttt{GC 50\,\%}.",
+           "8\,SMs in every row, so the rows differ in the co-runner alone, and the "
+           "multiplier on the tail is against its own isolated run at that size. The "
+           "aggregate is the sum of the two clients.",
            "tab:mem-budget")
-_iso = val("exp1", "mobilenet_gc50", "mobilenet", "median")
 for _desc, _exp, _cfg, _pair in MEMROWS:
-    _what = "exp {} {} mobilenet".format(_exp, _cfg)
-    _med = must(val(_exp, _cfg, "mobilenet", "median"), _what)
+    _what = "{} {} mobilenet".format(_exp, _cfg)
+    _m = must(val(_exp, _cfg, "mobilenet", "median"), _what + " median")
+    _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what + " tail")
+    _thr = must(thr(_exp, _cfg, "mobilenet"), _what + " rate") or 0
     _agg = agg_thr(_exp, _cfg, NETS) if _pair else agg_thr(_exp, _cfg, ("mobilenet",))
-    emit(r"{} & {} & {:+.1f}\,\% & {} & {:.0f} & {} \\".format(
-        _desc, ms(_med), 100.0 * (_med / _iso - 1.0),
-        ms(must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what)),
-        must(thr(_exp, _cfg, "mobilenet"), _what) or 0,
-        "{:.0f}".format(_agg or 0)))
+    emit(r"mobilenet & {} & {} & {:.0f} & {} & {:.3f} & {} \\".format(
+        _desc, ms(_m), _thr, ms(_t), _t / _mb_tail,
+        "{:.0f}".format(_agg) if _agg else "---"))
 close_table()
 
-
-
 # ------------------------------------------------- memory contention: the matrix
-# The target holds 8 SMs in every row; the participant and its budget are the variables.
-# The participant's own load is read from the run's log, because the participant writes no
-# stats file: its report states the bytes or the FLOPs it moved, which is what makes a row
-# readable as "this much load cost the target this much latency".
+# The participant and its budget are the variables. The participant writes no stats file, so
+# its own load is read from the run's log, where it reports the bytes or the FLOPs it moved.
 _BENCH = os.environ.get("BENCH", "/mnt/nvme/f.scarfato/bench")
 
 
@@ -603,95 +602,98 @@ def itf_load(family, cfg, unit):
     return statistics.median(found) if found else None
 
 
-_mm_med = must(val("exp1", "mobilenet_gc50", "mobilenet", "median"),
-               "the isolated 8 SM median")
-_mm_tail = must(val("exp1", "mobilenet_gc50", "mobilenet", "p99_minus_median"),
-                "the isolated 8 SM tail")
+_mx_med = must(val("exp1", "mobilenet_gc50", "mobilenet", "median"), "isolated median")
+_mx_tail = must(val("exp1", "mobilenet_gc50", "mobilenet", "p99_minus_median"),
+                "isolated tail")
 
-open_table([r"Participant & Its own load & Median (ms) & Residual & Tail (ms) & "
-            r"$\times$ tail \\"], "lrrrrr",
-           "What a participant's kind and budget cost a target that keeps its own "
-           "8\\,SMs. The load is the participant's own report from the run's log: the "
-           "bytes the memory kind moved, the FLOPs the compute kind performed. The "
-           "residual and the multiplier are against the target alone on the same 8\\,SMs.",
+open_table([r"Network & Configuration & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
+            r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
+           "What a participant's kind and budget cost a target holding its own 8\,SMs. The "
+           "configuration carries the load the participant reported for itself, the bytes "
+           "the memory kind moved or the FLOPs the compute kind performed. Both multipliers "
+           "are against the target alone at the same 8\,SMs.",
            "tab:mem-matrix")
-emit(r"none & --- & {} & --- & {} & 1.0 \\".format(ms(_mm_med), ms(_mm_tail)))
-for _cfg, _desc, _unit in (("mem4", r"\texttt{mem\_saxpy} at 4\,SMs", "GB/s"),
-                           ("mem8", r"\texttt{mem\_saxpy} at 8\,SMs", "GB/s"),
-                           ("compute4", r"\texttt{compute\_gemm} at 4\,SMs", "TFLOP/s"),
-                           ("compute8", r"\texttt{compute\_gemm} at 8\,SMs", "TFLOP/s")):
+emit(r"mobilenet & participant none & {} & 1.000 & {:.0f} & {} & 1.000 \\".format(
+    ms(_mx_med), must(thr("exp1", "mobilenet_gc50", "mobilenet"), "isolated rate") or 0,
+    ms(_mx_tail)))
+for _cfg, _label, _unit in (("mem4", r"\texttt{mem\_saxpy} at 4\,SMs", "GB/s"),
+                            ("mem8", r"\texttt{mem\_saxpy} at 8\,SMs", "GB/s"),
+                            ("compute4", r"\texttt{compute\_gemm} at 4\,SMs", "TFLOP/s"),
+                            ("compute8", r"\texttt{compute\_gemm} at 8\,SMs", "TFLOP/s")):
     _m = must(val("exp9", _cfg, "mobilenet", "median"), _cfg + " median")
     _t = must(val("exp9", _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
+    _thr = must(thr("exp9", _cfg, "mobilenet"), _cfg + " rate") or 0
     _l = itf_load("mem-s2", _cfg, _unit)
-    emit(r"{} & {} & {} & {:+.1f}\,\% & {} & {:.1f} \\".format(
-        _desc, "{:.1f} {}".format(_l, _unit) if _l else "---", ms(_m),
-        100.0 * (_m / _mm_med - 1.0), ms(_t), _t / _mm_tail))
+    emit(r"mobilenet & {} ({}) & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
+        _label, "{:.1f} {}".format(_l, _unit) if _l else "load not logged", ms(_m),
+        _m / _mx_med, _thr, ms(_t), _t / _mx_tail))
 close_table()
 
 # --------------------------------------------------- memory contention: the trace
 # Three nsys kernel traces, two seconds each, of the same target alone and with each
-# participant at 4 SMs. One inference is one pass of the kernel cycle, whose length the
-# trace states itself; the span of an inference is its kernels' time plus the gaps between
-# them, and the last column is the part of the gap that elapsed before the launch call for
-# the next kernel returned. Diagnostic, not a campaign measurement: profiling perturbs.
+# participant at 4 SMs. One inference is one pass of the kernel cycle, whose length the trace
+# states itself; the span of an inference is its kernels' time plus the gaps between them,
+# and the last column is the part of the gap that elapsed before the launch call for the next
+# kernel returned. Diagnostic, not a campaign measurement: profiling perturbs.
 _TRACE_CSV = os.environ.get("TRACE_CSV", "/mnt/nvme/f.scarfato/bench/trace/mem-trace.csv")
 if os.path.exists(_TRACE_CSV):
     import csv as _csv
-    _short = {"alone": "alone", "mem4": r"\texttt{mem\_saxpy}",
-              "compute4": r"\texttt{compute\_gemm}"}
-    _trace = list(_csv.DictReader(open(_TRACE_CSV)))
-    open_table([r"Trace & Inference & Span (\textmu s) & Kernels (\textmu s) & "
-                r"Gaps (\textmu s) & Gaps the host owed \\"], "llrrrr",
-               "One inference, decomposed. The trace is sliced into inferences by the "
-               "period of its own kernel sequence, fifty-five kernels in all three, so "
-               "the inference and the campaign's measurement are the same unit. The "
-               "participants are at 4\\,SMs.",
+    _conf = {"alone": "participant none", "mem4": r"\texttt{mem\_saxpy} at 4\,SMs",
+             "compute4": r"\texttt{compute\_gemm} at 4\,SMs"}
+    open_table([r"Network & Configuration & Inference & Span (\textmu s) & Kernels "
+                r"(\textmu s) & Gaps (\textmu s) & Host-late gaps (\textmu s) \\"], "lllrrrr",
+               "One inference, decomposed, from a trace of the target alone and of the "
+               "target with each participant. The trace is sliced into inferences by the "
+               "period of its own kernel sequence, fifty-five kernels in all three, so the "
+               "inference here is the same unit the campaign measures. The last column is "
+               "the part of the gap between kernels that elapsed before the launch call for "
+               "the next kernel had returned, which the host owes and the device does not.",
                "tab:mem-trace")
     _last = None
-    for _row in _trace:
+    for _row in _csv.DictReader(open(_TRACE_CSV)):
         if _last is not None and _row["trace"] != _last:
             emit(r"\midrule")
         _last = _row["trace"]
-        emit(r"{} & {} & {} & {} & {} & {} \\".format(
-            _short.get(_row["trace"], _row["trace"]) if _row["quantile"] == "median inference" else "",
-            "slowest 1\\,\\%" if _row["quantile"] != "median inference" else "median",
-            "{:.1f}".format(float(_row["span"])), "{:.1f}".format(float(_row["kernels"])),
-            "{:.1f}".format(float(_row["gaps"])), "{:.1f}".format(float(_row["host_gaps"]))))
+        emit(r"mobilenet & {} & {} & {:.1f} & {:.1f} & {:.1f} & {:.1f} \\".format(
+            _conf.get(_row["trace"], _row["trace"]),
+            "slowest 1\,\%" if _row["quantile"] != "median inference" else "median",
+            float(_row["span"]), float(_row["kernels"]), float(_row["gaps"]),
+            float(_row["host_gaps"])))
     close_table()
 
 # ------------------------------------------- memory contention: the process model
-# The same two participants at the same 8 SM shares, once inside the measured process
-# (green contexts) and once as a separate process under MPS static partitions. Each row's
-# residual is against its own process model's target alone, so the mechanism is never
-# compared across an unmeasured gap.
+# The same participants at the same 8 SM shares, once inside the measured process (green
+# contexts) and once as a separate process under MPS static partitions. Each model's
+# multipliers are against its own target alone, the first two rows, so the two models are
+# never compared across an unmeasured gap.
 _mp_ref = {"mps": ("exp9", "mps_alone"), "gc": ("exp1", "mobilenet_gc50")}
 _mp_med = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mp_ref.items()}
 _mp_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
             for k, (e, c) in _mp_ref.items()}
-_mp_model = {"mps": "separate processes", "gc": "one process"}
 
-open_table([r"Participant & Process model & Median (ms) & Residual & Tail (ms) & "
-            r"$\times$ tail \\"], "llrrrr",
-           "The same participants at the same 8\\,SM shares, with the participant in its "
-           "own process under MPS static partitions and inside the measured process under "
-           "green contexts. Each model's residual and multiplier are against its own "
-           "target alone, the first two rows.",
+open_table([r"Network & Configuration & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
+            r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
+           "The same participants at the same 8\,SM shares, with the participant in its own "
+           "process under MPS static partitions and inside the measured process under green "
+           "contexts. Each model's multipliers are against its own target alone, the first "
+           "two rows, so the process models are not compared across an unmeasured gap.",
            "tab:mem-mps")
 for _model in ("mps", "gc"):
-    emit(r"none & {} & {} & --- & {} & 1.0 \\".format(
-        _mp_model[_model], ms(_mp_med[_model]), ms(_mp_tail[_model])))
+    _e, _c = _mp_ref[_model]
+    emit(r"mobilenet & none, {} & {} & 1.000 & {:.0f} & {} & 1.000 \\".format(
+        "separate processes" if _model == "mps" else "one process", ms(_mp_med[_model]),
+        must(thr(_e, _c, "mobilenet"), _c + " rate") or 0, ms(_mp_tail[_model])))
 emit(r"\midrule")
-for _desc, _co in ((r"\texttt{mem\_saxpy} at 8\,SMs", "mem8"),
-                   (r"\texttt{compute\_gemm} at 8\,SMs", "compute8")):
-    for _i, _model in enumerate(("mps", "gc")):
-        if _i:
-            emit(r"\cmidrule(l){2-6}")
+for _i, _co in enumerate(("mem8", "compute8")):
+    for _model in ("mps", "gc"):
         _cfg = ("mps_" + _co) if _model == "mps" else _co
-        _m = must(val("exp9", _cfg, "mobilenet", "median"), _cfg)
-        _t = must(val("exp9", _cfg, "mobilenet", "p99_minus_median"), _cfg)
-        emit(r"{} & {} & {} & {:+.1f}\,\% & {} & {:.1f} \\".format(
-            _desc if _i == 0 else "", _mp_model[_model], ms(_m), 
-            100.0 * (_m / _mp_med[_model] - 1.0), ms(_t), _t / _mp_tail[_model]))
+        _m = must(val("exp9", _cfg, "mobilenet", "median"), _cfg + " median")
+        _t = must(val("exp9", _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
+        _thr = must(thr("exp9", _cfg, "mobilenet"), _cfg + " rate") or 0
+        emit(r"mobilenet & {} at 8\,SMs, {} & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
+            r"\texttt{mem\_saxpy}" if _co == "mem8" else r"\texttt{compute\_gemm}",
+            "separate processes" if _model == "mps" else "one process",
+            ms(_m), _m / _mp_med[_model], _thr, ms(_t), _t / _mp_tail[_model]))
 close_table()
 
 sys.stdout.write("\n".join(OUT))
