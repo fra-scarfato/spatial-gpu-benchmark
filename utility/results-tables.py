@@ -559,49 +559,76 @@ close_table()
 
 # ------------------------------------------- memory contention: the target's budget
 # The target holds 8 SMs in every row, so the rows differ in the co-runner and the mechanism
-# alone. Each configuration is measured under BOTH mechanisms and the two rows stand together,
-# so the comparison is between adjacent rows and never across the table. Under MPS static the
-# same split needs three partitions - 8 SMs to the target, 4 to the co-runner and 4 left
-# unassigned - because a static partition set covers the device in two parts. Each mechanism's
-# multipliers are against its own target alone, which is the first pair of rows.
-MEMROWS = [("participant none", "GC", "exp1", "mobilenet_gc50", False),
-           ("participant none", "MPS static", "exp9", "mps_alone", False),
-           ("ResNet at 4\,SMs (4 left idle)", "GC", "exp9", "target8_co4", True),
-           ("ResNet at 4\,SMs (4 left idle)", "MPS static", "exp9", "mps_target8_co4", False),
-           ("ResNet at 8\,SMs", "GC", "exp2-1t", "50_50", True),
-           ("ResNet at 8\,SMs", "MPS static", "exp9", "mps_target8_co8", False)]
-_mb_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
-_mb_med = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mb_ref.items()}
-_mb_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
-            for k, (e, c) in _mb_ref.items()}
+# alone. The pair of tables follows the shape the two mechanisms are compared with at matched
+# ratios: a rates table with the two networks grouped under multicolumn headers, and a
+# dispersion table with the network in its own column and the multipliers against the isolated
+# whole-device run. Under MPS static the same split needs three partitions - 8 SMs to the
+# target, 4 to the co-runner and 4 left unassigned - because a static partition set covers the
+# device in two parts.
+MB_ROWS = [("none", "GC", "exp1", "mobilenet_gc50", False),
+           ("none", "MPS static", "exp9", "mps_alone", False),
+           ("resnet 4\,SMs", "GC", "exp9", "target8_co4", True),
+           ("resnet 4\,SMs", "MPS static", "exp9", "mps_target8_co4", True),
+           ("resnet 8\,SMs", "GC", "exp2-1t", "50_50", True),
+           ("resnet 8\,SMs", "MPS static", "exp9", "mps_target8_co8", True)]
+MB_COLS = [
+    r"Configuration & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
+    r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
+    r"\cmidrule(lr){3-4} \cmidrule(lr){5-6}",
+    r" & & Median (ms) & Thr.\ (inf/s) & Median (ms) & Thr.\ (inf/s) & (inf/s) \\",
+]
 
-open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
-            r"tail $\times$iso & Aggregate (inf/s) \\"], "llrrrrr",
-           "Memory contention with the target's budget fixed, under each mechanism. MobileNet "
-           "holds the same 8\,SMs in every row, so the rows differ in the co-runner and the "
-           "mechanism alone, and each configuration appears twice, under green contexts and "
-           "under MPS static partitions. Every multiplier is against the target alone under "
-           "the same mechanism, the first pair of rows. An MPS static partition set covers the "
-           "device in two parts, so the 4\,SM co-runner is given its own partition and the "
-           "last quarter of the device is left unassigned, as the green-context arm leaves it. "
-           "The aggregate is the harness's count of both clients together, which a two-process "
-           "pair does not have.",
+open_table(MB_COLS, "llrrrrr",
+           "Memory contention with the target's budget fixed, under each mechanism, with one "
+           "submitting thread per process. MobileNet holds the same 8\,SMs in every row, so "
+           "each configuration appears twice, under green contexts and under MPS static "
+           "partitions, and the two rows of a pair differ in the mechanism alone. An MPS "
+           "static partition set covers the device in two parts, so the 4\,SM co-runner is "
+           "given its own partition and the last quarter of the device is left unassigned, as "
+           "the green-context arm leaves it, so the 4\,SM arms use half the device. The aggregate is the two clients' rates together.",
            "tab:mem-budget")
 _mb_cfg = None
-for _desc, _mech, _exp, _cfg, _pair in MEMROWS:
+for _desc, _mech, _exp, _cfg, _co in MB_ROWS:
     if _mb_cfg is not None and _desc != _mb_cfg:
         emit(r"\midrule")
     _mb_cfg = _desc
-    _what = "{} {} mobilenet".format(_exp, _cfg)
-    _m = must(val(_exp, _cfg, "mobilenet", "median"), _what + " median")
-    _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what + " tail")
-    _thr = must(thr(_exp, _cfg, "mobilenet"), _what + " rate") or 0
-    _agg = agg_thr(_exp, _cfg, NETS) if _pair else None
-    if _mech == "GC" and not _pair:
-        _agg = agg_thr(_exp, _cfg, ("mobilenet",))
-    emit(r"{} & {} & {} & {:.3f} & {:.0f} & {:.3f} & {} \\".format(
-        _desc, _mech, ms(_m), _m / _mb_med[_mech], _thr, _t / _mb_tail[_mech],
+    _mob_m = ms(val(_exp, _cfg, "mobilenet", "median"))
+    _mob_t = thr(_exp, _cfg, "mobilenet") or 0
+    _agg = agg_thr(_exp, _cfg, NETS) if _co else agg_thr(_exp, _cfg, ("mobilenet",))
+    if _co:
+        _res_m = ms(val(_exp, _cfg, "resnet", "median"))
+        _res_t = "{:.0f}".format(thr(_exp, _cfg, "resnet") or 0)
+    else:
+        _res_m = _res_t = "---"
+    emit(r"{} & {} & {} & {:.0f} & {} & {} & {} \\".format(
+        _desc, _mech, _mob_m, _mob_t, _res_m, _res_t,
         "{:.0f}".format(_agg) if _agg else "---"))
+close_table()
+
+
+def mem_budget_disp(desc, mech, exp, cfg, nets):
+    for net in nets:
+        t, s = ref(net)
+        tail = val(exp, cfg, net, "p99_minus_median")
+        std = val(exp, cfg, net, "std")
+        emit(r"{} & {} & {} & {} & {} & {} & {} & {} & {} & {} \\".format(
+            desc, mech, net, ms(std), xr(std, s), ms(val(exp, cfg, net, "p95")),
+            ms(val(exp, cfg, net, "p99")), ms(tail), xr(tail, t),
+            ms(A.obs_max(DATA, exp, cfg, net))))
+
+
+open_table([r"Configuration & Mechanism & Network & std & std $\times$iso & p95 & p99 & tail & "
+            r"tail $\times$iso & obs-max \\"], "lllrrrrrrr",
+           "The same arms by dispersion, as in Table~\\ref{tab:compare-dispersion}. The "
+           "multipliers are against the isolated reference of the network, which is the "
+           "network alone on the whole device, not alone at the target's SM count.",
+           "tab:mem-budget-dispersion")
+_mb_cfg = None
+for _desc, _mech, _exp, _cfg, _co in MB_ROWS:
+    if _mb_cfg is not None and _desc != _mb_cfg:
+        emit(r"\midrule")
+    _mb_cfg = _desc
+    mem_budget_disp(_desc, _mech, _exp, _cfg, NETS if _co else ("mobilenet",))
 close_table()
 
 # ------------------------------------------------- memory contention: the matrix
