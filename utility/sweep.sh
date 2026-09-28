@@ -160,6 +160,15 @@ PRIO=nice                        # nice | fifo, the mechanism if we do
 SUBMIT_CORE="${SUBMIT_CORE:-6}"   # one core, for the pinned arms
 SUBMIT_CORE_B="${SUBMIT_CORE_B:-7}"
 
+# Named groups for --exp, so a stage is one command rather than a list of folders. The split
+# is the one the tables make: `section` is every family whose rows the results section renders,
+# `appendix` is the rest, which the history file and the diagnostic tools read. Kept in step
+# with the generator by utility/overview.py, which derives the same split from the source.
+SECTION_FAMILIES="isolated-scaling concurrent-greenctx-1t concurrent-mps concurrent-aux submit-model wq-s1 mem-s1 mem-s2 mem-s3 mem-s4 mem-s5 mem-s6"
+APPENDIX_FAMILIES="concurrent-greenctx concurrent-wq concurrent-wq-1t concurrent-aux-1t pinning repro wq-s4"
+MEM_FAMILIES="mem-s1 mem-s2 mem-s3 mem-s4 mem-s5 mem-s6"
+ALL_FAMILIES="$SECTION_FAMILIES $APPENDIX_FAMILIES"
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)       DRY=1 ;;
@@ -169,7 +178,17 @@ while [ $# -gt 0 ]; do
         # well; the shift at the bottom of the loop then moves past the value.
         --runs)          RUNS="$2"; shift ;;
         --out)           OUT="$2"; OUT_GIVEN=1; shift ;;
-        --exp)           EXPS="$2"; shift ;;
+        --exp)
+            # A group name expands to its family list; anything else stays a substring of a
+            # family name, as before, so `--exp mps` still selects concurrent-mps.
+            case "$2" in
+                section)  EXPS="$(printf '%s' "$SECTION_FAMILIES" | tr ' ' ',')" ;;
+                appendix) EXPS="$(printf '%s' "$APPENDIX_FAMILIES" | tr ' ' ',')" ;;
+                all)      EXPS="$(printf '%s' "$ALL_FAMILIES" | tr ' ' ',')" ;;
+                mem)      EXPS="$(printf '%s' "$MEM_FAMILIES" | tr ' ' ',')" ;;
+                *)        EXPS="$2" ;;
+            esac
+            shift ;;
         --static-chunks) STATIC_CHUNKS="$2"; shift ;;
         --with-priority) WITH_PRIORITY=1 ;;
         --submit-core)   SUBMIT_CORE="$2"; shift ;;

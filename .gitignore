@@ -34,3 +34,9 @@ utility/wqprobe
 *~
 *.swp
 .vscode/
+
+# Built artefacts: rebuild with make (runner) or make -C utility (tools).
+utility/auxprobe
+utility/wqprobe
+utility/devprobe
+utility/itfproc
