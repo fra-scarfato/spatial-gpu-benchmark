@@ -559,16 +559,16 @@ close_table()
 
 # ------------------------------------------- memory contention: the target's budget
 # The target holds 8 SMs in every row, so the rows differ in the co-runner and the mechanism
-# alone. Under MPS static the same split needs three partitions - 8 SMs to the target, 4 to the
-# co-runner and 4 left unassigned - because a static partition set covers the device in two
-# parts. Each mechanism's multipliers are against its own target alone, which is the first row
-# of its group. The aggregate is the harness's own count, so a two-process pair has none: the
-# two clients are separate programs and nothing counts their inferences together.
+# alone. Each configuration is measured under BOTH mechanisms and the two rows stand together,
+# so the comparison is between adjacent rows and never across the table. Under MPS static the
+# same split needs three partitions - 8 SMs to the target, 4 to the co-runner and 4 left
+# unassigned - because a static partition set covers the device in two parts. Each mechanism's
+# multipliers are against its own target alone, which is the first pair of rows.
 MEMROWS = [("participant none", "GC", "exp1", "mobilenet_gc50", False),
-           ("ResNet at 4\,SMs (4 left idle)", "GC", "exp9", "target8_co4", True),
-           ("ResNet at 8\,SMs", "GC", "exp2-1t", "50_50", True),
            ("participant none", "MPS static", "exp9", "mps_alone", False),
+           ("ResNet at 4\,SMs (4 left idle)", "GC", "exp9", "target8_co4", True),
            ("ResNet at 4\,SMs (4 left idle)", "MPS static", "exp9", "mps_target8_co4", False),
+           ("ResNet at 8\,SMs", "GC", "exp2-1t", "50_50", True),
            ("ResNet at 8\,SMs", "MPS static", "exp9", "mps_target8_co8", False)]
 _mb_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
 _mb_med = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mb_ref.items()}
@@ -577,19 +577,21 @@ _mb_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
 
 open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
             r"tail $\times$iso & Aggregate (inf/s) \\"], "llrrrrr",
-           "Memory contention with the target's budget fixed. MobileNet holds the same 8\,SMs "
-           "in every row, so the rows differ in the co-runner and the mechanism alone, and "
-           "each mechanism's multipliers are against its own target alone, the first row of "
-           "its group. An MPS static partition set covers the device in two parts, so the "
-           "4\,SM co-runner is given its own partition and the last quarter of the device is "
-           "left unassigned, as the green-context arm leaves it. The aggregate is the "
-           "harness's count of both clients together, which a two-process pair does not have.",
+           "Memory contention with the target's budget fixed, under each mechanism. MobileNet "
+           "holds the same 8\,SMs in every row, so the rows differ in the co-runner and the "
+           "mechanism alone, and each configuration appears twice, under green contexts and "
+           "under MPS static partitions. Every multiplier is against the target alone under "
+           "the same mechanism, the first pair of rows. An MPS static partition set covers the "
+           "device in two parts, so the 4\,SM co-runner is given its own partition and the "
+           "last quarter of the device is left unassigned, as the green-context arm leaves it. "
+           "The aggregate is the harness's count of both clients together, which a two-process "
+           "pair does not have.",
            "tab:mem-budget")
-_mb_mech = None
+_mb_cfg = None
 for _desc, _mech, _exp, _cfg, _pair in MEMROWS:
-    if _mb_mech is not None and _mech != _mb_mech:
+    if _mb_cfg is not None and _desc != _mb_cfg:
         emit(r"\midrule")
-    _mb_mech = _mech
+    _mb_cfg = _desc
     _what = "{} {} mobilenet".format(_exp, _cfg)
     _m = must(val(_exp, _cfg, "mobilenet", "median"), _what + " median")
     _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what + " tail")
