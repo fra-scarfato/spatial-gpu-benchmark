@@ -310,11 +310,11 @@ fi
 #
 # The three rows walk the ladder 8 -> 10, and then hold the number and change the
 # scope, so each step varies exactly one thing.
-add "wq-s1_pair_smsonly" \
+add "workqueue-declaration_pair-sms-only" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
-add "wq-s1_pair_dev10" \
+add "workqueue-declaration_pair-device-ctx-10" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope device_ctx --wq-limit 10 --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
-add "wq-s1_pair_bal10" \
+add "workqueue-declaration_pair-balanced-10" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope green_ctx_balanced --wq-limit 10 --net $MOB:50:mobilenet --net $RN8:50:retinanet|"
 
 # The gain attempt: three clients in one split, whose streams together ask for more
@@ -323,11 +323,11 @@ add "wq-s1_pair_bal10" \
 # 2-SM alignment, so 40/30/30 would ask for 20 SMs and be refused.
 # declaration is worth anything, this is where it should show, because a gain is only
 # possible where the default budget is exceeded.
-add "wq-s4_multi_default" \
+add "workqueue-three-clients_three-clients-default" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
-add "wq-s4_multi_bal13" \
+add "workqueue-three-clients_three-clients-balanced-13" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope green_ctx_balanced --wq-limit 13 --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
-add "wq-s4_multi_dev13" \
+add "workqueue-three-clients_three-clients-device-ctx-13" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --wq-scope device_ctx --wq-limit 13 --net $MOB:35:mobilenet --net $INC2:35:inception --net $RN8:25:retinanet|"
 
 # Memory contention, block 1: the target's partition is FIXED at 8 SMs and only the
@@ -339,7 +339,7 @@ add "wq-s4_multi_dev13" \
 #
 # The residual is then the target's concurrent latency over its isolated latency at the
 # SAME SM count, and the question is whether it grows with the co-runner's budget.
-add "mem-s1_target8_co4" \
+add "memory-budget-greenctx_mobilenet8-resnet4" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --net $RES:25:resnet|"
 
 # The interferer matrix. The target holds 8 SMs in every row — the same partition as the
@@ -354,13 +354,13 @@ add "mem-s1_target8_co4" \
 # The run's own log carries the participant's report — units, bytes, FLOPs and the rates
 # they imply — so each row records not only what the target lost but how much load was
 # actually applied to make it lose it.
-add "mem-s2_mem4" \
+add "memory-interferers_memsaxpy-4sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer mem_saxpy:25|"
-add "mem-s2_mem8" \
+add "memory-interferers_memsaxpy-8sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer mem_saxpy:50|"
-add "mem-s2_compute4" \
+add "memory-interferers_computegemm-4sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:25|"
-add "mem-s2_compute8" \
+add "memory-interferers_computegemm-8sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
 
 # The same two kinds of co-runner, in a separate process under MPS static partitions.
@@ -377,11 +377,11 @@ add "mem-s2_compute8" \
 #
 # `mps_alone` is the reference that separates the cost of the mechanism from the cost of
 # the co-runner: the same target, in the same 8-SM partition, with the other partition idle.
-add "mem-s3_mps_alone" \
+add "memory-mps-interferers_mps-alone" \
     "solo|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet||50"
-add "mem-s3_mps_mem8" \
+add "memory-mps-interferers_mps-memsaxpy-8sm" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50"
-add "mem-s3_mps_compute8" \
+add "memory-mps-interferers_mps-computegemm-8sm" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50"
 
 # The fixed-budget measurement under MPS static partitions: MobileNet holds 8 SMs and ResNet
@@ -389,22 +389,22 @@ add "mem-s3_mps_compute8" \
 # the device in two parts, so the 50:25 split is expressed as three partitions and the last
 # quarter of the device is left unassigned, which is what the green-context arm does with its
 # unused SMs. Both processes run their own submitter, as the frozen submission model requires.
-add "mem-s4_mps_target8_co4" \
+add "memory-mps-budget_mps-mobilenet8-resnet4" \
     "pair|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $RES:25:resnet|50:25"
-add "mem-s4_mps_target8_co8" \
+add "memory-mps-budget_mps-mobilenet8-resnet8" \
     "pair|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $RES:50:resnet|50:50"
 
 # The 4-SM participants of the interferer matrix, under MPS static partitions. The ratio
 # 50:25 creates three partitions - 8 SMs to the target, 4 to the participant, 4 unassigned -
 # so the participant budget matches the green-context row it is paired with.
-add "mem-s5_mps_mem4" \
+add "memory-mps-interferers-4sm_mps-memsaxpy-4sm" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50:25"
-add "mem-s5_mps_compute4" \
+add "memory-mps-interferers-4sm_mps-computegemm-4sm" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50:25"
 
 # The two-thread check on the tail. One measured client with the interferer inside its own
 # process, two submitting threads, both pinned. The tail of this arm says whether the pathology
 # the submission model removed returns when a computing participant shares the process.
-add "mem-s6_mem_t2_core67" \
+add "memory-two-threads_computegemm-8sm-two-threads" \
     "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
 

@@ -366,9 +366,9 @@ close_table()
 # The subject is RetinaNet's aux8 build, the only engine in the corpus whose stream
 # count (9) exceeds the platform's default declaration (8), with MobileNet as the
 # co-runner at 50/50: one stream, so it never competes for the declaration.
-WQ = [("pair_smsonly", "SMs only (descriptor carries no work queues, declaration 8)"),
-      ("pair_dev10", "declared 10, \\texttt{device\\_ctx}"),
-      ("pair_bal10", "declared 10, \\texttt{green\\_ctx\\_balanced}")]
+WQ = [("pair-sms-only", "SMs only (descriptor carries no work queues, declaration 8)"),
+      ("pair-device-ctx-10", "declared 10, \\texttt{device\\_ctx}"),
+      ("pair-balanced-10", "declared 10, \\texttt{green\\_ctx\\_balanced}")]
 open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) & "
             r"tail (ms) \\"], "llrrrr",
            "The work-queue half of a green context descriptor varied on the pair whose "
@@ -413,9 +413,9 @@ close_table()
 # Three clients in one split: 1 + 3 + 9 = 13 stream-ordered workloads against a default
 # declaration of 8. The gain attempt, since a gain is only possible where the default
 # budget is exceeded.
-MULTI = [("multi_default", "default declaration, inherited 8"),
-         ("multi_bal13", "declared 13, \\texttt{green\\_ctx\\_balanced}"),
-         ("multi_dev13", "declared 13, \\texttt{device\\_ctx}")]
+MULTI = [("three-clients-default", "default declaration, inherited 8"),
+         ("three-clients-balanced-13", "declared 13, \\texttt{green\\_ctx\\_balanced}"),
+         ("three-clients-device-ctx-13", "declared 13, \\texttt{device\\_ctx}")]
 open_table([r"Network & Configuration & Median (ms) & p99 (ms) & tail (ms) \\"], "llrrr",
            "Three clients in one green-context split, one submitting thread: MobileNet "
            "6\\,SMs, Inception\\,aux2 6, RetinaNet\\,aux8 4, so the three together ask for "
@@ -449,11 +449,11 @@ close_table()
 # target, 4 to the co-runner and 4 left unassigned - because a static partition set covers the
 # device in two parts.
 MB_ROWS = [("none", "GC", "exp1", "mobilenet_gc50", False),
-           ("none", "MPS static", "exp9", "mps_alone", False),
-           ("resnet 4\,SMs", "GC", "exp9", "target8_co4", True),
-           ("resnet 4\,SMs", "MPS static", "exp9", "mps_target8_co4", True),
+           ("none", "MPS static", "exp9", "mps-alone", False),
+           ("resnet 4\,SMs", "GC", "exp9", "mobilenet8-resnet4", True),
+           ("resnet 4\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet4", True),
            ("resnet 8\,SMs", "GC", "exp2-1t", "50_50", True),
-           ("resnet 8\,SMs", "MPS static", "exp9", "mps_target8_co8", True)]
+           ("resnet 8\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet8", True)]
 MB_COLS = [
     r"Configuration & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
     r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
@@ -543,16 +543,16 @@ def itf_load(family, cfg, unit):
 
 
 MX_ROWS = [("none", "GC", "exp1", "mobilenet_gc50", None, None),
-           ("none", "MPS static", "exp9", "mps_alone", None, None),
-           (r"\texttt{mem\_saxpy} at 4\,SMs", "GC", "exp9", "mem4", "GB/s", "mem-s2"),
-           (r"\texttt{mem\_saxpy} at 4\,SMs", "MPS static", "exp9", "mps_mem4", "GB/s", "mem-s5"),
-           (r"\texttt{mem\_saxpy} at 8\,SMs", "GC", "exp9", "mem8", "GB/s", "mem-s2"),
-           (r"\texttt{mem\_saxpy} at 8\,SMs", "MPS static", "exp9", "mps_mem8", "GB/s", "mem-s3"),
-           (r"\texttt{compute\_gemm} at 4\,SMs", "GC", "exp9", "compute4", "TFLOP/s", "mem-s2"),
-           (r"\texttt{compute\_gemm} at 4\,SMs", "MPS static", "exp9", "mps_compute4", "TFLOP/s", "mem-s5"),
-           (r"\texttt{compute\_gemm} at 8\,SMs", "GC", "exp9", "compute8", "TFLOP/s", "mem-s2"),
-           (r"\texttt{compute\_gemm} at 8\,SMs", "MPS static", "exp9", "mps_compute8", "TFLOP/s", "mem-s3")]
-_mx_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
+           ("none", "MPS static", "exp9", "mps-alone", None, None),
+           (r"\texttt{mem\_saxpy} at 4\,SMs", "GC", "exp9", "memsaxpy-4sm", "GB/s", "memory-interferers"),
+           (r"\texttt{mem\_saxpy} at 4\,SMs", "MPS static", "exp9", "mps-memsaxpy-4sm", "GB/s", "memory-mps-interferers-4sm"),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "GC", "exp9", "memsaxpy-8sm", "GB/s", "memory-interferers"),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "MPS static", "exp9", "mps-memsaxpy-8sm", "GB/s", "memory-mps-interferers"),
+           (r"\texttt{compute\_gemm} at 4\,SMs", "GC", "exp9", "computegemm-4sm", "TFLOP/s", "memory-interferers"),
+           (r"\texttt{compute\_gemm} at 4\,SMs", "MPS static", "exp9", "mps-computegemm-4sm", "TFLOP/s", "memory-mps-interferers-4sm"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "GC", "exp9", "computegemm-8sm", "TFLOP/s", "memory-interferers"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "MPS static", "exp9", "mps-computegemm-8sm", "TFLOP/s", "memory-mps-interferers")]
+_mx_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps-alone")}
 _mx_base = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mx_ref.items()}
 _mx_base_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
                  for k, (e, c) in _mx_ref.items()}

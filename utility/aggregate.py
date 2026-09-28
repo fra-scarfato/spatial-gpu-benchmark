@@ -207,7 +207,7 @@ def load(outdir):
             # single unlabelled stats file here is MobileNet. Every arm of this family
             # runs MobileNet; the other exp9 family (the budget arm) has two networks
             # and its files are labelled.
-            elif exp == "exp9" and config.startswith(("mem", "compute", "mps_")):
+            elif exp == "exp9" and config.startswith(("mem", "compute", "mps_", "mps-")):
                 net = "mobilenet"
             elif exp.startswith("exp5") and config == "aux1_whole":
                 # The isolated baseline of the auxiliary-stream family is the

@@ -6,7 +6,7 @@ them. A copy of either would be a copy that can disagree with the thing that mat
 
     from lib import families
     families.groups()                 # {'section': [...], 'appendix': [...], ...}
-    families.state(bench, "mem-s2")   # configurations, replicates, dates
+    families.state(bench, "memory-interferers")   # configurations, replicates, dates
 """
 import datetime
 import os
@@ -57,14 +57,14 @@ EXP_DIR = {
     "concurrent-aux-1t":      "exp5-1t",
     "pinning":             "exp6",
     "submit-model":        "exp7",
-    "wq-s1":                "exp8",
-    "wq-s4":                "exp8",
-    "mem-s1":               "exp9",
-    "mem-s2":               "exp9",
-    "mem-s3":               "exp9",
-    "mem-s4":               "exp9",
-    "mem-s5":               "exp9",
-    "mem-s6":               "exp9",
+    "workqueue-declaration":                "exp8",
+    "workqueue-three-clients":                "exp8",
+    "memory-budget-greenctx":               "exp9",
+    "memory-interferers":               "exp9",
+    "memory-mps-interferers":               "exp9",
+    "memory-mps-budget":               "exp9",
+    "memory-mps-interferers-4sm":               "exp9",
+    "memory-two-threads":               "exp9",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }
