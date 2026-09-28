@@ -38,13 +38,42 @@ def key_map():
 
 
 def groups():
-    """The named family groups, from sweep.sh."""
+    """The named family groups, from sweep.sh.
+
+    One level of $VAR reference is resolved, because ALL_FAMILIES is defined in terms of the
+    other two: reading it literally would yield the two variable names as if they were families.
+    """
     src = (UTILITY / "sweep.sh").read_text()
-    out = {}
+    var_of = {v: k for k, v in GROUP_VARS.items()}
+    raw = {}
     for name, var in GROUP_VARS.items():
         m = re.search(var + r'="([^"]*)"', src)
-        out[name] = m.group(1).split() if m else []
-    return out
+        raw[name] = m.group(1) if m else ""
+
+    def resolve(text, depth=4):
+        for _ in range(depth):
+            new = re.sub(r"\$([A-Z_]+)",
+                         lambda m: raw.get(var_of.get(m.group(1), ""), ""), text)
+            if new == text:
+                break
+            text = new
+        return text
+
+    return {name: resolve(text).split() for name, text in raw.items()}
+
+
+def gpu_devfreq():
+    """The GPU governor directory, taken from the sweep so the two check the same thing."""
+    src = (UTILITY / "sweep.sh").read_text()
+    m = re.search(r'^GPU_DEVFREQ=(.+)$', src, re.M)
+    if not m:
+        return None
+    value = m.group(1).strip()
+    inner = re.search(r":-([^}]+)}", value)     # ${GPU_DEVFREQ:-/sys/...}
+    if inner:
+        value = inner.group(1)
+    value = value.strip().strip('"').strip("'")
+    return Path(value) if value.startswith("/") else None
 
 
 def expand(selection):

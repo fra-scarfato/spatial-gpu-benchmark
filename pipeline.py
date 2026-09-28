@@ -73,16 +73,16 @@ def state_table():
 
 
 def clock_state():
-    """The GPU governor, the same value sweep.sh refuses on."""
-    import glob
-    for path in glob.glob("/sys/devices/gpu.0/devfreq/*/min_freq"):
-        try:
-            lo = open(path).read().strip()
-            hi = open(path.replace("min_freq", "max_freq")).read().strip()
-            return lo == hi, lo, hi
-        except OSError:
-            pass
-    return None, "?", "?"
+    """The GPU governor, read from the same directory the sweep refuses on."""
+    dev = families.gpu_devfreq()
+    if dev is None:
+        return None, "?", "?"
+    try:
+        lo = (dev / "min_freq").read_text().strip()
+        hi = (dev / "max_freq").read_text().strip()
+    except OSError:
+        return None, "?", "?"
+    return lo == hi, lo, hi
 
 
 def group_help(known):
