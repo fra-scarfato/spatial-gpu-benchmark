@@ -169,7 +169,7 @@ SUBMIT_CORE_B="${SUBMIT_CORE_B:-7}"
 # is the one the tables make: `section` is every family whose rows the results section renders,
 # `appendix` is the rest, which the history file and the diagnostic tools read. Kept in step
 # with the generator by utility/overview.py, which derives the same split from the source.
-SECTION_FAMILIES="isolated-scaling concurrent-greenctx-1t concurrent-mps concurrent-aux submit-model workqueue-declaration memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
+SECTION_FAMILIES="isolated-scaling concurrent-greenctx-1t concurrent-mps concurrent-aux submit-model workqueue-declaration workqueue-aux-streams memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
 APPENDIX_FAMILIES="concurrent-greenctx concurrent-wq concurrent-wq-1t concurrent-aux-1t pinning repro workqueue-three-clients"
 MEM_FAMILIES="memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
 ALL_FAMILIES="$SECTION_FAMILIES $APPENDIX_FAMILIES"

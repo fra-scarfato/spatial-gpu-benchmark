@@ -580,4 +580,78 @@ for _desc, _mech, _exp, _cfg, _unit, _fam in MX_ROWS:
         _show, _mech, ms(_m), _m / _mx_base[_mech], _thr, ms(_t), _t / _mx_base_tail[_mech]))
 close_table()
 
+# ------------------------------------- the work-queue descriptor, with streams to declare
+# The census found the earlier pair had almost nothing to declare - MobileNet adopts no auxiliary
+# stream and ResNet one - which left scope and limit looking inert for want of a demand. These arms
+# repeat the question on engines that do run streams: RetinaNet built for eight auxiliary streams
+# and Inception for two, in three client configurations, with the declaration at the heaviest
+# client's stream count and at the sum, under both scopes. The two RetinaNets of a pair are the
+# same engine on the same share, so one column carries them and the caption records how far the
+# other is from it.
+WQAUX_ROWS = [
+    ("RetinaNet + RetinaNet", "SMs only", "retinanet-retinanet-sms-only", ("retinanet_a", "retinanet_b")),
+    ("RetinaNet + RetinaNet", "device-ctx 9", "retinanet-retinanet-device-ctx-9", ("retinanet_a", "retinanet_b")),
+    ("RetinaNet + RetinaNet", "balanced 9", "retinanet-retinanet-balanced-9", ("retinanet_a", "retinanet_b")),
+    ("RetinaNet + RetinaNet", "device-ctx 18", "retinanet-retinanet-device-ctx-18", ("retinanet_a", "retinanet_b")),
+    ("RetinaNet + RetinaNet", "balanced 18", "retinanet-retinanet-balanced-18", ("retinanet_a", "retinanet_b")),
+    ("RetinaNet + Inception", "SMs only", "retinanet-inception-sms-only", ("retinanet", "inception")),
+    ("RetinaNet + Inception", "device-ctx 9", "retinanet-inception-device-ctx-9", ("retinanet", "inception")),
+    ("RetinaNet + Inception", "balanced 9", "retinanet-inception-balanced-9", ("retinanet", "inception")),
+    ("RetinaNet + Inception", "device-ctx 12", "retinanet-inception-device-ctx-12", ("retinanet", "inception")),
+    ("RetinaNet + Inception", "balanced 12", "retinanet-inception-balanced-12", ("retinanet", "inception")),
+    ("RetinaNet + RetinaNet + Inception", "SMs only", "retinanet-retinanet-inception-sms-only", ("retinanet_a", "retinanet_b", "inception")),
+    ("RetinaNet + RetinaNet + Inception", "device-ctx 9", "retinanet-retinanet-inception-device-ctx-9", ("retinanet_a", "retinanet_b", "inception")),
+    ("RetinaNet + RetinaNet + Inception", "balanced 9", "retinanet-retinanet-inception-balanced-9", ("retinanet_a", "retinanet_b", "inception")),
+    ("RetinaNet + RetinaNet + Inception", "device-ctx 21", "retinanet-retinanet-inception-device-ctx-21", ("retinanet_a", "retinanet_b", "inception")),
+    ("RetinaNet + RetinaNet + Inception", "balanced 21", "retinanet-retinanet-inception-balanced-21", ("retinanet_a", "retinanet_b", "inception")),
+]
+WQAUX_NETS = {"retinanet-retinanet-sms-only": ("retinanet_a", "retinanet_b"),
+              "retinanet-retinanet-device-ctx-9": ("retinanet_a", "retinanet_b"),
+              "retinanet-retinanet-balanced-9": ("retinanet_a", "retinanet_b"),
+              "retinanet-retinanet-device-ctx-18": ("retinanet_a", "retinanet_b"),
+              "retinanet-retinanet-balanced-18": ("retinanet_a", "retinanet_b"),
+              "retinanet-inception-sms-only": ("retinanet", "inception"),
+              "retinanet-inception-device-ctx-9": ("retinanet", "inception"),
+              "retinanet-inception-balanced-9": ("retinanet", "inception"),
+              "retinanet-inception-device-ctx-12": ("retinanet", "inception"),
+              "retinanet-inception-balanced-12": ("retinanet", "inception"),
+              "retinanet-retinanet-inception-sms-only": ("retinanet_a", "retinanet_b", "inception"),
+              "retinanet-retinanet-inception-device-ctx-9": ("retinanet_a", "retinanet_b", "inception"),
+              "retinanet-retinanet-inception-balanced-9": ("retinanet_a", "retinanet_b", "inception"),
+              "retinanet-retinanet-inception-device-ctx-21": ("retinanet_a", "retinanet_b", "inception"),
+              "retinanet-retinanet-inception-balanced-21": ("retinanet_a", "retinanet_b", "inception")}
+
+open_table([
+    r"Clients & Descriptor & \multicolumn{2}{c}{RetinaNet, 9 streams} & "
+    r"\multicolumn{2}{c}{Inception, 3 streams} & Aggregate \\",
+    r"\cmidrule(lr){3-4} \cmidrule(lr){5-6}",
+    r" & & Median (ms) & tail (ms) & Median (ms) & tail (ms) & (inf/s) \\",
+], "llrrrrr",
+   "The work-queue declaration and scope on engines that run streams. RetinaNet is built for "
+   "eight auxiliary streams and runs nine, Inception for two and runs three, so unlike the "
+   "earlier pair there is a demand for the descriptor's queue half to describe. Five arms per "
+   "client configuration, one submitting thread, the same shares in all five. The two RetinaNets "
+   "of a configuration are the same engine on the same share and their medians differ by at most "
+   "0.6\\,\\%, so one column carries them. The aggregate is the sum of the clients' "
+   "measured rates. The declaration is a hint to the driver and not a cap.",
+   "tab:wq-aux")
+_wqaux_clients = None
+for _clients, _desc, _cfg, _nets in WQAUX_ROWS:
+    if _wqaux_clients is not None and _clients != _wqaux_clients:
+        emit(r"\midrule")
+    _wqaux_clients = _clients
+    _rn_net = _nets[0]                     # retinanet_a in the pairs, retinanet with Inception
+    _rn = must(val("exp10", _cfg, _rn_net, "median"), _cfg + " " + _rn_net)
+    _rnt = must(val("exp10", _cfg, _rn_net, "p99_minus_median"), _cfg + " " + _rn_net + " tail")
+    if "inception" in _nets:
+        _inc = ms(val("exp10", _cfg, "inception", "median"))
+        _inct = ms(val("exp10", _cfg, "inception", "p99_minus_median"))
+    else:
+        _inc = _inct = "---"
+    _agg = sum(thr("exp10", _cfg, _net) or 0 for _net in _nets)
+    emit(r"{} & {} & {} & {} & {} & {} & {:.0f} \\".format(
+        _clients, _desc, ms(_rn), ms(_rnt), _inc, _inct, _agg))
+close_table()
+
+
 sys.stdout.write("\n".join(OUT))

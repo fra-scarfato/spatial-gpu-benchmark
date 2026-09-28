@@ -408,3 +408,47 @@ add "memory-mps-interferers-4sm_mps-computegemm-4sm" \
 add "memory-two-threads_computegemm-8sm-two-threads" \
     "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
 
+# ---------------------------------------------------------------------------
+# The work-queue descriptor, on engines that have streams to declare.
+#
+# RetinaNet aux8 runs nine streams (one main, eight auxiliary) and Inception aux2 three, so the
+# descriptor's queue half is exercised here in a way it was not on the earlier pair, whose engines
+# adopted almost none. Per client set: the SMs-only control, then the declared concurrency at the
+# heaviest single client's stream count (9) and at the sum of all clients' streams, each under
+# both sharing scopes. The declaration is a hint to the driver, not a cap, so a null result is a
+# statement about this stack.
+WQAUX="$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx"
+
+add "workqueue-aux-streams_retinanet-retinanet-sms-only" \
+    "solo|off|||$WQAUX --net $RN8:50:retinanet_a --net $RN8:50:retinanet_b|"
+add "workqueue-aux-streams_retinanet-retinanet-device-ctx-9" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 9 --net $RN8:50:retinanet_a --net $RN8:50:retinanet_b|"
+add "workqueue-aux-streams_retinanet-retinanet-balanced-9" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 9 --net $RN8:50:retinanet_a --net $RN8:50:retinanet_b|"
+add "workqueue-aux-streams_retinanet-retinanet-device-ctx-18" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 18 --net $RN8:50:retinanet_a --net $RN8:50:retinanet_b|"
+add "workqueue-aux-streams_retinanet-retinanet-balanced-18" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 18 --net $RN8:50:retinanet_a --net $RN8:50:retinanet_b|"
+
+add "workqueue-aux-streams_retinanet-inception-sms-only" \
+    "solo|off|||$WQAUX --net $RN8:50:retinanet --net $INC2:50:inception|"
+add "workqueue-aux-streams_retinanet-inception-device-ctx-9" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 9 --net $RN8:50:retinanet --net $INC2:50:inception|"
+add "workqueue-aux-streams_retinanet-inception-balanced-9" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 9 --net $RN8:50:retinanet --net $INC2:50:inception|"
+add "workqueue-aux-streams_retinanet-inception-device-ctx-12" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 12 --net $RN8:50:retinanet --net $INC2:50:inception|"
+add "workqueue-aux-streams_retinanet-inception-balanced-12" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 12 --net $RN8:50:retinanet --net $INC2:50:inception|"
+
+add "workqueue-aux-streams_retinanet-retinanet-inception-sms-only" \
+    "solo|off|||$WQAUX --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
+add "workqueue-aux-streams_retinanet-retinanet-inception-device-ctx-9" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 9 --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
+add "workqueue-aux-streams_retinanet-retinanet-inception-balanced-9" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 9 --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
+add "workqueue-aux-streams_retinanet-retinanet-inception-device-ctx-21" \
+    "solo|off|||$WQAUX --wq-scope device_ctx --wq-limit 21 --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
+add "workqueue-aux-streams_retinanet-retinanet-inception-balanced-21" \
+    "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 21 --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
+
