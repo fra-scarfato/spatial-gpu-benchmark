@@ -633,11 +633,11 @@ close_table()
 
 # ------------------------------------------------- memory contention: the matrix
 # The target's partition is fixed at 8 SMs; what varies is the participant's kind, its budget,
-# and the mechanism that confines it. The two mechanisms cannot be compared at a participant
-# budget other than 8 SMs, because an MPS static partition divides the device in two parts, so
-# the mechanism rows appear at 8 SMs and the budget rows under green contexts. The participant
-# writes no stats file, so its own load is read from the run's log, where it reports the bytes
-# or the FLOPs it moved. Each mechanism's multipliers are against its own reference row.
+# and the mechanism that confines it. Every configuration is measured under BOTH mechanisms and
+# the two rows of a pair stand together, so the comparison is between adjacent rows. A static
+# partition set covers the device in two parts, so the 4 SM participants use the colon ratio,
+# which places three partitions and leaves the last quarter of the device unassigned. The
+# participant writes no stats file, so its own load is read from the run's log.
 _BENCH = os.environ.get("BENCH", "/mnt/nvme/f.scarfato/bench")
 
 
@@ -659,73 +659,42 @@ def itf_load(family, cfg, unit):
     return statistics.median(found) if found else None
 
 
+MX_ROWS = [("none", "GC", "exp1", "mobilenet_gc50", None, None),
+           ("none", "MPS static", "exp9", "mps_alone", None, None),
+           (r"\texttt{mem\_saxpy} at 4\,SMs", "GC", "exp9", "mem4", "GB/s", "mem-s2"),
+           (r"\texttt{mem\_saxpy} at 4\,SMs", "MPS static", "exp9", "mps_mem4", "GB/s", "mem-s5"),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "GC", "exp9", "mem8", "GB/s", "mem-s2"),
+           (r"\texttt{mem\_saxpy} at 8\,SMs", "MPS static", "exp9", "mps_mem8", "GB/s", "mem-s3"),
+           (r"\texttt{compute\_gemm} at 4\,SMs", "GC", "exp9", "compute4", "TFLOP/s", "mem-s2"),
+           (r"\texttt{compute\_gemm} at 4\,SMs", "MPS static", "exp9", "mps_compute4", "TFLOP/s", "mem-s5"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "GC", "exp9", "compute8", "TFLOP/s", "mem-s2"),
+           (r"\texttt{compute\_gemm} at 8\,SMs", "MPS static", "exp9", "mps_compute8", "TFLOP/s", "mem-s3")]
 _mx_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
 _mx_base = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mx_ref.items()}
 _mx_base_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
                  for k, (e, c) in _mx_ref.items()}
-MX_ROWS = [("participant none", "GC", "exp1", "mobilenet_gc50", None, None),
-           (r"\texttt{mem\_saxpy} at 4\,SMs", "GC", "exp9", "mem4", "GB/s", "mem-s2"),
-           (r"\texttt{mem\_saxpy} at 8\,SMs", "GC", "exp9", "mem8", "GB/s", "mem-s2"),
-           (r"\texttt{compute\_gemm} at 4\,SMs", "GC", "exp9", "compute4", "TFLOP/s", "mem-s2"),
-           (r"\texttt{compute\_gemm} at 8\,SMs", "GC", "exp9", "compute8", "TFLOP/s", "mem-s2"),
-           ("participant none", "MPS static", "exp9", "mps_alone", None, None),
-           (r"\texttt{mem\_saxpy} at 8\,SMs", "MPS static", "exp9", "mps_mem8", "GB/s", "mem-s3"),
-           (r"\texttt{compute\_gemm} at 8\,SMs", "MPS static", "exp9", "mps_compute8",
-            "TFLOP/s", "mem-s3")]
 
-open_table([r"Co-runner & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
+open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
             r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
            "What a participant's kind and budget cost a target holding its own 8\,SMs, under "
-           "each mechanism. The configuration carries the load the participant reported for "
-           "itself, the bytes the memory kind moved or the FLOPs the compute kind performed. "
-           "The budget is varied under green contexts, since an MPS static partition divides "
-           "the device in two parts and fixes the participant at 8\,SMs; each mechanism's "
-           "multipliers are against its own target alone.",
+           "each mechanism. Each configuration appears twice, under green contexts and under "
+           "MPS static partitions, and the two rows of a pair differ in the mechanism alone; "
+           "the participant reaches the same rate under both. The configuration carries the "
+           "load the participant reported for itself, and every multiplier is against the "
+           "target alone under the same mechanism, the first pair of rows.",
            "tab:mem-matrix")
-_mx_mech = None
-for _label, _mech, _exp, _cfg, _unit, _fam in MX_ROWS:
-    if _mx_mech is not None and _mech != _mx_mech:
+_mx_cfg = None
+for _desc, _mech, _exp, _cfg, _unit, _fam in MX_ROWS:
+    if _mx_cfg is not None and _desc != _mx_cfg:
         emit(r"\midrule")
-    _mx_mech = _mech
+    _mx_cfg = _desc
     _m = must(val(_exp, _cfg, "mobilenet", "median"), _cfg + " median")
     _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
     _thr = must(thr(_exp, _cfg, "mobilenet"), _cfg + " rate") or 0
     _load = itf_load(_fam, _cfg, _unit) if _fam else None
-    _desc = _label + (" ({:.1f} {})".format(_load, _unit) if _load else "")
+    _show = _desc + (" ({:.1f} {})".format(_load, _unit) if _load else "")
     emit(r"{} & {} & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
-        _desc, _mech, ms(_m), _m / _mx_base[_mech], _thr, ms(_t), _t / _mx_base_tail[_mech]))
+        _show, _mech, ms(_m), _m / _mx_base[_mech], _thr, ms(_t), _t / _mx_base_tail[_mech]))
 close_table()
-
-# --------------------------------------------------- memory contention: the trace
-# Three nsys kernel traces, two seconds each, of the same target alone and with each
-# participant at 4 SMs. One inference is one pass of the kernel cycle, whose length the trace
-# states itself; the span of an inference is its kernels' time plus the gaps between them,
-# and the last column is the part of the gap that elapsed before the launch call for the next
-# kernel returned. Diagnostic, not a campaign measurement: profiling perturbs.
-_TRACE_CSV = os.environ.get("TRACE_CSV", "/mnt/nvme/f.scarfato/bench/trace/mem-trace.csv")
-if os.path.exists(_TRACE_CSV):
-    import csv as _csv
-    _conf = {"alone": "participant none", "mem4": r"\texttt{mem\_saxpy} at 4\,SMs",
-             "compute4": r"\texttt{compute\_gemm} at 4\,SMs"}
-    open_table([r"Network & Configuration & Inference & Span (ms) & Kernels "
-                r"(ms) & Gaps (ms) & Host-late gaps (ms) \\"], "lllrrrr",
-               "One inference, decomposed, from a trace of the target alone and of the "
-               "target with each participant. The trace is sliced into inferences by the "
-               "period of its own kernel sequence, fifty-five kernels in all three, so the "
-               "inference here is the same unit the campaign measures. The last column is "
-               "the part of the gap between kernels that elapsed before the launch call for "
-               "the next kernel had returned, which the host owes and the device does not.",
-               "tab:mem-trace")
-    _last = None
-    for _row in _csv.DictReader(open(_TRACE_CSV)):
-        if _last is not None and _row["trace"] != _last:
-            emit(r"\midrule")
-        _last = _row["trace"]
-        emit(r"mobilenet & {} & {} & {:.4f} & {:.4f} & {:.4f} & {:.4f} \\".format(
-            _conf.get(_row["trace"], _row["trace"]),
-            "slowest 1\,\%" if _row["quantile"] != "median inference" else "median",
-            float(_row["span_ms"]), float(_row["kernels_ms"]), float(_row["gaps_ms"]),
-            float(_row["host_gaps_ms"])))
-    close_table()
 
 sys.stdout.write("\n".join(OUT))

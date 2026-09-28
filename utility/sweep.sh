@@ -947,6 +947,20 @@ add "mem-s4_mps_target8_co4" \
 add "mem-s4_mps_target8_co8" \
     "pair|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $RES:50:resnet|50:50"
 
+# The 4-SM participants of the interferer matrix, under MPS static partitions. The ratio
+# 50:25 creates three partitions - 8 SMs to the target, 4 to the participant, 4 unassigned -
+# so the participant budget matches the green-context row it is paired with.
+add "mem-s5_mps_mem4" \
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50:25"
+add "mem-s5_mps_compute4" \
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50:25"
+
+# The two-thread check on the tail. One measured client with the interferer inside its own
+# process, two submitting threads, both pinned. The tail of this arm says whether the pathology
+# the submission model removed returns when a computing participant shares the process.
+add "mem-s6_mem_t2_core67" \
+    "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
+
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are
