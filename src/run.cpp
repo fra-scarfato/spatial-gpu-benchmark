@@ -421,7 +421,6 @@ Run::Run(const Options& opts)
     if (!opts_.interferer.kind.empty()) {
         Interferer::Kind k = Interferer::Kind::MemSaxpy;
         if (opts_.interferer.kind == "compute_gemm")  k = Interferer::Kind::ComputeGemm;
-        else if (opts_.interferer.kind == "mem_copy")  k = Interferer::Kind::MemCopy;
         const std::size_t megabytes = 256;   // far above L2: the traffic leaves the chip
         interferer_ = std::make_unique<Interferer>(k, std::move(allocations[nets_.size()]), megabytes);
     }

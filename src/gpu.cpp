@@ -132,7 +132,6 @@ const char* Interferer::kindName() const noexcept {
     switch (kind_) {
         case Kind::MemSaxpy:    return "mem_saxpy";
         case Kind::ComputeGemm: return "compute_gemm";
-        case Kind::MemCopy:     return "mem_copy";
     }
     return "?";
 }

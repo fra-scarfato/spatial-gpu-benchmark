@@ -94,7 +94,7 @@ void printUsage(const char* prog) {
         << "                        normal priority and looking like a null result.\n"
         << "  --interferer <k>:<p>  add a synthetic participant to the joint SM\n"
         << "                        split: mem_saxpy or compute_gemm (or\n"
-        << "                        mem_copy, which is DMA and takes no SMs),\n"
+
         << "                        with its percentage of the device. The first\n"
         << "                        two move memory and do arithmetic respec-\n"
         << "                        tively, which is the point: a real co-runner\n"
@@ -258,9 +258,9 @@ Options parseArgs(int argc, char** argv) {
             if (a == std::string::npos)
                 throw std::runtime_error("--interferer expects <kind>:<pct>[:<label>], got: " + spec);
             const std::string kind = spec.substr(0, a);
-            if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "mem_copy")
+            if (kind != "mem_saxpy" && kind != "compute_gemm")
                 throw std::runtime_error(
-                    "--interferer expects mem_saxpy, compute_gemm or mem_copy, got: " + kind);
+                    "--interferer expects mem_saxpy or compute_gemm, got: " + kind);
             const auto b = spec.find(':', a + 1);
             o.interferer.kind = kind;
             o.interferer.smPercent = std::stoi(

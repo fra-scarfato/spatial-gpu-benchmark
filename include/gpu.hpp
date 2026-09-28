@@ -246,7 +246,7 @@ private:
 // two constraints are the whole design.
 class Interferer {
 public:
-    enum class Kind { MemSaxpy, ComputeGemm, MemCopy };
+    enum class Kind { MemSaxpy, ComputeGemm };
 
     Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes);
     ~Interferer();

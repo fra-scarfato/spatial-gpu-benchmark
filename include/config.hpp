@@ -162,7 +162,7 @@ struct Options {
     // from the cost of doing arithmetic. It takes a share of the same joint split as a
     // network does, because a second process would serialise.
     struct InterfererOptions {
-        std::string kind;           // "" | mem_saxpy | compute_gemm | mem_copy
+        std::string kind;           // "" | mem_saxpy | compute_gemm
         int         smPercent = 0;  // its share of the device
         std::string label = "interferer";
     };
