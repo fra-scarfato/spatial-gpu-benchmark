@@ -1067,7 +1067,7 @@ mismatch that reads like a corrupt file.
 The engines are rebuilt from the ONNX files first: they are not bit-reproducible across builds,
 so results are comparable within a build and never across two.
 
-    make -f engines.mk                 # rebuild every engine (MODELS=/models)
+    make -f engines.mk                 # rebuild every engine (MODELS=$DATA/models)
 
 Then the measurements, the reduction and the tables:
 
@@ -1081,14 +1081,16 @@ Then the measurements, the reduction and the tables:
     python3 utility/overview.py         # $DATA/bench/OVERVIEW.md: every family and its runs
 
 The sweep checks two preconditions before every run and aborts rather than measure: the clocks
-locked () and the GPU quiet. The MPS static arms additionally need
-, and they start and stop their own daemon.
+locked (`sudo jetson_clocks`) and the GPU quiet. The MPS static arms additionally need
+`--static-chunks 8`; they start and stop their own daemon, and the 4 SM co-runner arms use a
+colon ratio (50:25) which places three partitions and leaves the last quarter unassigned.
 
-Two stages need root and are not part of the sweep, because profiling perturbs:
+Two stages need root or a profiler and are deliberately outside the sweep, because profiling
+perturbs what it measures:
 
-    sudo ./utility/soc-traces.sh itf            # DRAM counters for the two interferer arms
-    nsys profile --trace=cuda ... && nsys export --type sqlite --force-overwrite=true ...
-    python3 utility/itf-trace.py <dir with the .sqlite exports>   # the per-inference split
+    sudo ./utility/soc-traces.sh itf     # DRAM counters for the two interferer arms
+    ./utility/take-traces.sh             # three kernel traces, then exported to sqlite
+    python3 utility/itf-trace.py $DATA/scratch/traces/trc   # the per-inference decomposition
 
- writes the same split the tables make: a family feeds the results section
-if its aggregate key appears in , and everything else is the appendix.
+`utility/overview.py` writes the same split the tables make: a family feeds the results section
+if its aggregate key appears in `utility/results-tables.py`, and everything else is the appendix.
