@@ -50,23 +50,34 @@ two. That is why every engine carries the log of the build that produced it.
 
 ## Reproduce
 
-    ./utility/sweep.sh --exp section    # every family the results section renders
-    ./utility/sweep.sh --exp appendix   # the rest, for the history and the tools
-    ./utility/sweep.sh --exp mem        # only the memory work
-    ./utility/sweep.sh --exp all        # everything
+    ./pipeline.py                       # menu: what is measured, then what to run
+    ./pipeline.py section               # the families the results section renders
+    ./pipeline.py appendix              # the rest, for the history and the tools
+    ./pipeline.py mem --runs 3          # one group, fewer replicates
+    ./pipeline.py --tables              # regenerate and split the tables, measure nothing
 
-    python3 utility/aggregate.py         # reduce  -> $DATA/bench/aggregate/
+It runs the stages in order — engines, measure, reduce, tables, overview — and stops at the
+first failure. `--dry-run` prints every command instead of running it, `--stage measure` stops
+after the measurement, `--state` prints what is measured and stops, and a selection can be a
+group, a family, or a list of either.
+
+The stages are four commands, and can be run by hand:
+
+    ./utility/sweep.sh --exp section    # measure -> $DATA/bench/<family>/<config>/r<k>_*
+    python3 utility/aggregate.py        # reduce  -> $DATA/bench/aggregate/
     python3 utility/results-tables.py > tables.tex      # the section's tables
     python3 utility/split-tables.py tables.tex          # one file per table, plus an index
     python3 utility/overview.py                         # $DATA/bench/OVERVIEW.md
 
-The MPS static arms need `--static-chunks 8`. Two stages stay outside the sweep because
-profiling perturbs what it measures, and the second needs root:
+Groups: `section`, `appendix`, `mem`, `all`, or any single family. The MPS static arms need
+`--static-chunks 8`, which the pipeline passes by default. Two stages stay outside the sweep
+because profiling perturbs what it measures, and the second needs root:
 
     ./utility/take-traces.sh                            # kernel traces, then sqlite exports
     python3 utility/itf-trace.py $DATA/scratch/traces/trc
     sudo ./utility/soc-traces.sh itf                    # DRAM counters
 
+Both are reachable as `--traces` and `--soc`.
 ## Protocol
 
 Five independent runs per configuration, each in a fresh process. At least 5 000 inferences and
