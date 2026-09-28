@@ -461,8 +461,17 @@ mps_ensure() {  # $1 = off | on | static
 PART_A=""
 PART_B=""
 
-mps_create_partitions() {  # $1 = the mobilenet percentage
-    local mp="${1:-100}" uuid dev total ca cb out
+mps_create_partitions() {  # $1 = the target's percentage, or "target:participant"
+    # Two statements, not one: word expansion happens before the assignments of a single
+    # local, so mp="${spec%%:*}" in the same declaration would expand the CALLER spec - the
+    # whole job spec - and mp became "pair".
+    local spec="${1:-100}" pp="" uuid dev total ca cb out
+    local mp="${spec%%:*}"
+    # A ratio of the form 50:25 asks for three partitions: 8 SMs to the target, 4 to the
+    # co-runner, and the remaining 4 left unassigned. That is the shape the green-context arm
+    # of the same measurement has, where a 50 % and a 25 % reservation also leave a quarter
+    # of the device idle. A single percentage keeps the two partitions covering the device.
+    [ "$spec" != "$mp" ] && pp="${spec##*:}"
 
     if [ "$STATIC_CHUNKS" -le 0 ]; then
         echo "[sweep] ABORT: the static jobs need --static-chunks <total>." >&2
@@ -483,9 +492,13 @@ mps_create_partitions() {  # $1 = the mobilenet percentage
     # may be left idle).
     total="$STATIC_CHUNKS"
     ca=$(( (mp * total + 50) / 100 ))
-    cb=$(( total - ca ))
-    if [ "$ca" -lt 1 ] || [ "$cb" -lt 1 ]; then
-        echo "[sweep] ABORT: $total chunks cannot express a ${mp}/$((100-mp)) split." >&2
+    if [ -n "$pp" ]; then
+        cb=$(( (pp * total + 50) / 100 ))
+    else
+        cb=$(( total - ca ))
+    fi
+    if [ "$ca" -lt 1 ] || [ "$cb" -lt 1 ] || [ "$((ca + cb))" -gt "$total" ]; then
+        echo "[sweep] ABORT: $total chunks cannot express the split '$spec'." >&2
         return 1
     fi
 
@@ -923,6 +936,16 @@ add "mem-s3_mps_mem8" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50"
 add "mem-s3_mps_compute8" \
     "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50"
+
+# The fixed-budget measurement under MPS static partitions: MobileNet holds 8 SMs and ResNet
+# is varied, the same two rows the green-context arm measures. A static partition set covers
+# the device in two parts, so the 50:25 split is expressed as three partitions and the last
+# quarter of the device is left unassigned, which is what the green-context arm does with its
+# unused SMs. Both processes run their own submitter, as the frozen submission model requires.
+add "mem-s4_mps_target8_co4" \
+    "pair|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $RES:25:resnet|50:25"
+add "mem-s4_mps_target8_co8" \
+    "pair|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $RES:50:resnet|50:50"
 
 # How many jobs the current selection contains. Counted before the loops, so
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its

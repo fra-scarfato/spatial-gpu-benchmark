@@ -105,6 +105,7 @@ EXP_DIR = {
     "mem-s1":               "exp9",
     "mem-s2":               "exp9",
     "mem-s3":               "exp9",
+    "mem-s4":               "exp9",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }

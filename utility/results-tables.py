@@ -558,29 +558,47 @@ close_table()
 
 
 # ------------------------------------------- memory contention: the target's budget
-# The target holds 8 SMs in every row, so the rows differ in the co-runner alone. Both
-# multipliers are against MobileNet alone at the same 8 SMs, which is the isolated run at the
-# target's own SM count.
-MEMROWS = [("participant none", "exp1", "mobilenet_gc50", False),
-           ("ResNet at 4\,SMs (4 left idle)", "exp9", "target8_co4", True),
-           ("ResNet at 8\,SMs", "exp2-1t", "50_50", True)]
-_mb_tail = must(val("exp1", "mobilenet_gc50", "mobilenet", "p99_minus_median"), "isolated tail")
+# The target holds 8 SMs in every row, so the rows differ in the co-runner and the mechanism
+# alone. Under MPS static the same split needs three partitions - 8 SMs to the target, 4 to the
+# co-runner and 4 left unassigned - because a static partition set covers the device in two
+# parts. Each mechanism's multipliers are against its own target alone, which is the first row
+# of its group. The aggregate is the harness's own count, so a two-process pair has none: the
+# two clients are separate programs and nothing counts their inferences together.
+MEMROWS = [("participant none", "GC", "exp1", "mobilenet_gc50", False),
+           ("ResNet at 4\,SMs (4 left idle)", "GC", "exp9", "target8_co4", True),
+           ("ResNet at 8\,SMs", "GC", "exp2-1t", "50_50", True),
+           ("participant none", "MPS static", "exp9", "mps_alone", False),
+           ("ResNet at 4\,SMs (4 left idle)", "MPS static", "exp9", "mps_target8_co4", False),
+           ("ResNet at 8\,SMs", "MPS static", "exp9", "mps_target8_co8", False)]
+_mb_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
+_mb_med = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mb_ref.items()}
+_mb_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
+            for k, (e, c) in _mb_ref.items()}
 
-open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & tail (ms) & "
+open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
             r"tail $\times$iso & Aggregate (inf/s) \\"], "llrrrrr",
-           "Memory contention with the target's budget fixed. MobileNet holds the same "
-           "8\,SMs in every row, so the rows differ in the co-runner alone, and the "
-           "multiplier on the tail is against its own isolated run at that size. The "
-           "aggregate is the sum of the two clients.",
+           "Memory contention with the target's budget fixed. MobileNet holds the same 8\,SMs "
+           "in every row, so the rows differ in the co-runner and the mechanism alone, and "
+           "each mechanism's multipliers are against its own target alone, the first row of "
+           "its group. An MPS static partition set covers the device in two parts, so the "
+           "4\,SM co-runner is given its own partition and the last quarter of the device is "
+           "left unassigned, as the green-context arm leaves it. The aggregate is the "
+           "harness's count of both clients together, which a two-process pair does not have.",
            "tab:mem-budget")
-for _desc, _exp, _cfg, _pair in MEMROWS:
+_mb_mech = None
+for _desc, _mech, _exp, _cfg, _pair in MEMROWS:
+    if _mb_mech is not None and _mech != _mb_mech:
+        emit(r"\midrule")
+    _mb_mech = _mech
     _what = "{} {} mobilenet".format(_exp, _cfg)
     _m = must(val(_exp, _cfg, "mobilenet", "median"), _what + " median")
     _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _what + " tail")
     _thr = must(thr(_exp, _cfg, "mobilenet"), _what + " rate") or 0
-    _agg = agg_thr(_exp, _cfg, NETS) if _pair else agg_thr(_exp, _cfg, ("mobilenet",))
-    emit(r"mobilenet & {} & {} & {:.0f} & {} & {:.3f} & {} \\".format(
-        _desc, ms(_m), _thr, ms(_t), _t / _mb_tail,
+    _agg = agg_thr(_exp, _cfg, NETS) if _pair else None
+    if _mech == "GC" and not _pair:
+        _agg = agg_thr(_exp, _cfg, ("mobilenet",))
+    emit(r"{} & {} & {} & {:.3f} & {:.0f} & {:.3f} & {} \\".format(
+        _desc, _mech, ms(_m), _m / _mb_med[_mech], _thr, _t / _mb_tail[_mech],
         "{:.0f}".format(_agg) if _agg else "---"))
 close_table()
 
