@@ -1061,3 +1061,34 @@ is not in this repository. Two things it documents by being runnable: every buil
 passes `--fp16`, and a dynamic-shape ONNX must be given `--shapes`, or its symbolic
 channel dimension resolves to one and the first convolution fails on a weight-count
 mismatch that reads like a corrupt file.
+
+## Reproducing the results section
+
+The engines are rebuilt from the ONNX files first: they are not bit-reproducible across builds,
+so results are comparable within a build and never across two.
+
+    make -f engines.mk                 # rebuild every engine (MODELS=/models)
+
+Then the measurements, the reduction and the tables:
+
+    ./utility/sweep.sh --exp section    # every family the results section renders (83 runs)
+    ./utility/sweep.sh --exp mem        # only the memory work (13 runs)
+    ./utility/sweep.sh --exp appendix   # the rest, which the history and the tools read (52)
+    ./utility/sweep.sh --exp all        # everything
+    python3 utility/aggregate.py --out $DATA/bench
+    python3 utility/results-tables.py > tables.tex
+    python3 utility/split-tables.py tables.tex --out $DATA/bench/aggregate/tables
+    python3 utility/overview.py         # $DATA/bench/OVERVIEW.md: every family and its runs
+
+The sweep checks two preconditions before every run and aborts rather than measure: the clocks
+locked () and the GPU quiet. The MPS static arms additionally need
+, and they start and stop their own daemon.
+
+Two stages need root and are not part of the sweep, because profiling perturbs:
+
+    sudo ./utility/soc-traces.sh itf            # DRAM counters for the two interferer arms
+    nsys profile --trace=cuda ... && nsys export --type sqlite --force-overwrite=true ...
+    python3 utility/itf-trace.py <dir with the .sqlite exports>   # the per-inference split
+
+ writes the same split the tables make: a family feeds the results section
+if its aggregate key appears in , and everything else is the appendix.
