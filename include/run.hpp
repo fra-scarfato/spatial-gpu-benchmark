@@ -22,6 +22,7 @@
 
 #include "config.hpp"
 #include "gpu.hpp"
+#include "interferer.hpp"
 #include "inputs.hpp"
 #include "stats.hpp"
 
