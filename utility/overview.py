@@ -51,9 +51,16 @@ def table_labels():
 
 
 def stats_for(d):
-    runs = sorted(glob.glob(os.path.join(d, "*", "r*_stats.csv")))
-    days = sorted({datetime.date.fromtimestamp(os.path.getmtime(f)).isoformat() for f in runs})
-    return len(runs), (days[0] if days else "---"), (days[-1] if days else "---")
+    """Configurations, the run indices they hold, and the dates they were measured.
+
+    Counted by run index rather than by stats file: a two-network arm writes one stats file per
+    network per run, so counting files would double it.
+    """
+    files = sorted(glob.glob(os.path.join(d, "*", "r*_stats.csv")))
+    runs = {os.path.basename(f).split("_")[0] for f in files}
+    days = sorted({datetime.date.fromtimestamp(os.path.getmtime(f)).isoformat() for f in files})
+    return len({os.path.dirname(f) for f in files}), len(runs), \
+        (days[0] if days else "---"), (days[-1] if days else "---")
 
 
 def configs_of(d):
@@ -77,10 +84,9 @@ def main():
         if not os.path.isdir(d) or fam in ("aggregate", "trace"):
             continue
         key = keys.get(fam, "?")
-        n, first, last = stats_for(d)
-        total += n
-        rows.append(dict(family=fam, key=key, configs=len(configs_of(d)), runs=n,
-                         first=first, last=last,
+        cfgs, per, first, last = stats_for(d)
+        total += cfgs
+        rows.append(dict(family=fam, key=key, configs=cfgs, per=per, first=first, last=last,
                          feeds="results section" if fam in sec else "appendix"))
 
     lines = []
@@ -92,12 +98,14 @@ def main():
     add("Regenerate the tables with `utility/results-tables.py`; regenerate any family with")
     add("`utility/sweep.sh --exp <family>`.")
     add("")
-    add("| family | key | configs | runs | first | last | feeds |")
-    add("|---|---|---|---|---|---|---|")
+    add("| family | key | configurations | runs each | stored runs | first | last | feeds |")
+    add("|---|---|---|---|---|---|---|---|")
     for r in rows:
-        add("| `{}` | {} | {} | {} | {} | {} | {} |".format(
-            r["family"], r["key"], r["configs"], r["runs"], r["first"], r["last"], r["feeds"]))
-    add("| **total** | | | **{}** | | | |".format(total))
+        add("| `{}` | {} | {} | {} | {} | {} | {} | {} |".format(
+            r["family"], r["key"], r["configs"], r["per"], r["configs"] * r["per"],
+            r["first"], r["last"], r["feeds"]))
+    add("| **total** | | **{}** | | **{}** | | | |".format(
+        total, sum(r["configs"] * r["per"] for r in rows)))
     add("")
     add("## The families the results section reads, and the tables they feed")
     add("")
