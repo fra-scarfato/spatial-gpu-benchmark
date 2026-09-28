@@ -31,9 +31,14 @@ the experiments. This file is the long form.
 include/
   config.hpp      every parameter (compile-time cfg:: + run-time Options) and
                   the command-line declarations
-  gpu.hpp         the GPU layer: Logger, PinnedHostBuffer, SmAllocation/WholeGpu,
+  gpu.hpp         the device layer: Logger, PinnedHostBuffer, SmAllocation/WholeGpu,
                   SmPartition, PartitionPlan, WqConfig, GreenContextAllocation,
                   TrtEngine
+  interferer.hpp  the synthetic participant: either memory traffic or arithmetic and
+                  never both, in its own thread and stream inside its own allocation
+                  (split out of gpu.hpp; the device layer is being divided into
+                  alloc, engine and interferer by the same operation, one pass each,
+                  and each pass is checked by the originals losing no line)
   inputs.hpp      listImages, preprocess (the ImageNet input contract), InputSet
   stats.hpp       Stats + the statistics formatting (no CUDA, no images)
   run.hpp         RunSpec, StartGate, Network, Run
@@ -49,7 +54,8 @@ src/
 Dependencies are acyclic and point downward:
 
 ```
-main.cpp → run.hpp → { stats.hpp, inputs.hpp, gpu.hpp, config.hpp }
+main.cpp → run.hpp → { stats.hpp, inputs.hpp, gpu.hpp, interferer.hpp,
+                          config.hpp }
                           inputs.hpp → gpu.hpp → config.hpp
                           stats.hpp  → (nothing)
 ```

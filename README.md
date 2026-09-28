@@ -87,7 +87,8 @@ never a pooled percentile.
 
 ## Layout
 
-    src/ include/     the runner
+    src/ include/     the runner: config, inputs, stats, the SM allocation hierarchy,
+                      the TensorRT engine, the synthetic participant, the run
     utility/          the harness: sweep, aggregate, tables, tools, probes
     utility/README.md the probe tools
     DOC.md            design notes, methodology, traps, data model, table conventions
