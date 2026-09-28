@@ -29,12 +29,49 @@ def bench_root():
     return data_root() / "bench"
 
 
+# The family -> aggregate key map. Two folders share a key when their rows belong in the
+# same tables: concurrent-wq is the work-queue half of concurrent-greenctx's setup, and
+# the memory families all feed the same tables, so the tables see one configuration space.
+EXP_DIR = {
+    "isolated-scaling":    "exp1",
+    "concurrent-greenctx": "exp2",
+    # The work queue experiment is Experiment 2's setup with the work queue half
+    # of the green context descriptor set explicitly, so it belongs in the SAME
+    # tables: a devctx_8_50_50 row sitting next to the 50_50 row it must
+    # reproduce is the whole point of running it. Mapping two folders onto one
+    # key is what makes that free — the tables see one configuration space.
+    "concurrent-wq":       "exp2",
+    # Same idea again: the auxiliary-stream family is Experiment 2's pair with a
+    # different ResNet build, so it needs its own key (its rows are not
+    # comparable to the default build) but the same table shape.
+    "concurrent-aux":      "exp5",
+    # The CPU-pinning arms live in two folders because they were run at
+    # different times; the config names do not collide, so one key is enough and
+    # the aggregate picks up every replicate.
+    # The same three intra-process families, measured with a single
+    # submitting thread. Distinct keys on purpose: mapping them onto exp2/
+    # exp4/exp5 would collide with the two-thread runs of the same config
+    # names, and one set would silently overwrite the other.
+    "concurrent-greenctx-1t": "exp2-1t",
+    "concurrent-wq-1t":       "exp4-1t",
+    "concurrent-aux-1t":      "exp5-1t",
+    "pinning":             "exp6",
+    "submit-model":        "exp7",
+    "wq-s1":                "exp8",
+    "wq-s4":                "exp8",
+    "mem-s1":               "exp9",
+    "mem-s2":               "exp9",
+    "mem-s3":               "exp9",
+    "mem-s4":               "exp9",
+    "mem-s5":               "exp9",
+    "mem-s6":               "exp9",
+    "repro":               "exp6",
+    "concurrent-mps":      "exp3",
+}
+
 def key_map():
-    """The family -> aggregate key map, from aggregate.py."""
-    src = (UTILITY / "aggregate.py").read_text()
-    start = src.index("EXP_DIR = {")
-    block = src[start:src.index("}", start)]
-    return dict(re.findall(r'"([a-z0-9-]+)":\s*"([a-z0-9-]+)"', block))
+    """The family -> aggregate key map."""
+    return dict(EXP_DIR)
 
 
 def groups():
