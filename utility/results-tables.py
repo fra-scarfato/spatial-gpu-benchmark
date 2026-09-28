@@ -728,42 +728,4 @@ if os.path.exists(_TRACE_CSV):
             float(_row["host_gaps_ms"])))
     close_table()
 
-# ------------------------------- memory contention: green context against MPS static
-# The same two participants at the same 8 SM shares, once inside the measured process under
-# green contexts and once as a separate process under MPS static partitions. The shape is the
-# one the two mechanisms are compared with at matched ratios: the mechanism in its own column,
-# a group of rows per co-runner, and the reference rows last with --- in the first column.
-# Each mechanism's multipliers are against its own reference row, so the mechanisms are never
-# compared across an unmeasured gap.
-_mc_ref = {"GC": ("exp1", "mobilenet_gc50"), "MPS static": ("exp9", "mps_alone")}
-_mc_med = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mc_ref.items()}
-_mc_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
-            for k, (e, c) in _mc_ref.items()}
-
-open_table([r"Co-runner & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
-            r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
-           "Green contexts against MPS static, with the target on 8\,SMs under either and the "
-           "participant on 8\,SMs of its own; the participant reaches the same rate in both "
-           "arrangements. The target alone on each mechanism comes last, and each mechanism's "
-           "multipliers are against its own reference row.",
-           "tab:mem-compare")
-for _co, _label in (("mem8", r"\texttt{mem\_saxpy} at 8\,SMs"),
-                    ("compute8", r"\texttt{compute\_gemm} at 8\,SMs")):
-    for _i, _mech in enumerate(("GC", "MPS static")):
-        _e, _c = _mc_ref[_mech]
-        _cfg = _co if _mech == "GC" else "mps_" + _co
-        _m = must(val("exp9", _cfg, "mobilenet", "median"), _cfg + " median")
-        _t = must(val("exp9", _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
-        _thr = must(thr("exp9", _cfg, "mobilenet"), _cfg + " rate") or 0
-        emit(r"{} & {} & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
-            _label if _i == 0 else "", _mech, ms(_m), _m / _mc_med[_mech], _thr, ms(_t),
-            _t / _mc_tail[_mech]))
-    emit(r"\midrule")
-for _mech in ("GC", "MPS static"):
-    _e, _c = _mc_ref[_mech]
-    emit(r"--- & {} & {} & 1.000 & {:.0f} & {} & 1.000 \\".format(
-        _mech, ms(_mc_med[_mech]), must(thr(_e, _c, "mobilenet"), _c + " rate") or 0,
-        ms(_mc_tail[_mech])))
-close_table()
-
 sys.stdout.write("\n".join(OUT))
