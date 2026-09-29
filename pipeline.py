@@ -279,7 +279,7 @@ def main():
              "--csv", "/dev/shm/ncu-check"], args.dry_run)
         run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
              "--metrics", "dram__bytes.sum"] + base + check +
-            ["--allocation", "greenctx", "--sm-percent", "50",
+            ["--allocation", "greenctx", 
              "--net", "{}:50:mobilenet".format(mobile), "--csv", "/dev/shm/ncu-check"], args.dry_run)
         say("  if both pass, the per-inference traffic, per network and budget:")
         for path, pct in ((mobile, 50), (mobile, 25),
@@ -293,7 +293,7 @@ def main():
                  "--metrics", "dram__bytes_read.sum,dram__bytes_write.sum", "--csv",
                  "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base + check_m +
                 ["--allocation", "greenctx",
-                 "--sm-percent", str(pct),
+                 
                  "--net", "{}:{}:{}".format(path, pct, Path(str(path)).stem),
                  "--csv", "/dev/shm/ncu"], args.dry_run)
 
