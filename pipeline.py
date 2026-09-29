@@ -247,11 +247,9 @@ def main():
             for pct in (100, 75, 50, 25):
                 run(["sudo", "./utility/soc-budget-sweep.sh", "greenctx", str(pct),
                      "{}:{}".format(models / path, pct)], args.dry_run)
-        say("  the same points under MPS static, to check the mechanism does not move them:")
-        for spec in ("mobilenetv2-12:50", "retinanet-9:50", "mobilenetv2-12:25"):
-            model, pct = spec.split(":")
-            run(["sudo", "./utility/soc-budget-sweep.sh", "mps-static", pct,
-                 "{}:{}".format(models / engines[model], pct)], args.dry_run)
+        # No MPS static points: nsys cannot instrument a client of the MPS daemon, so the
+        # counters cannot be taken under a partition. The mechanism check for MPS static
+        # rests on the latency and throughput agreement instead.
         for a, b, pa, pb in (("mobilenetv2-12", "resnet50-v2-7", 50, 50),
                              ("mobilenetv2-12", "resnet50-v2-7", 50, 25),
                              ("mobilenetv2-12", "retinanet-9", 50, 25)):
