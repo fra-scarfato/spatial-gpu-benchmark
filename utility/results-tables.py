@@ -656,42 +656,53 @@ close_table()
 
 # ------------------------------------------- memory contention: two co-runners at once
 # One target at 8 SMs and two co-runners at 4 SMs each, so the device is fully used. One row per
-# observation, in the shape the rest of the section uses, plus one derived column: the sum of the two
-# single-co-runner multipliers, filled on the combined row so it can be read against the measured
-# value beside it. The product, which is what the medians actually follow, is in the prose.
+# observation, with the mechanism named in its own column and the two mechanisms paired row by row
+# for the target that was measured under both, so the comparison is between neighbours. The sum
+# column is the two single-co-runner residuals above it added together *within the same mechanism*,
+# which is what makes it comparable across the pair. Percentages here, where a sum is read against a
+# measurement, rather than the multipliers the dispersion tables use; the product, which is what the
+# medians follow, is in the prose.
 ADDT_TARGETS = [("mobilenet", "retinanet", "inception"),
                 ("resnet", "retinanet", "inception"),
                 ("inception", "mobilenet", "retinanet"),
                 ("retinanet", "mobilenet", "inception")]
+ADDT_MECHS = (("exp11", "GC"), ("exp12", "MPS static"))
 
-open_table([r"Target & Co-runners & Median (ms) & Thr.\ (inf/s) & Residual & "
-            r"Sum of the two & tail (ms) \\"], "llrrrrr",
+open_table([r"Target & Co-runners & Mechanism & Median (ms) & Thr.\ (inf/s) & Residual & "
+            r"Sum of the two & tail (ms) \\"], "lllrrrrr",
            "One target at 8\,SMs and two co-runners at 4\,SMs each, the device fully used. Each "
            "co-runner is measured alone before both are measured together, so the first row of a "
            "block is the reference the residuals are against. The sum column is the two "
-           "single-co-runner residuals above added together, filled only on the row "
-           "where both run, so the measured combined multiplier can be read against the additive "
-           "prediction beside it. It is the product of the two, not their sum, that the medians "
-           "follow.",
+           "single-co-runner residuals above it added together within the same mechanism, filled "
+           "only on the row where both run, so the measured combined residual can be read against "
+           "the additive prediction beside it. It is the product of the two, not their sum, that "
+           "the medians follow.",
            "tab:mem-additivity")
 for _t, _a, _b in ADDT_TARGETS:
-    _base = must(val("exp11", _t + "-alone", _t, "median"), _t + " alone")
-    _rows = []
-    for _co, _desc in ((None, "none"),
-                       (_a, _a),
-                       (_b, _b),
-                       ("%s and %s" % (_a, _b), "%s and %s" % (_a, _b))):
-        _cfg = _t + "-alone" if _co is None else _t + "+" + _co.replace(" and ", "+")
-        _m = must(val("exp11", _cfg, _t, "median"), _cfg + " median")
-        _rows.append((_desc, _m, thr("exp11", _cfg, _t) or 0,
-                      must(val("exp11", _cfg, _t, "p99_minus_median"), _cfg + " tail")))
-    # the additive prediction in multipliers: 1 + rA + rB, and not (mA + mB) / base
-    # rA + rB, each residual having its own reference: (mA + mB)/base - 2
-    _sum = 100.0 * ((_rows[1][1] + _rows[2][1]) / _base - 2.0)
-    for _i, (_desc, _m, _thr, _tail) in enumerate(_rows):
-        emit(r"{} & {} & {} & {:.0f} & {:+.1f}\,\% & {} & {} \\".format(
-            _t if _i == 0 else "", _desc, ms(_m), _thr, 100.0 * (_m / _base - 1.0),
-            "{:+.1f}\\,\\%".format(_sum) if _i == 3 else "---", ms(_tail)))
+    _permech = []
+    for _exp, _mech in ADDT_MECHS:
+        _base = val(_exp, _t + "-alone", _t, "median")
+        if _base is None:
+            continue                      # this target was not measured under this mechanism
+        _rows = []
+        for _co, _desc in ((None, "none"),
+                           (_a, _a),
+                           (_b, _b),
+                           ("%s and %s" % (_a, _b), "%s and %s" % (_a, _b))):
+            _cfg = _t + "-alone" if _co is None else _t + "+" + _co.replace(" and ", "+")
+            _m = must(val(_exp, _cfg, _t, "median"), _cfg + " median")
+            _rows.append((_desc, _m, thr(_exp, _cfg, _t) or 0,
+                          must(val(_exp, _cfg, _t, "p99_minus_median"), _cfg + " tail")))
+        # rA + rB within this mechanism: each residual has its own reference
+        _sum = 100.0 * ((_rows[1][1] + _rows[2][1]) / _base - 2.0)
+        _permech.append((_mech, _base, _rows, _sum))
+    for _i, (_desc, _m, _thr, _tail) in enumerate(_permech[0][2]):
+        for _j, (_mech, _base, _rows, _sum) in enumerate(_permech):
+            _m, _thr, _tail = _rows[_i][1], _rows[_i][2], _rows[_i][3]
+            emit(r"{} & {} & {} & {} & {:.0f} & {:+.1f}\,\% & {} & {} \\".format(
+                _t if (_i == 0 and _j == 0) else "", _desc if _j == 0 else "",
+                _mech, ms(_m), _thr, 100.0 * (_m / _base - 1.0),
+                "{:+.1f}\\,\\%".format(_sum) if _i == 3 else "---", ms(_tail)))
     if _t != ADDT_TARGETS[-1][0]:
         emit(r"\midrule")
 close_table()
