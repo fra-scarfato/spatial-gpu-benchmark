@@ -76,7 +76,7 @@ for k in $(seq 1 "$runs"); do
     for label in "${labels[@]}"; do
         for kind in stats latencies; do
             src="$TMP/${outname}-r${k}-${label}_${kind}.csv"
-            [ -f "$src" ] && mv -f "$src" "$dest/r$k_${label}_$kind.csv"
+            [ -f "$src" ] && mv -f "$src" "$dest/r${k}_${label}_${kind}.csv"
         done
         rm -f "$TMP/${outname}-r${k}-${label}".*
     done
