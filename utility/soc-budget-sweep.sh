@@ -97,14 +97,32 @@ else
 fi
 
 echo "== $name (mechanism $mechanism, budget $budget %) =="
-echo "   $NSYS profile --output=$OUT/$name.nsys-rep $ROOT/runner ${runner_args[*]}"
-"$NSYS" profile --force-overwrite=true --trace=cuda --sample=none --cpuctxsw=none \
-    --soc-metrics=true --soc-metrics-set=t234 \
-    --output="$OUT/$name" \
-    "$ROOT/runner" "${runner_args[@]}" \
-    --csv "/dev/shm/$name" > "$OUT/$name.log" 2>&1
-rc=$?
-echo "   nsys exit $rc"
+# The SoC counters are device-wide, but --soc-metrics cannot be combined with --trace=none, and
+# --trace=cuda cannot instrument a client of the MPS daemon: its context belongs to the daemon, so
+# the profiler waits for activity it will never see in that process, which is what blocked. So under
+# MPS the client runs outside the profiler and the profiler samples the device while it runs - the
+# counters do not care whose kernels they are.
+if [ "$mechanism" = mps-static ]; then
+    echo "   $ROOT/runner ${runner_args[*]} &   (client, not traced)"
+    "$ROOT/runner" "${runner_args[@]}" --csv "/dev/shm/$name" > "$OUT/$name.log" 2>&1 &
+    client=$!
+    sleep 5                                   # let it load its engine and reach the timed phase
+    echo "   $NSYS profile ... --output=$OUT/$name sleep $SECONDS_MEASURED   (device sampled)"
+    "$NSYS" profile --force-overwrite=true --trace=cuda --sample=none --cpuctxsw=none \
+        --soc-metrics=true --soc-metrics-set=t234 --soc-metrics-frequency=10000 \
+        --output="$OUT/$name" sleep "$SECONDS_MEASURED" > "$OUT/$name.nsys.log" 2>&1
+    rc=$?
+    wait "$client" || true
+else
+    echo "   $NSYS profile --soc-metrics=true --output=$OUT/$name.nsys-rep $ROOT/runner ${runner_args[*]}"
+    "$NSYS" profile --force-overwrite=true --trace=cuda --sample=none --cpuctxsw=none \
+        --soc-metrics=true --soc-metrics-set=t234 --soc-metrics-frequency=10000 \
+        --output="$OUT/$name" \
+        "$ROOT/runner" "${runner_args[@]}" \
+        --csv "/dev/shm/$name" > "$OUT/$name.log" 2>&1
+    rc=$?
+fi
+echo "   exit $rc"
 rm -f "/dev/shm/$name"*
 grep -E "^\[info\] (network|partition plan|allocation)" "$OUT/$name.log" 2>/dev/null | sed 's/^/   /'
 ls -l "$OUT/$name.nsys-rep" 2>/dev/null | awk '{printf "   %s  %.1f MB\n", $9, $5/1048576}'
