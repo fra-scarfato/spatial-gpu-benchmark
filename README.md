@@ -78,6 +78,21 @@ because profiling perturbs what it measures, and the second needs root:
     sudo ./utility/soc-traces.sh itf                    # DRAM counters
 
 Both are reachable as `--traces` and `--soc`.
+### Every stage goes through the entry point
+
+Anything a measurement needs is reachable from `./pipeline.py`, including the stages that need root
+and the ones that take a while. They are listed in the menu and never run by default:
+
+    ./pipeline.py section --stage probes        # build and run the probe tools
+    ./pipeline.py section --stage soc-budget    # DRAM pressure curve: 4 networks x 4 budgets (root)
+    ./pipeline.py section --stage soc           # DRAM counters on the interferer pairs (root)
+    ./pipeline.py section --stage ncu           # per-kernel DRAM bytes: diagnostic, then the matrix (root)
+    ./pipeline.py section --stage additivity-mps # the additivity block under MPS static partitions
+    ./pipeline.py section --traces              # kernel traces, then the per-inference decomposition
+
+`--dry-run` prints every command of a stage instead of running it, which is how each of the above
+was checked before it was used. The last two need no root; the first four do.
+
 ## Protocol
 
 Five independent runs per configuration, each in a fresh process. At least 5 000 inferences and
