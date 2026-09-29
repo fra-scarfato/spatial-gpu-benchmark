@@ -654,4 +654,37 @@ for _clients, _desc, _cfg, _nets in WQAUX_ROWS:
 close_table()
 
 
+# ------------------------------------------- memory contention: two co-runners at once
+# One target at 8 SMs, two co-runners at 4 SMs each, so the device is fully used. The question is
+# whether what two co-runners cost is the sum of what each costs alone; both the sum and the product
+# are given, because a penalty that is a fraction of what the target is doing compounds rather than
+# adds, and the last column says which of the two the measurement is nearer.
+ADDT_TARGETS = [("mobilenet", "retinanet", "inception"),
+                ("resnet", "retinanet", "inception"),
+                ("inception", "mobilenet", "retinanet"),
+                ("retinanet", "mobilenet", "inception")]
+
+open_table([r"Target & Co-runners & Alone (ms) & $+$A & $+$B & $+$A$+$B & sum & both $/$ sum \\"],
+           "llrrrrrr",
+           "Two co-runners at 4\,SMs each against a target at 8\,SMs, each measured alone and then "
+           "together. Each column is the target's median against its own median alone, so $+$A is "
+           "what A costs it, $+$B what B costs it, and $+$A$+$B what they cost together. A penalty "
+           "that is a fraction of what the target is doing compounds rather than adds, so the "
+           "product of the two factors is the alternative to their sum, and the last column says "
+           "which the measurement is nearer.",
+           "tab:mem-additivity")
+for _t, _a, _b in ADDT_TARGETS:
+    _base = must(val("exp11", _t + "-alone", _t, "median"), _t + " alone")
+    _ra = must(val("exp11", _t + "+" + _a, _t, "median"), _t + "+" + _a)
+    _rb = must(val("exp11", _t + "+" + _b, _t, "median"), _t + "+" + _b)
+    _rab = must(val("exp11", _t + "+" + _a + "+" + _b, _t, "median"), _t + "+both")
+    _A = 100 * (_ra / _base - 1)
+    _B = 100 * (_rb / _base - 1)
+    _AB = 100 * (_rab / _base - 1)
+    emit(r"{} & {} and {} & {} & {:+.1f}\,\% & {:+.1f}\,\% & {:+.1f}\,\% & {:+.1f}\,\% & {} \\".format(
+        _t, _a, _b, ms(_base), _A, _B, _AB, _A + _B,
+        "{:.2f}".format(_AB / (_A + _B)) if (_A + _B) > 1.0 else "---"))
+close_table()
+
+
 sys.stdout.write("\n".join(OUT))
