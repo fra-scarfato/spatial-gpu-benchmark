@@ -6,10 +6,12 @@
 # partitions come from utility/lib/mps.sh, the same code the sweep uses, and the processes are
 # launched and collected here.
 #
-#   utility/mps-additivity-block.sh [runs] <output name> <model>:<percent>:<label> [<model>:<percent>:<label> ...]
+#   utility/mps-additivity-block.sh [runs] <output name> <engine path>:<percent>:<label> [...]
 #
 #   utility/mps-additivity-block.sh 5 mobilenet+retinanet+inception \
-#       mobilenetv2-12:50:mobilenet retinanet-9:25:retinanet inception_v3-onnx-float:25:inception
+#       $DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine:50:mobilenet \
+#       $DATA/models/retinanet-9/engine/retinanet-9.engine:25:retinanet \
+#       $DATA/models/inception_v3-onnx-float/engine/inception_v3.engine:25:inception
 #
 # The first spec is the target. Each client is one process confined to its own partition, and each
 # writes its own stats file, which is renamed to the r<k>_<label>_stats.csv layout the aggregate
@@ -38,11 +40,11 @@ outname="$1"; shift
 
 pcts=(); specs=(); labels=()
 for spec in "$@"; do
-    model="${spec%%:*}"; rest="${spec#*:}"
+    model="${spec%%:*}"; rest="${spec#*:}"   # model is the engine path here
     pct="${rest%%:*}"; label="${rest##*:}"
     [ "$label" = "$rest" ] && label="$model"
     pcts+=("$pct")
-    specs+=("$MODELS/$model/engine/$model.engine:100:$label")   # 100 %: the partition confines it
+    specs+=("$model:100:$label")   # the path is given; 100 % because the partition confines it
     labels+=("$label")
 done
 
