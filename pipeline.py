@@ -267,15 +267,18 @@ def main():
         say("\n== ncu: does it work here, then the traffic per inference (needs root) ==")
         models = families.data_root() / "models"
         mobile = models / "mobilenetv2-12/engine/mobilenetv2-12.engine"
+        # no protocol bounds in this list: each command adds its own, because slicing it is how a
+        # flag and its value ended up on opposite sides of a cut and the runner threw stod
         base = ["./runner", "--submit-threads", "1", "--dataset",
-                str(families.data_root() / "dataset/imagenet-1k"), "--fixed", "32",
-                "--min-inferences", "200", "--min-duration", "2"]
+                str(families.data_root() / "dataset/imagenet-1k"), "--fixed", "32"]
+        check = ["--min-inferences", "200", "--min-duration", "2"]
+        check_m = ["--min-inferences", "600", "--min-duration", "3"]
         run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base +
+             "--metrics", "dram__bytes.sum"] + base + check +
             ["--allocation", "whole", "--net", "{}:100:mobilenet".format(mobile),
              "--csv", "/dev/shm/ncu-check"], args.dry_run)
         run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base +
+             "--metrics", "dram__bytes.sum"] + base + check +
             ["--allocation", "greenctx", "--sm-percent", "50",
              "--net", "{}:50:mobilenet".format(mobile), "--csv", "/dev/shm/ncu-check"], args.dry_run)
         say("  if both pass, the per-inference traffic, per network and budget:")
@@ -288,95 +291,12 @@ def main():
                           (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 25)):
             run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-skip", "60", "--launch-count", "400",
                  "--metrics", "dram__bytes_read.sum,dram__bytes_write.sum", "--csv",
-                 "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base[:10] +
-                ["--min-inferences", "600", "--min-duration", "3", "--allocation", "greenctx",
+                 "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base + check_m +
+                ["--allocation", "greenctx",
                  "--sm-percent", str(pct),
                  "--net", "{}:{}:{}".format(path, pct, Path(str(path)).stem),
                  "--csv", "/dev/shm/ncu"], args.dry_run)
 
-    if "probes" in wanted:
-        say("\n== the probes ==")
-        run(["make", "-C", "utility"], args.dry_run)
-        for probe in ("auxprobe", "wqprobe", "devprobe"):
-            run(["./utility/" + probe], args.dry_run)
-
-    if "soc-budget" in wanted:
-        say("\n== the SoC pressure curve, one network at a time (needs root) ==")
-        models = families.data_root() / "models"
-        engines = {"mobilenetv2-12": "mobilenetv2-12/engine/mobilenetv2-12.engine",
-                   "resnet50-v2-7": "resnet50-v2-7/engine/resnet50-v2-7.engine",
-                   "inception_v3-onnx-float": "inception_v3-onnx-float/engine/inception_v3.engine",
-                   "retinanet-9": "retinanet-9/engine/retinanet-9.engine"}
-        for model, path in engines.items():
-            for pct in (100, 75, 50, 25):
-                run(["sudo", "./utility/soc-budget-sweep.sh", "greenctx", str(pct),
-                     "{}:{}".format(models / path, pct)], args.dry_run)
-        say("  the same points under MPS static, to check the mechanism does not move them:")
-        for spec in ("mobilenetv2-12:50", "retinanet-9:50", "mobilenetv2-12:25"):
-            model, pct = spec.split(":")
-            run(["sudo", "./utility/soc-budget-sweep.sh", "mps-static", pct,
-                 "{}:{}".format(models / engines[model], pct)], args.dry_run)
-        for a, b, pa, pb in (("mobilenetv2-12", "resnet50-v2-7", 50, 50),
-                             ("mobilenetv2-12", "resnet50-v2-7", 50, 25),
-                             ("mobilenetv2-12", "retinanet-9", 50, 25)):
-            run(["sudo", "./utility/soc-budget-sweep.sh", "greenctx", str(pa),
-                 "{}:{}".format(models / engines[a], pa),
-                 "{}:{}".format(models / engines[b], pb)], args.dry_run)
-
-    if "soc" in wanted:
-        say("\n== the SoC counters on the interferer pairs (needs root) ==")
-        run(["sudo", "./utility/soc-traces.sh", "itf"], args.dry_run)
-
-    if "ncu" in wanted:
-        say("\n== ncu: does it work here, then the traffic per inference (needs root) ==")
-        models = families.data_root() / "models"
-        mobile = models / "mobilenetv2-12/engine/mobilenetv2-12.engine"
-        base = ["./runner", "--submit-threads", "1", "--dataset",
-                str(families.data_root() / "dataset/imagenet-1k"), "--fixed", "32",
-                "--min-inferences", "200", "--min-duration", "2"]
-        run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base +
-            ["--allocation", "whole", "--net", "{}:100:mobilenet".format(mobile),
-             "--csv", "/dev/shm/ncu-check"], args.dry_run)
-        run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base +
-            ["--allocation", "greenctx", "--sm-percent", "50",
-             "--net", "{}:50:mobilenet".format(mobile), "--csv", "/dev/shm/ncu-check"], args.dry_run)
-        say("  if both pass, the per-inference traffic, per network and budget:")
-        for path, pct in ((mobile, 50), (mobile, 25),
-                          (models / "retinanet-9/engine/retinanet-9.engine", 50),
-                          (models / "retinanet-9/engine/retinanet-9.engine", 25),
-                          (models / "inception_v3-onnx-float/engine/inception_v3.engine", 50),
-                          (models / "inception_v3-onnx-float/engine/inception_v3.engine", 25),
-                          (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 50),
-                          (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 25)):
-            run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-skip", "60", "--launch-count", "400",
-                 "--metrics", "dram__bytes_read.sum,dram__bytes_write.sum", "--csv",
-                 "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base[:10] +
-                ["--min-inferences", "600", "--min-duration", "3", "--allocation", "greenctx",
-                 "--sm-percent", str(pct),
-                 "--net", "{}:{}:{}".format(path, pct, Path(str(path)).stem),
-                 "--csv", "/dev/shm/ncu"], args.dry_run)
-
-    if "additivity-mps" in wanted:
-        say("\n== the additivity block under MPS static ==")
-        models = families.data_root() / "models"
-        specs = [str(models / "mobilenetv2-12/engine/mobilenetv2-12.engine") + ":mobilenet",
-                 str(models / "retinanet-9/engine/retinanet-9.engine") + ":retinanet",
-                 str(models / "inception_v3-onnx-float/engine/inception_v3.engine") + ":inception"]
-        if run(["./utility/mps-additivity-block.sh", "--block", str(args.runs)] + specs,
-               args.dry_run) != 0:
-            return 1
-
-    if args.traces:
-        say("\n== kernel traces ==")
-        run(["./utility/take-traces.sh"], args.dry_run)
-        run([sys.executable, "utility/itf-trace.py",
-             str(families.data_root() / "scratch/traces/trc")], args.dry_run)
-
-    if args.soc:
-        say("\n== DRAM counters (will ask for your sudo password) ==")
-        run(["sudo", "./utility/soc-traces.sh", "itf"], args.dry_run)
 
     say("\ndone")
     return 0
