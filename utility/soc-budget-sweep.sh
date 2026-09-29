@@ -3,17 +3,17 @@
 #
 # The SoC counters are device-wide and cannot attribute to a client, so the way to obtain one
 # network's pressure at one SM budget is to run only that network at that budget. This script does
-# that under any of the three mechanisms, so the pressure curve can be measured twice - once under
-# a green context and once under an MPS static partition - to check that the mechanism does not
-# change it. A partition divides SMs and leaves DRAM and L2 shared, so it should not.
+# that under any of the three mechanisms, so the pressure curve can be measured twice - once under a
+# green context and once under an MPS static partition - to check that the mechanism does not change
+# it. A partition divides SMs and leaves DRAM and L2 shared, so it should not.
 #
-#   utility/soc-budget-sweep.sh greenctx   4 mobilenetv2-12:25
-#   utility/soc-budget-sweep.sh mps-static 5 mobilenetv2-12:50 retinanet-9:25
-#   utility/soc-budget-sweep.sh whole      0 mobilenetv2-12:100
+#   utility/soc-budget-sweep.sh greenctx   25 /path/to/mobilenetv2-12.engine:25
+#   utility/soc-budget-sweep.sh mps-static 50 /path/to/mobilenetv2-12.engine:50 /path/to/retinanet-9.engine:25
+#   utility/soc-budget-sweep.sh whole       0 /path/to/mobilenetv2-12.engine:100
 #
 #   mechanism  whole | greenctx | mps-static
 #   budget     the largest share in the configuration, used to size the MPS partitions
-#   net spec   <model>:<percent>[:<label>], the percent being the green-context share
+#   spec       <engine path>:<percent>[:<label>], the share of the device that client may use
 #
 # Needs root for the counters, so run it with sudo. Profiling perturbs, so these are diagnostics:
 # the window is shorter than the campaign protocol's and the write-up says so.
@@ -23,37 +23,43 @@ DATA="${DATA:-/mnt/nvme/f.scarfato}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 OUT="${SOC_OUT:-$DATA/scratch/soc-budget}"
-MODELS="$DATA/models"
 DATASET="$DATA/dataset/imagenet-1k"
 NSYS="${NSYS:-/usr/local/bin/nsys}"
 SECONDS_MEASURED="${SECONDS_MEASURED:-20}"
 INFERENCES="${INFERENCES:-100}"
 
-# what the MPS static arms need, taken from the sweep's own library so the two cannot diverge
 STATIC_CHUNKS="${STATIC_CHUNKS:-8}"
 MPS_PIPE="${MPS_PIPE:-/tmp/mps-$USER}"
 MPS_LOG="${MPS_LOG:-/tmp/mps-log-$USER}"
 MPS_MODE=off
-if [ "$1" = "mps-static" ]; then
-    # shellcheck source=lib/mps.sh
-    . "$HERE/lib/mps.sh"
-fi
+[ "${1:-}" = "mps-static" ] && { . "$HERE/lib/mps.sh"; }
 
-mechanism="$1"; shift
-budget="$1"; shift
-[ $# -ge 1 ] || { echo "usage: $0 <whole|greenctx|mps-static> <budget-percent> <model>:<percent>[:<label>]..." >&2; exit 2; }
+mechanism="${1:-}"; shift || true
+budget="${1:-}"; shift || true
+case "$mechanism" in
+    whole|greenctx|mps-static) ;;
+    *) echo "usage: $0 <whole|greenctx|mps-static> <budget-percent> <engine>:<percent>[:<label>]..." >&2; exit 2 ;;
+esac
+[ $# -ge 1 ] || { echo "usage: $0 <mechanism> <budget> <engine>:<percent>[:<label>]..." >&2; exit 2; }
 
-name="$mechanism-$budget"
-nets=(); labels=()
+# The spec carries a full engine path, which must never reach a file name: the label is taken from
+# it, and everything outside a safe alphabet is folded to a dash.
+safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9._+-' '-' | sed 's/-\{2,\}/-/g; s/-$//'; }
+
+name=""
+nets=()
 for spec in "$@"; do
-    model="${spec%%:*}"
+    path="${spec%%:*}"
     rest="${spec#*:}"
     pct="${rest%%:*}"
     label="${rest#*:}"
-    [ "$label" = "$pct" ] && label="$model"
-    nets+=("$MODELS/$model/engine/$model.engine:$pct:$label")
-    name="$name-$(echo "$label" | tr -d '_')$pct"
+    [ "$label" = "$rest" ] && label="$(basename "$path")"
+    label="$(safe "${label%.engine}")"
+    [ -f "$path" ] || { echo "  no engine at $path" >&2; exit 2; }
+    nets+=("$path:$pct:$label")          # the share goes in the spec, not in --sm-percent
+    name="${name}${name:+_}$(safe "$label")-$pct"
 done
+name="soc-$(safe "$mechanism")-$name"
 mkdir -p "$OUT"
 
 cleanup() { [ "$mechanism" = mps-static ] && mps_stop; }
@@ -61,11 +67,18 @@ trap cleanup EXIT
 
 runner_args=(--submit-threads 1 --dataset "$DATASET" --fixed 32
              --min-inferences "$INFERENCES" --min-duration "$SECONDS_MEASURED")
-# the networks go in every mechanism: under MPS static the allocation comes from the daemon's
-# partition rather than from a green context, but the participants are declared the same way
-for i in "${!nets[@]}"; do
-    runner_args+=(--net "${nets[$i]}")
-done
+if [ "$mechanism" = mps-static ]; then
+    # under a static partition the runner's own share is meaningless: the partition confines the
+    # client, which is why every MPS arm in the campaign passes 100 here
+    for spec in "$@"; do
+        p="${spec%%:*}"
+        l="$(safe "$(basename "$p")")"
+        runner_args+=(--net "$p:100:${l%.engine}")
+    done
+else
+    for n in "${nets[@]}"; do runner_args+=(--net "$n"); done
+fi
+
 if [ "$mechanism" = mps-static ]; then
     # a static set covers the device in two parts, so a solo client needs the colon ratio, which
     # places its shares and leaves the rest unassigned
@@ -83,15 +96,15 @@ else
     runner_args+=(--allocation whole)
 fi
 
-echo "== $name ($mechanism, budget $budget %) =="
+echo "== $name (mechanism $mechanism, budget $budget %) =="
+echo "   $NSYS profile --output=$OUT/$name.nsys-rep $ROOT/runner ${runner_args[*]}"
 "$NSYS" profile --force-overwrite=true --trace=cuda --sample=none --cpuctxsw=none \
     --soc-metrics=true --soc-metrics-set=t234 \
     --output="$OUT/$name" \
     "$ROOT/runner" "${runner_args[@]}" \
-    --csv "/dev/shm/soc-$name" > "$OUT/$name.log" 2>&1
+    --csv "/dev/shm/$name" > "$OUT/$name.log" 2>&1
 rc=$?
-echo "  nsys exit $rc"
-rm -f "/dev/shm/soc-$name"*
-grep -E "^\[info\] (network|partition plan|allocation)" "$OUT/$name.log" | sed 's/^/    /'
-ls -l "$OUT/$name.nsys-rep" 2>/dev/null | awk '{printf "    %s  %.1f MB\n", $9, $5/1048576}'
-echo "  (the sqlite export and the analysis are done afterwards, not during the run)"
+echo "   nsys exit $rc"
+rm -f "/dev/shm/$name"*
+grep -E "^\[info\] (network|partition plan|allocation)" "$OUT/$name.log" 2>/dev/null | sed 's/^/   /'
+ls -l "$OUT/$name.nsys-rep" 2>/dev/null | awk '{printf "   %s  %.1f MB\n", $9, $5/1048576}'
