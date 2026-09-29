@@ -80,10 +80,12 @@ because profiling perturbs what it measures, and the second needs root:
 Both are reachable as `--traces` and `--soc`.
 ### Every stage goes through the entry point
 
-**Measurements** produce the numbers the thesis reports:
+**Measurements** produce the numbers the thesis reports, and measuring a family produces all of its
+measurements — for `interference-additivity` that means the sweep and the MPS static block, whose
+job spec cannot express three clients:
 
     ./pipeline.py section --stage measure           # the sweep, at the campaign protocol
-    ./pipeline.py section --stage additivity-mps    # the additivity block under MPS static partitions
+    ./pipeline.py interference-additivity --stage measure   # ... and its MPS static half
 
 **Diagnostics** profile the thing they measure, so their numbers describe mechanisms rather than
 latencies; four of the five need root:
@@ -95,8 +97,8 @@ latencies; four of the five need root:
     ./pipeline.py section --traces                  # kernel traces, then the per-inference decomposition
 
 The two groups are the same everywhere: in `pipeline.py`, in the menu it prints, in `--help`, and
-here. `--stage all` means the five quick measurement stages, so a default run is unchanged.
-`--dry-run` prints a stage's commands instead of running them, which is how each was checked.
+here. `--stage all` means the quick measurement stages, so a default run is unchanged. `--dry-run`
+prints a stage's commands instead of running them, which is how each was checked.
 
 ## Protocol
 
