@@ -33,9 +33,15 @@ sys.path.insert(0, str(ROOT / "utility"))
 
 from lib import families  # noqa: E402
 
+# What a default run does: quick, and measurement only.
 STAGES = ("engines", "measure", "reduce", "tables", "overview")
-# opt-in: long, or needing root. Named in the menu, never run by default.
-EXTRA_STAGES = ("additivity-mps", "traces", "soc", "soc-budget", "ncu", "probes")
+
+# The stages, in the two groups the pipeline distinguishes. A measurement produces the numbers the
+# thesis reports; a diagnostic profiles what it measures and therefore perturbs it, so its output
+# is evidence about mechanisms and not a latency. Four diagnostics need root.
+STAGES_MEASUREMENT = STAGES + ("additivity-mps",)
+STAGES_DIAGNOSTIC = ("traces", "soc", "soc-budget", "ncu", "probes")
+EXTRA_STAGES = STAGES_MEASUREMENT[1:] + STAGES_DIAGNOSTIC
 
 
 def say(text=""):
@@ -97,7 +103,7 @@ def parse():
     p.add_argument("selection", nargs="*",
                    help="a group (section, appendix, mem, all), a family, or nothing for the menu")
     p.add_argument("--stage", default="all",
-                   help="all, or one of: " + ", ".join(STAGES + EXTRA_STAGES))
+                   help="all (the default set), or any of: " + ", ".join(STAGES + EXTRA_STAGES))
     p.add_argument("--runs", type=int, default=5, help="replicates per configuration (default 5)")
     p.add_argument("--static-chunks", type=int, default=8,
                    help="enable the MPS static arms (default 8; 0 disables them)")
@@ -129,9 +135,11 @@ def main():
             selection = input("  which? [section/appendix/mem/all/<family>] ").strip() or "section"
         except EOFError:
             selection = "section"
-        stages = input("  stages [{}]\n"
-                       "         opt-in: {} (space-separated, or 'all' for the default set) "
-                       .format(" ".join(STAGES), " ".join(EXTRA_STAGES))).strip()
+        say("  measurement stages: {}   (default)".format(" ".join(STAGES)))
+        say("  measurement, long:  {}".format(" ".join(STAGES_MEASUREMENT[len(STAGES):])))
+        say("  diagnostics:        {}   (perturb what they measure; 4 need root)"
+            .format(" ".join(STAGES_DIAGNOSTIC)))
+        stages = input("  stages, space-separated, or 'all' for the default set ").strip()
         if stages:
             wanted = tuple(stages.split())
         else:

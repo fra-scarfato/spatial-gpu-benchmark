@@ -80,18 +80,23 @@ because profiling perturbs what it measures, and the second needs root:
 Both are reachable as `--traces` and `--soc`.
 ### Every stage goes through the entry point
 
-Anything a measurement needs is reachable from `./pipeline.py`, including the stages that need root
-and the ones that take a while. They are listed in the menu and never run by default:
+**Measurements** produce the numbers the thesis reports:
 
-    ./pipeline.py section --stage probes        # build and run the probe tools
-    ./pipeline.py section --stage soc-budget    # DRAM pressure curve: 4 networks x 4 budgets (root)
-    ./pipeline.py section --stage soc           # DRAM counters on the interferer pairs (root)
-    ./pipeline.py section --stage ncu           # per-kernel DRAM bytes: diagnostic, then the matrix (root)
-    ./pipeline.py section --stage additivity-mps # the additivity block under MPS static partitions
-    ./pipeline.py section --traces              # kernel traces, then the per-inference decomposition
+    ./pipeline.py section --stage measure           # the sweep, at the campaign protocol
+    ./pipeline.py section --stage additivity-mps    # the additivity block under MPS static partitions
 
-`--dry-run` prints every command of a stage instead of running it, which is how each of the above
-was checked before it was used. The last two need no root; the first four do.
+**Diagnostics** profile the thing they measure, so their numbers describe mechanisms rather than
+latencies; four of the five need root:
+
+    ./pipeline.py section --stage probes            # build and run the probe tools
+    ./pipeline.py section --stage soc-budget        # DRAM pressure curve: 4 networks x 4 budgets (root)
+    ./pipeline.py section --stage soc               # DRAM counters on the interferer pairs (root)
+    ./pipeline.py section --stage ncu               # per-kernel DRAM bytes: diagnostic, then the matrix (root)
+    ./pipeline.py section --traces                  # kernel traces, then the per-inference decomposition
+
+The two groups are the same everywhere: in `pipeline.py`, in the menu it prints, in `--help`, and
+here. `--stage all` means the five quick measurement stages, so a default run is unchanged.
+`--dry-run` prints a stage's commands instead of running them, which is how each was checked.
 
 ## Protocol
 
