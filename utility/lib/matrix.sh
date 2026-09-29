@@ -452,3 +452,51 @@ add "workqueue-aux-streams_retinanet-retinanet-inception-device-ctx-21" \
 add "workqueue-aux-streams_retinanet-retinanet-inception-balanced-21" \
     "solo|off|||$WQAUX --wq-scope green_ctx_balanced --wq-limit 21 --net $RN8:35:retinanet_a --net $RN8:35:retinanet_b --net $INC2:25:inception|"
 
+# ---------------------------------------------------------------------------
+# Additivity: one target at 8 SMs (50 %), two co-runners at 4 SMs each (25 % + 25 %), so the
+# device is fully used. The question is whether the interference a target takes from two
+# co-runners is the sum of what each introduces alone.
+#
+# The triple {MobileNet, RetinaNet, Inception} is balanced: each is the target once, each pair is
+# co-runners once. RetinaNet and Inception differ most of any pair available - 10 ms against
+# 1.6 ms per inference, 480x640 against 299x299, ten outputs against one - which is what makes a
+# sum worth reading. ResNet is a fourth target against the same pair, to compare with the 14.3 %
+# and 25.9 % the corpus has for the 8/8 MobileNet-ResNet pair.
+ADDT="$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx"
+
+add "interference-additivity_mobilenet-alone" \
+    "solo|off|||$ADDT --net $MOB:50:mobilenet|"
+add "interference-additivity_mobilenet+retinanet" \
+    "solo|off|||$ADDT --net $MOB:50:mobilenet --net $RN:25:retinanet|"
+add "interference-additivity_mobilenet+inception" \
+    "solo|off|||$ADDT --net $MOB:50:mobilenet --net $INC:25:inception|"
+add "interference-additivity_mobilenet+retinanet+inception" \
+    "solo|off|||$ADDT --net $MOB:50:mobilenet --net $RN:25:retinanet --net $INC:25:inception|"
+
+add "interference-additivity_retinanet-alone" \
+    "solo|off|||$ADDT --net $RN:50:retinanet|"
+add "interference-additivity_retinanet+mobilenet" \
+    "solo|off|||$ADDT --net $RN:50:retinanet --net $MOB:25:mobilenet|"
+add "interference-additivity_retinanet+inception" \
+    "solo|off|||$ADDT --net $RN:50:retinanet --net $INC:25:inception|"
+add "interference-additivity_retinanet+mobilenet+inception" \
+    "solo|off|||$ADDT --net $RN:50:retinanet --net $MOB:25:mobilenet --net $INC:25:inception|"
+
+add "interference-additivity_inception-alone" \
+    "solo|off|||$ADDT --net $INC:50:inception|"
+add "interference-additivity_inception+mobilenet" \
+    "solo|off|||$ADDT --net $INC:50:inception --net $MOB:25:mobilenet|"
+add "interference-additivity_inception+retinanet" \
+    "solo|off|||$ADDT --net $INC:50:inception --net $RN:25:retinanet|"
+add "interference-additivity_inception+mobilenet+retinanet" \
+    "solo|off|||$ADDT --net $INC:50:inception --net $MOB:25:mobilenet --net $RN:25:retinanet|"
+
+add "interference-additivity_resnet-alone" \
+    "solo|off|||$ADDT --net $RES:50:resnet|"
+add "interference-additivity_resnet+retinanet" \
+    "solo|off|||$ADDT --net $RES:50:resnet --net $RN:25:retinanet|"
+add "interference-additivity_resnet+inception" \
+    "solo|off|||$ADDT --net $RES:50:resnet --net $INC:25:inception|"
+add "interference-additivity_resnet+retinanet+inception" \
+    "solo|off|||$ADDT --net $RES:50:resnet --net $RN:25:retinanet --net $INC:25:inception|"
+
