@@ -67,6 +67,7 @@ EXP_DIR = {
     "memory-two-threads":               "exp9",
     "workqueue-aux-streams": "exp10",
     "interference-additivity": "exp11",
+    "interference-additivity-mps": "exp12",
     "repro":               "exp6",
     "concurrent-mps":      "exp3",
 }
