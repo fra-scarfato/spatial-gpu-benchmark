@@ -18,10 +18,11 @@ the experiments. This file is the long form.
 8. Environment
 9. The measurement protocol: `utility/sweep.sh` and `utility/aggregate.py`
 10. Experiment 3: MPS, and why it is not a green context
-11. Open items
-12. Reproducing a result
-13. The models
-14. Reproducing the results section
+11. The SoC counters, and how the pressure curve is produced
+12. Open items
+13. Reproducing a result
+14. The models
+15. Reproducing the results section
 
 ---
 
@@ -938,7 +939,105 @@ Other established facts:
 
 ---
 
-## 11. Open items
+## 11. The SoC counters, and how the pressure curve is produced
+
+ncu reaches this board but collects nothing: it renames the kernels, reports the launch geometry and
+reports every metric value as `n/a`. That is the vGPU counter restriction seen in its "Failed to
+profile" message and in the GPU-metrics path of `nsys`, and it is a property of the board rather than
+of any flag, so the traffic per network comes from the SoC counters instead.
+
+### From a report to a number
+
+1. **Profile with the SoC counters.** `sudo nsys profile --soc-metrics=true
+   --soc-metrics-set=t234 --soc-metrics-frequency=10000`. T234 is the Orin's part number, and 10 kHz
+   gives about 215 000 samples for a run of twenty seconds.
+2. **Export to sqlite.** `nsys export --type sqlite --force-overwrite=true --output <db> <rep>`. The
+   database goes to a directory this user owns rather than beside the report: the reports come from a
+   root-owned run, so their directory is root's, and reading a report is possible while creating
+   anything next to it is not.
+3. **Read the counters by position.** The export writes `NULL` for every column name, so
+   `SOC_METRICS` cannot be queried by name. Its rows are `(start_ns, end_ns, domain, index, value)`
+   and the reading is field 4. Which index carries which counter comes from
+   `TARGET_INFO_SOC_METRICS`, resolved by name rather than assumed; on this board index 6 is DRAM
+   read throughput and index 7 is DRAM write.
+4. **Summarise without a window.** The values are percent of peak. The **peak** is the maximum over
+   the run and the **busy mean** is the mean over the samples above 1 %, a threshold that excludes
+   the gaps between inferences, in which a single-submitter runner leaves the device idle. Both are
+   deliberately window-free: the CUDA clock and the SoC clock sit about 14 s apart in the export, so
+   anything needing a window boundary would rest on that offset being right.
+5. **Percent to GB/s.** Read and write percentages are on different scales, so each divides by its
+   own calibration point and multiplies by the rate at which the calibration was taken. The one
+   measurement here is a D2D copy: 48 % of peak read and 83 % of peak write at 91.5 GB/s counted,
+   which implies roughly 190 GB/s of peak read bandwidth and 110 of write.
+6. **Cache the series.** Each extracted pair of series goes to a small CSV, so the twenty minutes of
+   exporting happens once and every later analysis is instant. The sqlite, 100-330 MB per trace, is
+   deleted after it has been read.
+
+`utility/soc-pressure.py` performs all six steps and writes one row per report to
+`$DATA/bench/soc-pressure.csv`. Every number below comes from it.
+
+### What the counters can and cannot say
+
+They are **device-wide**. They belong to the SoC and not to any client, so a reading attributes to a
+single network only because that run contains a single network. For a pair the reading is the pair
+jointly, and no share within the pair can be recovered from it. The isolated runs therefore carry the
+per-network curve and the pair runs carry the question of whether two clients' traffic adds, and
+neither run can be asked the other's question.
+
+### The numbers
+
+Sustained means the busy mean, read and write together, in GB/s.
+
+| configuration | peak read % | busy read % | busy write % | sustained GB/s |
+|---------------|-------------|-------------|--------------|----------------|
+| mobile @ 25 %   | 25 |  6.2 |  5.9 | 18.4 |
+| mobile @ 50 %   | 29 |  7.6 |  7.9 | 23.1 |
+| mobile @ 75 %   | 27 |  7.6 |  8.9 | 24.3 |
+| mobile @ 100 %  | 30 |  7.1 |  8.0 | 22.4 |
+| resnet @ 25 %   | 42 | 10.8 |  5.4 | 26.6 |
+| resnet @ 50 %   | 54 | 15.4 |  8.2 | 38.4 |
+| resnet @ 75 %   | 58 | 17.2 |  8.8 | 42.6 |
+| resnet @ 100 %  | 58 | 19.4 | 10.1 | 48.1 |
+| inception @ 25 %| 36 |  8.8 |  3.8 | 20.8 |
+| inception @ 50 %| 49 | 12.5 |  4.8 | 29.1 |
+| inception @ 75 %| 54 | 14.1 |  5.4 | 32.8 |
+| inception @ 100 %| 55 | 15.4 |  6.0 | 35.9 |
+| retinanet @ 25 %| 50 | 11.7 |  6.4 | 29.3 |
+| retinanet @ 50 %| 56 | 16.0 |  8.9 | 40.4 |
+| retinanet @ 75 %| 60 | 20.1 | 11.4 | 50.8 |
+| retinanet @ 100 %| 61 | 22.4 | 13.3 | 57.3 |
+| mobile@50 + resnet@25 | 57 | 13.6 |  7.7 | 34.5 |
+| mobile@50 + resnet@50 | 61 | 17.0 | 10.3 | 43.8 |
+| mobile@50 + retinanet@25 | 64 | 17.0 |  8.9 | 42.2 |
+
+### Reading
+
+**One network does not saturate the memory system.** The sustained traffic runs from 18 to 57 GB/s
+against a peak of about 190 read and 110 write, so the busiest configuration in the corpus asks for
+roughly a third of what the board can read. The peaks are two to three times the sustained means,
+which is why a curve drawn from peaks alone reads as saturated and a curve drawn from means does not.
+
+**The pressure grows sub-linearly with the budget.** Going from a quarter of the SMs to all of them
+multiplies the sustained traffic by 1.2 for MobileNet, 1.7 for Inception, 1.8 for ResNet and 2.0 for
+RetinaNet: four times the SMs for at most twice the traffic, and for MobileNet almost nothing. The
+memory system is already the binding constraint at four SMs.
+
+**Two clients ask for less than the sum of the two alone.** In all three pairs, read and write
+together, the pair sustains 69, 71 and 81 % of what the two would apply separately (74, 74 and 89 %
+on the read side alone). The shared resource is already partly occupied, so the second client's
+traffic does not add to the first's.
+
+**Consequence for the interference.** A co-runner that applies a fifth to a third of the board's
+bandwidth cannot saturate it, and the median penalty it causes is therefore not aggregate saturation.
+That agrees with two independent measurements: the kernel traces, which locate the tail in host
+submission rather than in memory, and the additivity family, in which how a target combines two
+co-runners turned out to be a property of the target.
+
+**One caveat.** The absolute GB/s rest on a single calibration point taken from one copy. The ratios,
+the shape of the curve and the sub-additivity do not depend on it; the absolute values do, and they
+are the weakest numbers in this document.
+
+## 12. Open items
 
 - **The work queue experiment** (§4.6, `concurrent-wq`) is staged and
   smoke-tested but not yet swept: `--exp wq`, 60 runs. It is the current
