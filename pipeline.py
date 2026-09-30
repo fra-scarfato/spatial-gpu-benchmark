@@ -272,11 +272,11 @@ def main():
         check = ["--min-inferences", "200", "--min-duration", "2"]
         check_m = ["--min-inferences", "600", "--min-duration", "3"]
         run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base + check +
+             "--metrics", "mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed"] + base + check +
             ["--allocation", "whole", "--net", "{}:100:mobilenet".format(mobile),
              "--csv", "/dev/shm/ncu-check"], args.dry_run)
         run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "dram__bytes.sum"] + base + check +
+             "--metrics", "mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed"] + base + check +
             ["--allocation", "greenctx", 
              "--net", "{}:50:mobilenet".format(mobile), "--csv", "/dev/shm/ncu-check"], args.dry_run)
         say("  if both pass, the per-inference traffic, per network and budget:")
@@ -288,7 +288,7 @@ def main():
                           (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 50),
                           (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 25)):
             run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-skip", "60", "--launch-count", "400",
-                 "--metrics", "dram__bytes_read.sum,dram__bytes_write.sum", "--csv",
+                 "--metrics", "lts__t_sector_hit_rate.pct,lts__t_bytes.sum,mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed", "--csv",
                  "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base + check_m +
                 ["--allocation", "greenctx",
                  
