@@ -169,8 +169,8 @@ SUBMIT_CORE_B="${SUBMIT_CORE_B:-7}"
 # is the one the tables make: `section` is every family whose rows the results section renders,
 # `appendix` is the rest, which the history file and the diagnostic tools read. Kept in step
 # with the generator by utility/overview.py, which derives the same split from the source.
-SECTION_FAMILIES="isolated-scaling concurrent-greenctx-1t concurrent-mps concurrent-aux submit-model workqueue-declaration workqueue-aux-streams interference-additivity memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
-APPENDIX_FAMILIES="concurrent-greenctx concurrent-wq concurrent-wq-1t concurrent-aux-1t pinning repro workqueue-three-clients"
+SECTION_FAMILIES="isolated-scaling pair-greenctx-1submit pair-mpsstatic-2submit pair-greenctx-auxstreams-2submit submission-model workqueue-declaration workqueue-aux-streams interference-additivity memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
+APPENDIX_FAMILIES="pair-greenctx-2submit pair-greenctx-workqueue-2submit pair-greenctx-workqueue-1submit pair-greenctx-auxstreams-1submit cpu-affinity repeatability workqueue-three-clients"
 MEM_FAMILIES="memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
 ALL_FAMILIES="$SECTION_FAMILIES $APPENDIX_FAMILIES"
 
@@ -185,7 +185,7 @@ while [ $# -gt 0 ]; do
         --out)           OUT="$2"; OUT_GIVEN=1; shift ;;
         --exp)
             # A group name expands to its family list; anything else stays a substring of a
-            # family name, as before, so `--exp mps` still selects concurrent-mps.
+            # family name, as before, so `--exp mps` still selects pair-mpsstatic-2submit.
             case "$2" in
                 section)  EXPS="$(printf '%s' "$SECTION_FAMILIES" | tr ' ' ',')" ;;
                 appendix) EXPS="$(printf '%s' "$APPENDIX_FAMILIES" | tr ' ' ',')" ;;
@@ -488,7 +488,7 @@ for r in $(seq 1 "$RUNS"); do
         out="$OUT/$exp/$cfg/r${r}"
 
         # The --exp filter. Each entry is a SUBSTRING of the experiment name, so
-        # `--exp mps` selects concurrent-mps without anyone having to remember
+        # `--exp mps` selects pair-mpsstatic-2submit without anyone having to remember
         # the full folder name, and the default list selects all of them.
         selected=0
         IFS=',' read -ra want <<< "$EXPS"

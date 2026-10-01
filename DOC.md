@@ -379,7 +379,7 @@ The third row is the one that bites: **the two concurrent experiments were run a
 different queue budgets without anyone choosing it** — 8 in the one-process
 green-context runs, 2 under MPS — so their dispersion differs in three things at
 once (the mechanism, the process model, and the budget). Unpicking that is what
-the `concurrent-wq` family exists for.
+the `pair-greenctx-workqueue-2submit` family exists for.
 
 **What the read-back proves, and what it does not.**
 `cudaExecutionCtxGetDevResource` returns what a live context was provisioned with,
@@ -545,7 +545,7 @@ DISPERSION block), which is also where the thesis tables come from.
 
 One caveat on that column, found by checking it rather than by theory. The
 observed maximum is a single sample, so it takes *any* system event, not only a
-GPU-related one. Run 4 of `concurrent-wq/devctx_8_50_50` has a tail of 2.4 ms on
+GPU-related one. Run 4 of `pair-greenctx-workqueue-2submit/devctx_8_50_50` has a tail of 2.4 ms on
 **both** networks where its four siblings sit at 0.03 and 0.2 ms --- one event
 hitting two networks at once, with no profiler running. The medians and the
 median-across-runs tails are unaffected by it, which is the aggregation doing its
@@ -655,9 +655,9 @@ re-running two hours of GPU work.
 | Experiment | Configurations | Runs | Allocation |
 |---|---|---|---|
 | 1 `isolated-scaling` | `whole`, `gc100`, `gc75`, `gc50`, `gc25` × 2 networks | 10 | one network, alone |
-| 2 `concurrent-greenctx` | `baseline`, `50_50`, `75_25`, `25_75` | 4 | two networks, **one process**, disjoint green contexts |
-| 3 `concurrent-mps` | `mps_single`, `mps_off`, `mps_default`, `mps_atp_*`, `mps_static_*` | 6–9 | two networks, **two processes**, MPS |
-| 4 `concurrent-wq` | 5 arms × `50_50`/`75_25`, plus `unpart_8`/`unpart_2` | 12 | Experiment 2's setup with the work queue configuration pinned (§4.6) |
+| 2 `pair-greenctx-2submit` | `baseline`, `50_50`, `75_25`, `25_75` | 4 | two networks, **one process**, disjoint green contexts |
+| 3 `pair-mpsstatic-2submit` | `mps_single`, `mps_off`, `mps_default`, `mps_atp_*`, `mps_static_*` | 6–9 | two networks, **two processes**, MPS |
+| 4 `pair-greenctx-workqueue-2submit` | 5 arms × `50_50`/`75_25`, plus `unpart_8`/`unpart_2` | 12 | Experiment 2's setup with the work queue configuration pinned (§4.6) |
 
 **5 runs each.** Everything selected is 32 configurations / 160 runs, a bit over
 2 hours. Experiment 3's `mps_static_*` appear only with `--static-chunks <n>`,
@@ -775,9 +775,9 @@ number — the directory already says which experiment and which configuration.
 $DATA/bench/
 ├── isolated-scaling/     one network, alone, varying the SM budget
 │     mobilenet_whole/r1_latencies.csv   r1_stats.csv   r1.log    (10 configs)
-├── concurrent-greenctx/  two networks, ONE process, disjoint green contexts
+├── pair-greenctx-2submit/  two networks, ONE process, disjoint green contexts
 │     50_50/r3_latencies.csv   r3_mobilenet_stats.csv   …       (4 configs)
-├── concurrent-mps/       two networks, TWO processes, MPS
+├── pair-mpsstatic-2submit/       two networks, TWO processes, MPS
 │     mps_static_50_50/r3_mobilenet_stats.csv   …               (9 configs)
 └── aggregate/            <exp>.csv   summary.csv   tables.txt
 ```
@@ -1018,10 +1018,15 @@ Sustained means the busy mean, read and write together, in GB/s.
 
 ### Reading
 
-**One network does not saturate the memory system.** The sustained traffic runs from 18 to 57 GB/s
-against a peak of about 190 read and 110 write, so the busiest configuration in the corpus asks for
-roughly a third of what the board can read. The peaks are two to three times the sustained means,
-which is why a curve drawn from peaks alone reads as saturated and a curve drawn from means does not.
+**One network does not saturate the memory system.** The demand is quoted here in the counters' own
+units, because the conversion to GB/s rests on a single copy calibration and on a statistic that
+averages over the whole run rather than over the time the kernels ran. For MobileNet on the whole
+device the three figures from the same run are 7.1 % of peak read as that run-average, 17.4 %
+averaged over the kernels, and 30 % at the instant of the peak. The during-kernel average is the one
+to put against a roof: 17.4 % of the read peak and 9.9 % of the write peak, which is about 44 GB/s
+on the copy calibration. The busiest configuration in the corpus, RetinaNet on all sixteen SMs,
+reaches 22.4 % by the same run-average, so nothing here asks the memory system for more than a third
+of what it can deliver, and the run-average understates rather than overstates that.
 
 **The pressure grows sub-linearly with the budget.** Going from a quarter of the SMs to all of them
 multiplies the sustained traffic by 1.2 for MobileNet, 1.7 for Inception, 1.8 for ResNet and 2.0 for
@@ -1045,7 +1050,7 @@ are the weakest numbers in this document.
 
 ## 12. Open items
 
-- **The work queue experiment** (§4.6, `concurrent-wq`) is staged and
+- **The work queue experiment** (§4.6, `pair-greenctx-workqueue-2submit`) is staged and
   smoke-tested but not yet swept: `--exp wq`, 60 runs. It is the current
   question — whether the MobileNet tail difference between Experiments 2 and 3 is
   a work queue configuration artefact, and whether the two experiments differ in
@@ -1057,7 +1062,7 @@ are the weakest numbers in this document.
   queue budget.
 - **`--start-at`** is still unimplemented: the two-process runs are aligned to
   ~0.5 % by warm-up symmetry rather than exactly (§10.2).
-- **CPU affinity.** The two concurrent networks run in two threads; pinning them
+- **CPU affinity.** The two concurrent networks run in two threads; cpu-affinity them
   to distinct cores would remove the one confound in-process concurrency adds.
 - **Accuracy.** Not implemented. Needs the ImageNet ground-truth labels
   (`ILSVRC2012_validation_ground_truth.txt`, distinct from the class-name file

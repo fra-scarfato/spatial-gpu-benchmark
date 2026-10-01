@@ -52,12 +52,12 @@ add "isolated-scaling_inception_aux2_whole"  "solo|off|||$RUNNER $INC2 $DS --all
 add "isolated-scaling_inception_aux4_whole"  "solo|off|||$RUNNER $INC4 $DS --allocation whole|"
 add "isolated-scaling_retinanet_aux16_whole" "solo|off|||$RUNNER $RN16 $DS --allocation whole|"
 
-add "concurrent-greenctx_baseline" \
+add "pair-greenctx-2submit_baseline" \
     "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
-    add "concurrent-greenctx_${mp}_${rp}" \
+    add "pair-greenctx-2submit_${mp}_${rp}" \
         "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
 done
 
@@ -74,16 +74,16 @@ done
 # vs 0.27 s ResNet) out of a 30 s window, so roughly 0.5%. A `--start-at`
 # deadline would make it exact; it is not needed to see an effect of the size
 # MPS would have to show in order to matter.
-add "concurrent-mps_mps_single"  "solo|on|||$RUNNER $MOB $DS --allocation whole|"
-add "concurrent-mps_mps_off"     "pair|off|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
-add "concurrent-mps_mps_default" "pair|on|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
+add "pair-mpsstatic-2submit_mps_single"  "solo|on|||$RUNNER $MOB $DS --allocation whole|"
+add "pair-mpsstatic-2submit_mps_off"     "pair|off|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
+add "pair-mpsstatic-2submit_mps_default" "pair|on|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
 
 # Phase 2: active thread percentage. This is NOT spatial partitioning. ATP
 # limits the fraction of the SM's thread slots a client may occupy, which scales
 # throughput but does not reserve particular SMs.
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
-    add "concurrent-mps_mps_atp_${mp}_${rp}" \
+    add "pair-mpsstatic-2submit_mps_atp_${mp}_${rp}" \
         "pair|on|CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=$mp|CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=$rp|$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole"
 done
 
@@ -98,7 +98,7 @@ done
 if [ "$STATIC_CHUNKS" -gt 0 ]; then
     for split in 50:50 75:25 25:75; do
         mp="${split%%:*}"; rp="${split##*:}"
-        add "concurrent-mps_mps_static_${mp}_${rp}" \
+        add "pair-mpsstatic-2submit_mps_static_${mp}_${rp}" \
             "pair|static|||$RUNNER $MOB $DS --allocation whole|$RUNNER $RES $DS --allocation whole|$mp"
     done
 fi
@@ -139,7 +139,7 @@ for split in 50:50 75:25; do
                devctx:1:device_ctx; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
-        add "concurrent-wq_${tag}_${lim}_${mp}_${rp}" \
+        add "pair-greenctx-workqueue-2submit_${tag}_${lim}_${mp}_${rp}" \
             "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
     done
 done
@@ -151,7 +151,7 @@ done
 # Exp 2 versus Exp 3 comparison cannot do because those two differ in both at
 # once. It is the cleanest pair in the whole matrix and it costs 10 runs.
 for lim in 8 2; do
-    add "concurrent-wq_unpart_${lim}" \
+    add "pair-greenctx-workqueue-2submit_unpart_${lim}" \
         "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation whole --net $MOB:100:mobilenet --net $RES:100:resnet|"
 done
 
@@ -185,7 +185,7 @@ for split in 50:50 75:25; do
                balanced:32:green_ctx_balanced devctx:8:device_ctx; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
-        add "concurrent-aux_${tag}_${lim}_${mp}_${rp}" \
+        add "pair-greenctx-auxstreams-2submit_${tag}_${lim}_${mp}_${rp}" \
             "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
     done
 done
@@ -193,7 +193,7 @@ done
 # The aux-enabled engine on its own, no green context and nothing else changed:
 # the reference its own pair rows are read against, and the row that says whether
 # permitting the auxiliary stream changed ResNet's own latency at all.
-add "concurrent-aux_aux1_whole" \
+add "pair-greenctx-auxstreams-2submit_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
 # ---------------------------------------------------------------------------
@@ -221,10 +221,10 @@ ST="--submit-threads 1"
 
 for split in 50:50 75:25 25:75; do
     mp="${split%%:*}"; rp="${split##*:}"
-    add "concurrent-greenctx-1t_${mp}_${rp}" \
+    add "pair-greenctx-1submit_${mp}_${rp}" \
         "solo|off|||$RUNNER --dataset $DS --allocation greenctx $ST --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
 done
-add "concurrent-greenctx-1t_baseline" \
+add "pair-greenctx-1submit_baseline" \
     "solo|off|||$RUNNER --dataset $DS --allocation whole $ST --net $MOB:100:mobilenet --net $RES:100:resnet|"
 
 for split in 50:50 75:25; do
@@ -234,12 +234,12 @@ for split in 50:50 75:25; do
                devctx:1:device_ctx; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
-        add "concurrent-wq-1t_${tag}_${lim}_${mp}_${rp}" \
+        add "pair-greenctx-workqueue-1submit_${tag}_${lim}_${mp}_${rp}" \
             "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx $ST --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RES:$rp:resnet|"
     done
 done
 for lim in 8 2; do
-    add "concurrent-wq-1t_unpart_${lim}" \
+    add "pair-greenctx-workqueue-1submit_unpart_${lim}" \
         "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation whole $ST --net $MOB:100:mobilenet --net $RES:100:resnet|"
 done
 
@@ -251,13 +251,13 @@ for split in 50:50 75:25; do
                balanced:32:green_ctx_balanced devctx:8:device_ctx; do
         tag="${arm%%:*}"; rest="${arm#*:}"
         lim="${rest%%:*}"; scope="${rest##*:}"
-        add "concurrent-aux-1t_${tag}_${lim}_${mp}_${rp}" \
+        add "pair-greenctx-auxstreams-1submit_${tag}_${lim}_${mp}_${rp}" \
             "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=$lim||$RUNNER --dataset $DS --allocation greenctx $ST --wq-scope $scope --wq-limit $lim --net $MOB:$mp:mobilenet --net $RESAUX:$rp:resnet|"
     done
 done
 # One network, so this arm has a single submitting thread in both sets; it is
 # repeated here only so the one-thread family stands on its own.
-add "concurrent-aux-1t_aux1_whole" \
+add "pair-greenctx-auxstreams-1submit_aux1_whole" \
     "solo|off|CUDA_DEVICE_MAX_CONNECTIONS=8||$RUNNER $RESAUX $DS --allocation whole|"
 
 # The submission model. One process, two networks, green contexts, 75/25 -- the
@@ -274,30 +274,30 @@ add "concurrent-aux-1t_aux1_whole" \
 # driver's included. The mixture is deliberate: the two-thread arm is what an
 # application can do with a stock tool, and the pinned one-thread arm is what it
 # cannot, which is why that one is a flag here.
-add "submit-model_t2_unpinned" \
+add "submission-model_t2_unpinned" \
     "solo|off|||$RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-add "submit-model_t1_unpinned" \
+add "submission-model_t1_unpinned" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
-add "submit-model_t2_core67" \
+add "submission-model_t2_core67" \
     "solo|off|||taskset -c $SUBMIT_CORE,$SUBMIT_CORE_B $RUNNER --submit-threads 2 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
 
 # The pinned-and-prioritised arm. 99 is the maximum RT priority the kernel offers;
-# the submitting thread blocks on events rather than spinning, so it never approaches
+# the submitting thread blocks on events rather than scpu-affinity, so it never approaches
 # the RT runtime throttle, and the run records the policy it was actually granted.
 if [ "$WITH_PRIORITY" = 1 ]; then
-    add "submit-model_t1_pinfifo99" \
+    add "submission-model_t1_pinfifo99" \
         "solo|off|||$RUNNER --submit-threads 1 --cpu $SUBMIT_CORE --priority fifo:99 --dataset $DS --allocation greenctx --net $MOB:75:mobilenet --net $RES:25:resnet|"
 fi
 
 # The one MPS arm. MPS runs one process per network, so each has exactly one
 # submitter and the 1-thread/2-thread axis does not exist there. What can vary across
 # processes is where each submitter runs: giving each its own core is the
-# cross-process analogue of the green-context pinning, and that is the whole of it.
+# cross-process analogue of the green-context cpu-affinity, and that is the whole of it.
 #
 # Needs --static-chunks, like every static arm: the partition count is read off
 # lspart on the real board, so it cannot be assumed.
 if [ "$STATIC_CHUNKS" -gt 0 ]; then
-    add "submit-model_mps_owncores" \
+    add "submission-model_mps_owncores" \
         "pair|static|||taskset -c $SUBMIT_CORE $RUNNER $MOB $DS --allocation whole --submit-threads 1|taskset -c $SUBMIT_CORE_B $RUNNER $RES $DS --allocation whole --submit-threads 1|75"
 fi
 
