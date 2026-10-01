@@ -90,26 +90,23 @@ run_arm() {
 
 for arm in "${ARMS[@]}"; do run_arm $arm; done
 
-# the validation: the co-runner's own kernel, profiled in isolation, on the same arms
+# the validation: the target's own kernels, profiled in isolation, on the same arms. This is not
+# contention - the profiler quiesces the co-runner - it checks the arms do what they claim: the L2
+# hit rate should be high while the operands fit in the cache and fall once they do not.
 echo
-echo "== validating the footprints with the profiler (its own kernel, no concurrency) =="
-printf "  %-14s %s\n" "arm" "L2 hit rate of the co-runner's SGEMM kernel"
+echo "== validating the footprints with the profiler =="
+printf "  %-14s %s\n" "arm" "L2 hit rate of the target's kernels"
 for arm in "${ARMS[@]}"; do
     set -- $arm
-    local_label=$1; local_spec=$2
-    case "$local_spec" in idle:*) continue;; esac
-    kind=${local_spec%%:*}; rest=${local_spec#*:}; pct=${rest%%:*}; size=${rest#*:}
-    args=(--interferer "$kind:$pct")
-    [ "$size" != "$rest" ] && args+=(--interferer-size "$size")
-    "$NCU" --metrics "$METRICS" --csv --log-file "$OUT/$local_label-ncu.csv" \
-           --launch-count 3 --kernel-name "regex:.*sgemm.*" --clock-control none \
-           ./runner "${BASE[@]}" --csv "/dev/shm/ncuval" \
-           --allocation greenctx --net "$MODEL:50:mobilenet" "${args[@]}" \
-           > "$OUT/$local_label-ncu.err" 2>&1
-    rm -f "/dev/shm/ncuval"*
-    awk -F'","' -v L="$local_label" \
-        '/lts__t_sector_hit_rate/{printf "  %-14s %s %%\n", L, $NF}' \
-        "$OUT/$local_label-ncu.csv" 2>/dev/null | head -1
+    label=$1; spec=$2
+    case "$spec" in idle:*) continue;; esac
+    rest=${spec#*:}; size=${rest#*:}
+    [ "$size" = "$rest" ] && size=512
+    OUT="$OUT" ./utility/ncu.sh target "$size" >/dev/null 2>&1
+    [ -f "$OUT/target-$size.csv" ] && cp -f "$OUT/target-$size.csv" "$OUT/$label-ncu.csv"
+    awk -F'","' -v L="$label" \
+        '/lts__t_sector_hit_rate/{printf "  %-14s %s %%\n", L, $NF; exit}' \
+        "$OUT/$label-ncu.csv" 2>/dev/null
 done
 
 echo

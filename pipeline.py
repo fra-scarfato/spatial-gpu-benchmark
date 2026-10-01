@@ -40,7 +40,7 @@ STAGES = ("engines", "measure", "reduce", "tables", "overview")
 # thesis reports; a diagnostic profiles what it measures and therefore perturbs it, so its output
 # is evidence about mechanisms and not a latency. Four diagnostics need root.
 STAGES_MEASUREMENT = STAGES
-STAGES_DIAGNOSTIC = ("traces", "soc", "soc-budget", "ncu", "probes")
+STAGES_DIAGNOSTIC = ("traces", "soc", "soc-budget", "soc-pressure", "l2-footprint", "ncu", "probes")
 EXTRA_STAGES = STAGES_DIAGNOSTIC
 
 
@@ -213,6 +213,7 @@ def main():
         say("\n== tables ==")
         out = bench / "aggregate"
         out.mkdir(parents=True, exist_ok=True)
+        run([sys.executable, "utility/mem-correlation.py"], args.dry_run)
         if run([sys.executable, "utility/results-tables.py"], args.dry_run,
                capture_to=out / "tables.tex") != 0:
             return 1
@@ -233,7 +234,7 @@ def main():
     if "probes" in wanted:
         say("\n== the probes ==")
         run(["make", "-C", "utility"], args.dry_run)
-        for probe in ("auxprobe", "wqprobe", "devprobe"):
+        for probe in ("auxprobe", "wqprobe", "devprobe", "itfproc"):
             run(["./utility/" + probe], args.dry_run)
 
     if "soc-budget" in wanted:
@@ -261,40 +262,18 @@ def main():
         say("\n== the SoC counters on the interferer pairs (needs root) ==")
         run(["sudo", "./utility/soc-traces.sh", "itf"], args.dry_run)
 
-    if "ncu" in wanted:
-        say("\n== ncu: does it work here, then the traffic per inference (needs root) ==")
-        models = families.data_root() / "models"
-        mobile = models / "mobilenetv2-12/engine/mobilenetv2-12.engine"
-        # no protocol bounds in this list: each command adds its own, because slicing it is how a
-        # flag and its value ended up on opposite sides of a cut and the runner threw stod
-        base = ["./runner", "--submit-threads", "1", "--dataset",
-                str(families.data_root() / "dataset/imagenet-1k"), "--fixed", "32"]
-        check = ["--min-inferences", "200", "--min-duration", "2"]
-        check_m = ["--min-inferences", "600", "--min-duration", "3"]
-        run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed"] + base + check +
-            ["--allocation", "whole", "--net", "{}:100:mobilenet".format(mobile),
-             "--csv", "/dev/shm/ncu-check"], args.dry_run)
-        run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-count", "1",
-             "--metrics", "mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed"] + base + check +
-            ["--allocation", "greenctx", 
-             "--net", "{}:50:mobilenet".format(mobile), "--csv", "/dev/shm/ncu-check"], args.dry_run)
-        say("  if both pass, the per-inference traffic, per network and budget:")
-        for path, pct in ((mobile, 50), (mobile, 25),
-                          (models / "retinanet-9/engine/retinanet-9.engine", 50),
-                          (models / "retinanet-9/engine/retinanet-9.engine", 25),
-                          (models / "inception_v3-onnx-float/engine/inception_v3.engine", 50),
-                          (models / "inception_v3-onnx-float/engine/inception_v3.engine", 25),
-                          (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 50),
-                          (models / "resnet50-v2-7/engine/resnet50-v2-7.engine", 25)):
-            run(["sudo", "/usr/local/cuda/bin/ncu", "--launch-skip", "60", "--launch-count", "400",
-                 "--metrics", "lts__t_sector_hit_rate.pct,lts__t_bytes.sum,mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed,mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed", "--csv",
-                 "--log-file", "/tmp/ncu-{}-{}.csv".format(Path(str(path)).stem, pct)] + base + check_m +
-                ["--allocation", "greenctx",
-                 
-                 "--net", "{}:{}:{}".format(path, pct, Path(str(path)).stem),
-                 "--csv", "/dev/shm/ncu"], args.dry_run)
+    if "soc-pressure" in wanted:
+        say("\n== the DRAM pressure each network applies, from the counters (no root) ==")
+        run([sys.executable, "utility/soc-pressure.py"], args.dry_run)
 
+    if "ncu" in wanted:
+        say("\n== ncu: does it work here, and under which flags (needs root) ==")
+        run(["sudo", "./utility/ncu.sh", "diagnose"], args.dry_run)
+
+    if "l2-footprint" in wanted:
+        say("\n== the co-runner's cache footprint against the penalty (needs root) ==")
+        run(["sudo", "./utility/l2-footprint-sweep.sh"], args.dry_run)
+        run([sys.executable, "utility/l2-footprint-verdict.py"], args.dry_run)
 
     say("\ndone")
     return 0
