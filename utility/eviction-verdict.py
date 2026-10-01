@@ -90,6 +90,30 @@ def load_series(rep):
     return r, w
 
 
+def co_runner_seconds(rep, name_pattern="sgemm"):
+    """Total time the co-runner's kernels occupied, from the trace's own kernel table.
+
+    Its rate is known from the profiler (13.9 GB/s while running), so its contribution to the
+    device's DRAM is that rate times the time it actually ran, which the trace records. The first
+    attempt subtracted the rate over the whole run instead, which exceeded the measured total.
+    """
+    os.makedirs(sqlite_dir, exist_ok=True)
+    db = os.path.join(sqlite_dir, os.path.basename(rep)[:-len(".nsys-rep")] + "-k.sqlite")
+    if not os.path.exists(db):
+        subprocess.run([NSYS, "export", "--type", "sqlite", "--force-overwrite=true",
+                        "--output", db, rep], check=True, capture_output=True)
+    con = sqlite3.connect(db)
+    ids = dict(con.execute("SELECT id, value FROM StringIds"))
+    total, n = 0, 0
+    for nm, start, end in con.execute("SELECT shortName, start, end FROM CUPTI_ACTIVITY_KIND_KERNEL"):
+        s_ = ids.get(nm, str(nm))
+        if name_pattern in s_:
+            total += (end - start)
+            n += 1
+    con.close()
+    return total / 1e9, n
+
+
 def count_of(stats_path):
     """Inferences and seconds from the runner's own statistics file."""
     for row in csv.DictReader(open(stats_path)):
@@ -118,10 +142,16 @@ def main():
             continue
         n, dur = count_of(sorted(stats)[0])
         # the integral of the counters: each direction against its own calibration, in GB
-        gb = (sum(r) / COPY_READ_PCT + sum(w) / COPY_WRITE_PCT) * COPY_GB_S / FREQ_HZ / 100.0
+        # (sum of the percentages / 100) * (1/10000 s) * the peak rate, with the peak taken from
+        # the calibration: 48 % of it is 91.5 GB/s. The earlier version divided by 100 twice.
+        gb = (sum(r) / COPY_READ_PCT + sum(w) / COPY_WRITE_PCT) * COPY_GB_S / FREQ_HZ
         per_inf = gb * 1e9 / n
-        # the co-runner's contribution at full rate for the whole run, if any
-        co = COMPUTE_GB_S * dur if "icompute" in label else 0.0
+        # the co-runner's contribution over the time its kernels actually ran
+        if "icompute" in label:
+            secs, nk = co_runner_seconds(rep)
+            co = COMPUTE_GB_S * secs
+        else:
+            secs, nk, co = 0.0, 0, 0.0
         per_inf_less = (gb - co) * 1e9 / n
         out[label] = (per_inf, per_inf_less)
         print("  %-18s %8d %9d %12.2f %14.0f %14.0f"
@@ -134,8 +164,8 @@ def main():
 
     hi, lo = pair[0] / alone[0], pair[1] / alone[1]
     print("\n  the pair over the alone condition, bytes per inference:")
-    print("    upper bound (the co-runner left in)  %.3f" % hi)
-    print("    lower bound (its full rate removed)  %.3f" % lo)
+    print("    total, co-runner left in                       %.3f" % hi)
+    print("    the target's own, co-runner's kernel time removed  %.3f" % lo)
     if lo > 1.05:
         print("    -> EVICTION: even with the co-runner's own traffic removed the target fetches"
               "\n       more bytes per inference than it does alone")
