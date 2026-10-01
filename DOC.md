@@ -37,18 +37,24 @@ include/
                   TrtEngine
   interferer.hpp  the synthetic participant: either memory traffic or arithmetic and
                   never both, in its own thread and stream inside its own allocation
-                  (split out of gpu.hpp; the device layer is being divided into
-                  alloc, engine and interferer by the same operation, one pass each,
-                  and each pass is checked by the originals losing no line)
+  allocation.hpp  the SM-partitioning seam: SmAllocation, its two implementations, the
+                  joint split and the factory that builds them. PartitionPlan is
+                  internal to allocation.cpp, where its only caller lives
+  engine.hpp      the TensorRT engine, its context, its buffers, and the pinned host
+                  memory the async copies need
   inputs.hpp      listImages, preprocess (the ImageNet input contract), InputSet
   stats.hpp       Stats + the statistics formatting (no CUDA, no images)
-  run.hpp         RunSpec, StartGate, Network, Run
+  network.hpp     RunSpec, StartGate, Network: one client's run
+  run.hpp         Run: the clients together, the protocol, the report
 src/
   config.cpp      the command line: parseArgs + printUsage
-  gpu.cpp         EVERY CUDA and TensorRT call in the program
+  allocation.cpp  the partitioning, and the factory
+  engine.cpp      the engine and the pinned host buffers
+  network.cpp     one client's run
+  run.cpp         the experiment
+  gpu.cpp         the CUDA error check both layers call
   inputs.cpp
   stats.cpp
-  run.cpp
   main.cpp        wiring only (~30 lines)
 ```
 
