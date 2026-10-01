@@ -6,6 +6,14 @@
 # quiet is measured rather than assumed: a known workload is timed and compared against a
 # reference, and a run that lands outside the tolerance aborts instead of measuring.
 
+# What the checks below read, defaulted here rather than assumed of the caller: the sweep sets these
+# itself, and a script that sources this library without them died on "GPU_DEVFREQ: unbound variable"
+# the moment set -u met check_clocks.
+: "${GPU_DEVFREQ:=/sys/class/devfreq/17000000.gpu}"
+: "${SENTINEL_REF_MS:=0.535}"
+: "${SENTINEL_TOL:=0.15}"
+: "${SENTINEL_INF:=500}"
+
 require_quiet_cpu() {
     local one
     # The 5-minute average, not the 1-minute: a single transient spike (a build, the
