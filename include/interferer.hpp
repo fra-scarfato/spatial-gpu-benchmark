@@ -18,9 +18,10 @@
 // two constraints are the whole design.
 class Interferer {
 public:
-    enum class Kind { MemSaxpy, ComputeGemm };
+    enum class Kind { MemSaxpy, ComputeGemm, Idle };
 
-    Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes);
+    Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes,
+               int gemmSide = 512);
     ~Interferer();
 
     Interferer(const Interferer&)            = delete;
@@ -51,7 +52,8 @@ private:
     void*         dC_       = nullptr;
     void*         handle_   = nullptr;   // cublasHandle_t, opaque here so that the
                                          // header does not drag cublas in
-    std::size_t   mb_       = 0;         // working set per buffer
+    std::size_t   mb_       = 0;         // working set per buffer (the memory kind)
+    int           gemmSide_ = 512;       // the compute kind's operand side, in elements
     std::size_t   n_        = 0;         // elements
     std::size_t   units_    = 0;
     double        bytes_    = 0.0;

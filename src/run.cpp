@@ -421,8 +421,10 @@ Run::Run(const Options& opts)
     if (!opts_.interferer.kind.empty()) {
         Interferer::Kind k = Interferer::Kind::MemSaxpy;
         if (opts_.interferer.kind == "compute_gemm")  k = Interferer::Kind::ComputeGemm;
+        if (opts_.interferer.kind == "idle")          k = Interferer::Kind::Idle;
         const std::size_t megabytes = 256;   // far above L2: the traffic leaves the chip
-        interferer_ = std::make_unique<Interferer>(k, std::move(allocations[nets_.size()]), megabytes);
+        interferer_ = std::make_unique<Interferer>(k, std::move(allocations[nets_.size()]),
+                                                   megabytes, opts_.interferer.size);
     }
 
     // 4. Say what is about to be measured. This log is the record of the

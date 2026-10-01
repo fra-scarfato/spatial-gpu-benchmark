@@ -18,26 +18,40 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
-Interferer::Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes)
-    : kind_(kind), allocation_(std::move(allocation)), mb_(megabytes) {
-    const std::size_t bytes = mb_ * 1024ull * 1024ull;
-    n_ = bytes / sizeof(float);
-    if (cudaMalloc(&dA_, bytes) != cudaSuccess)
-        throw std::runtime_error("cudaMalloc (interferer A) failed");
-    if (cudaMalloc(&dB_, bytes) != cudaSuccess)
-        throw std::runtime_error("cudaMalloc (interferer B) failed");
-    if (cudaMalloc(&dC_, bytes) != cudaSuccess)
-        throw std::runtime_error("cudaMalloc (interferer C) failed");
-    // Touched once here, so that the first unit is not charged for faulting pages in.
-    if (cudaMemset(dA_, 1, bytes) != cudaSuccess || cudaMemset(dB_, 1, bytes) != cudaSuccess)
-        throw std::runtime_error("cudaMemset (interferer) failed");
-
+Interferer::Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes,
+                       int gemmSide)
+    : kind_(kind), allocation_(std::move(allocation)), mb_(megabytes), gemmSide_(gemmSide) {
+    // The buffers are sized by what the kind uses. 256 MB per buffer belongs to the memory
+    // kind, whose traffic has to leave the chip; the compute kind needs one GEMM side squared
+    // per operand, and that side is the whole variable of a footprint sweep. Three 256 MB
+    // buffers for a 64-cubed GEMM would report a working set three orders of magnitude above
+    // what it touches, and the idle kind needs nothing at all.
+    std::size_t bytes = 0;
+    if (kind_ == Kind::MemSaxpy) {
+        bytes = mb_ * 1024ull * 1024ull;
+        n_ = bytes / sizeof(float);
+    } else if (kind_ == Kind::ComputeGemm) {
+        n_ = std::size_t(gemmSide_) * std::size_t(gemmSide_);
+        bytes = n_ * sizeof(float);
+    }
+    if (bytes > 0) {
+        if (cudaMalloc(&dA_, bytes) != cudaSuccess ||
+            cudaMalloc(&dB_, bytes) != cudaSuccess ||
+            cudaMalloc(&dC_, bytes) != cudaSuccess)
+            throw std::runtime_error("cudaMalloc (interferer) failed");
+        // Touched once here, so that the first unit is not charged for faulting pages in.
+        if (cudaMemset(dA_, 1, bytes) != cudaSuccess ||
+            cudaMemset(dB_, 1, bytes) != cudaSuccess)
+            throw std::runtime_error("cudaMemset (interferer) failed");
+    }
     stream_ = allocation_->createStream();     // created inside this partition
     if (cudaEventCreate(&startEvt_) != cudaSuccess ||
         cudaEventCreate(&stopEvt_) != cudaSuccess)
@@ -59,6 +73,7 @@ const char* Interferer::kindName() const noexcept {
     switch (kind_) {
         case Kind::MemSaxpy:    return "mem_saxpy";
         case Kind::ComputeGemm: return "compute_gemm";
+        case Kind::Idle:        return "idle";
     }
     return "?";
 }
@@ -81,14 +96,23 @@ void Interferer::submit() {
         // a single GEMM lasts about a hundred microseconds, which would spend more
         // time in the launch path than in the arithmetic.
         const float one = 1.0f, zero = 0.0f;
-        const int m = 512, k = 512, n = 512;
-        for (int rep = 0; rep < 32; ++rep)
+        // The same total arithmetic as 512 cubed repeated 32 times, whatever the side, so that
+        // a unit costs about the same in every arm of a footprint sweep.
+        const int m = gemmSide_, k = gemmSide_, n = gemmSide_;
+        const int reps =
+            std::max(1, int(4300000000.0 / (double(m) * double(n) * double(k))));
+        for (int rep = 0; rep < reps; ++rep)
             cublasSgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, &one,
                         static_cast<const float*>(dA_), m,
                         static_cast<const float*>(dB_), k,
                         &zero, static_cast<float*>(dC_), m);
-        flops_ += 32.0 * 2.0 * m * n * k;
-    } else {
+        flops_ += double(reps) * 2.0 * m * n * k;
+        } else if (kind_ == Kind::Idle) {
+            // Occupies its partition and asks the device for nothing: the control for whether
+            // the floor of the penalty is contention at all, or merely the existence of a
+            // second partition. Sleeping rather than spinning keeps the CPU out of it.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } else {
         // Not SM work at all: kept as a control for the copy path, which an SM
         // partition cannot contain because it does not run on SMs.
         cudaMemcpyAsync(dB_, dA_, mb_ * 1024ull * 1024ull,
@@ -104,6 +128,11 @@ void Interferer::start() {
     stop_.store(false, std::memory_order_relaxed);
     cudaEventRecord(startEvt_, stream_);
     thread_ = std::thread([this] {
+        if (kind_ == Kind::Idle) {
+            while (!stop_.load(std::memory_order_relaxed))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return;
+        }
         // The cuBLAS handle is created HERE, not in the constructor. A handle is
         // bound to the thread that created it and is not thread-safe: making it on
         // the main thread and using it here is undefined behaviour, and it
@@ -136,10 +165,17 @@ void Interferer::stop() {
 }
 
 void Interferer::report() const {
-    if (units_ == 0) return;
+    if (units_ == 0 && kind_ != Kind::Idle) return;
     std::cout << "\n--- interferer '" << kindName() << "' ---\n"
               << "  allocation:   " << allocation_->name() << "\n"
-              << "  working set:  " << mb_ << " MB per buffer\n"
+              << "  working set:  "
+              << (kind_ == Kind::ComputeGemm
+                      ? 3.0 * double(gemmSide_) * double(gemmSide_) * 4.0 / 1048576.0
+                      : (kind_ == Kind::Idle ? 0.0 : double(mb_)))
+              << " MB" << (kind_ == Kind::ComputeGemm ? " (three operands)" : " per buffer") << "\n"
+              << (kind_ == Kind::ComputeGemm
+                      ? "  GEMM side:    " + std::to_string(gemmSide_) + "\n"
+                      : "")
               << "  units:        " << units_ << " in " << elapsedS_ << " s"
               << " (" << (elapsedS_ > 0 ? units_ / elapsedS_ : 0.0) << " units/s)\n";
     if (bytes_ > 0)

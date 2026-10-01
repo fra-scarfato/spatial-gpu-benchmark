@@ -162,9 +162,13 @@ struct Options {
     // from the cost of doing arithmetic. It takes a share of the same joint split as a
     // network does, because a second process would serialise.
     struct InterfererOptions {
-        std::string kind;           // "" | mem_saxpy | compute_gemm
+        std::string kind;           // "" | mem_saxpy | compute_gemm | idle
         int         smPercent = 0;  // its share of the device
         std::string label = "interferer";
+        // compute_gemm's side, in elements. Its three operands are 3*size^2*4 bytes, so the
+        // footprint is set here and not by the 256 MB the memory kind needs: a footprint sweep
+        // has to be able to ask for a co-runner whose operands fit in L1, in L2, or in neither.
+        int         size = 512;
     };
     InterfererOptions interferer;
 };

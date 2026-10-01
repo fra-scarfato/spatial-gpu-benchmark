@@ -92,6 +92,10 @@ void printUsage(const char* prog) {
         << "                        (sudo setcap cap_sys_nice+ep runner) and FAILS\n"
         << "                        LOUDLY without it, rather than measuring at\n"
         << "                        normal priority and looking like a null result.\n"
+        << "  --interferer-size <n> compute_gemm\x27s side in elements, default 512. Its\n"
+        << "                        three operands are 3n^2*4 bytes, so this sets the\n"
+        << "                        co-runner\x27s footprint: small enough to sit in L1,\n"
+        << "                        around 4 MB to fill L2, larger to leave it.\n"
         << "  --interferer <k>:<p>  add a synthetic participant to the joint SM\n"
         << "                        split: mem_saxpy or compute_gemm (or\n"
 
@@ -258,14 +262,18 @@ Options parseArgs(int argc, char** argv) {
             if (a == std::string::npos)
                 throw std::runtime_error("--interferer expects <kind>:<pct>[:<label>], got: " + spec);
             const std::string kind = spec.substr(0, a);
-            if (kind != "mem_saxpy" && kind != "compute_gemm")
+            if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "idle")
                 throw std::runtime_error(
-                    "--interferer expects mem_saxpy or compute_gemm, got: " + kind);
+                    "--interferer expects mem_saxpy, compute_gemm or idle, got: " + kind);
             const auto b = spec.find(':', a + 1);
             o.interferer.kind = kind;
             o.interferer.smPercent = std::stoi(
                 spec.substr(a + 1, (b == std::string::npos) ? std::string::npos : b - a - 1));
             if (b != std::string::npos) o.interferer.label = spec.substr(b + 1);
+        } else if (arg == "--interferer-size") {
+            const int v = std::stoi(nextValue(i, argc, argv, arg));
+            if (v < 16) throw std::runtime_error("--interferer-size must be at least 16");
+            o.interferer.size = v;
         } else if (arg == "--submit-threads") {
             const unsigned v =
                 static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
