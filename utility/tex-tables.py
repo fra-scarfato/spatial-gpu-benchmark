@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import aggregate as A
+from lib import tables as T          # the access layer, so that only one module reads the tree
 
 # The data root comes from the aggregate module, so the two tools cannot
 # disagree about where the results are.
@@ -22,26 +23,24 @@ if not DATA:
 
 
 def ms(v):
-    return "---" if v is None else "{:.4f}".format(v)
+    return T.ms(v)
 
 
 def xr(a, b):
-    return "---" if not a or not b else "{:.3f}".format(b / a)
+    # this file calls it xr(numerator, denominator); the shared layer takes (value, reference)
+    return T.xr(b, a)
 
 
 def med(exp, cfg, net):
-    r = A.aggr(DATA, exp, cfg, net, "gpu_ms", "median")
-    return r[0] if r else None
+    return T.val(exp, cfg, net, "median")
 
 
 def tail(exp, cfg, net):
-    r = A.aggr(DATA, exp, cfg, net, "gpu_ms", "p99_minus_median")
-    return r[0] if r else None
+    return T.val(exp, cfg, net, "p99_minus_median")
 
 
 def col2(exp, cfg, net, c):
-    r = A.aggr(DATA, exp, cfg, net, "gpu_ms", c)
-    return r[0] if r else None
+    return T.val(exp, cfg, net, c)
 
 
 def obs(exp, cfg, net):
@@ -52,8 +51,7 @@ def obs(exp, cfg, net):
 
 
 def iso(net):
-    r = A.aggr(DATA, "exp1", net + "_whole", net, "gpu_ms", "p99_minus_median")
-    return r[0] if r else None
+    return T.ref(net)[0]          # the network alone on the whole device: its tail
 
 
 def agg_tp(exp, cfg):
