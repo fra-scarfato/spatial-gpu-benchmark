@@ -1,106 +1,85 @@
 #!/usr/bin/env python3
-"""Co-runner DRAM traffic against the median penalty it causes the target.
+"""The co-runner's DRAM demand against the median penalty it causes, and the split of that penalty.
 
     utility/mem-correlation.py
 
-The residuals were measured before the traffic was, so they have never been put beside each other.
-The traffic comes from the SoC counters, taken while each co-runner ran alone, which is the only
-attribution the counters allow; the penalties come from the aggregate CSVs, target median against the
-target's median alone in the same session.
+Eight co-runners have a measured penalty and a known demand, but only seven have a *measured*
+demand: compute_gemm at 8 SMs is quoted nowhere, and its demand is not the same as at 4 SMs, so it
+is left out rather than estimated into a coefficient.
 
-One care: for a co-runner that is a real network the traffic is the isolated reading, while inside the
-pair its traffic is 70-81 % of that, because the two clients are sub-additive. The correlation is
-therefore against the co-runner's own demand rather than its realised demand, and it is stated as such.
+The split in Table~\\ref{tab:mem-demand} is this:
 
-The synthetic interferer is different in kind: mem_saxpy reports its own GB/s from its own accounting
-(it knows how many bytes it asked for), and compute_gemm moves almost no DRAM at all because its
-operands are L2-resident. Those two are what separate the traffic-dependent part of the penalty from
-the part that is present anyway.
+    demand_share_i = slope * demand_i
+    the_rest_i     = penalty_i - demand_share_i
+
+with the slope and intercept from a least-squares fit of penalty against demand over the seven rows.
+The two columns are therefore a model's decomposition, not two measurements, and the rest column
+absorbs the fit's error: that is why ResNet at 8 SMs shows 15.3 where the other rows cluster near
+10.6.
+
+Each penalty is against the target alone at 8 SMs in the same family, which is what every other
+table in this section does: the mechanism family reads 0.6752 ms and the additivity family 0.6718,
+so the same arm differs by half a point between families.
+
+The demand of the four networks is their own SoC reading while alone, converted to GB/s with the
+copy calibration; that of the two synthetic participants is their own accounting. Inside a pair a
+network realises 69 to 81 per cent of the demand it shows alone, so the x axis is demand rather than
+realised traffic and the slope is softer than it would be against realised traffic.
 """
-import csv
-import glob
 import os
 import statistics
 import sys
 
-BENCH = os.environ.get("DATA", "/mnt/nvme/f.scarfato") + "/bench"
-AGG = os.path.join(BENCH, "aggregate")
+# (label, demand in GB/s, measured penalty in per cent, where the numbers come from)
+ARMS = [
+    ("compute_gemm at 4 SMs", 13.9, 14.5, "ncu: 4.98% of peak read, 4.0% write, copy calibration"),
+    ("inception at 4 SMs",    20.8, 16.1, "SoC: inception alone at 25% of the SMs"),
+    ("resnet at 4 SMs",       26.6, 17.4, "SoC: resnet alone at 25%"),
+    ("retinanet at 4 SMs",    29.3, 19.0, "SoC: retinanet alone at 25%"),
+    ("resnet at 8 SMs",       38.4, 26.6, "SoC: resnet alone at 50%"),
+    ("mem_saxpy at 4 SMs",    54.9, 24.2, "the interferer's own accounting"),
+    ("mem_saxpy at 8 SMs",    89.9, 37.3, "the interferer's own accounting"),
+]
 
 
-def medians(exp, cfg, net):
-    """The per-run medians of gpu_ms for one cell."""
-    path = os.path.join(AGG, exp + ".csv")
-    out = []
-    for row in csv.DictReader(open(path)):
-        if row["config"] == cfg and row["network"] == net and row["metric"] == "gpu_ms":
-            out.append(float(row["median"]))
-    return out
-
-
-def one(exp, cfg, net):
-    v = medians(exp, cfg, net)
-    return statistics.median(v) if v else None
-
-
-def soc_traffic():
-    """Sustained GB/s per configuration, from the SoC analysis."""
-    out = {}
-    path = os.path.join(BENCH, "soc-pressure.csv")
-    if not os.path.exists(path):
-        return out
-    for row in csv.DictReader(open(path)):
-        r, w = float(row["dram_read_busy_pct"]), float(row["dram_write_busy_pct"])
-        out[row["configuration"]] = r / 48.0 * 91.5 + w / 83.0 * 91.5
-    return out
+def fit(xs, ys):
+    mx, my = statistics.mean(xs), statistics.mean(ys)
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+    return slope, my - slope * mx
 
 
 def main():
-    soc = soc_traffic()
-    # the reference: the target alone at 8 SMs, in the additivity session where it exists
-    ref = one("exp11", "mobilenet-alone", "mobilenet") or one("exp1", "mobilenet_gc50", "mobilenet")
-    ref1 = one("exp1", "mobilenet_gc50", "mobilenet")
-    if ref is None:
-        sys.exit("  no reference for mobilenet at 8 SMs")
-    print("\n  reference: mobilenet at 8 SMs alone = %.4f ms (exp11) / %.4f ms (exp1 gc50)" % (ref, ref1 or 0))
+    xs = [a[1] for a in ARMS]
+    ys = [a[2] for a in ARMS]
+    slope, inter = fit(xs, ys)
+    print("\n  least squares over %d rows: penalty = %.2f %% + %.4f %% per GB/s"
+          % (len(ARMS), inter, slope))
+    print("  slope  = %s" % ("sum((x-xbar)(y-ybar)) / sum((x-xbar)^2)"))
+    print("  xbar = %.3f GB/s, ybar = %.3f %%, slope = %.4f, intercept = %.3f"
+          % (statistics.mean(xs), statistics.mean(ys), slope, inter))
 
-    # (label, experiment, config, traffic in GB/s, where the traffic comes from)
-    arms = [
-        ("compute_gemm @ 4 SMs", "exp9",  "computegemm-4sm", 0.0,  "own accounting, L2-resident"),
-        ("compute_gemm @ 8 SMs", "exp9",  "computegemm-8sm", 0.0,  "own accounting, L2-resident"),
-        ("inception @ 4 SMs",    "exp11", "mobilenet+inception", soc.get("soc-greenctx-inception_v3-25", 0.0), "isolated SoC"),
-        ("resnet @ 4 SMs",       "exp9",  "mobilenet8-resnet4", soc.get("soc-greenctx-resnet50-v2-7-25", 0.0), "isolated SoC"),
-        ("retinanet @ 4 SMs",    "exp11", "mobilenet+retinanet", soc.get("soc-greenctx-retinanet-9-25", 0.0), "isolated SoC"),
-        ("resnet @ 8 SMs",       "exp2-1t", "50_50",            soc.get("soc-greenctx-resnet50-v2-7-50", 0.0), "isolated SoC"),
-        ("mem_saxpy @ 4 SMs",    "exp9",  "memsaxpy-4sm",   54.9, "own accounting"),
-        ("mem_saxpy @ 8 SMs",    "exp9",  "memsaxpy-8sm",   89.9, "own accounting"),
-    ]
+    print("\n  %-24s %8s %9s %11s %10s %8s  %s"
+          % ("co-runner", "demand", "penalty", "share", "the rest", "residual", "demand from"))
+    print("  " + "-" * 108)
+    worst = 0.0
+    for label, d, pen, basis in ARMS:
+        share = slope * d
+        rest = pen - share
+        resid = pen - (inter + share)
+        worst = max(worst, abs(resid))
+        print("  %-24s %7.1f  %+8.1f %+10.1f %+9.1f %+8.2f  %s"
+              % (label, d, pen, share, rest, resid, basis))
+    print("\n  the rest column clusters near the intercept, %.1f, and the widest miss is %.1f points"
+          % (inter, worst))
+    print("  the share column is slope * demand, so it is the fit's term and not a second measurement")
 
-    print("\n  %-22s %-9s %-9s %-8s %s" % ("co-runner", "traffic", "median", "penalty", "traffic from"))
-    print("  " + "-" * 88)
-    rows = []
-    for label, exp, cfg, traffic, source in arms:
-        m = one(exp, cfg, "mobilenet")
-        if m is None:
-            print("  %-22s %-9s %s" % (label, "%.1f" % traffic, "no data"))
-            continue
-        pen = (m / ref - 1.0) * 100.0
-        rows.append((label, traffic, m, pen))
-        print("  %-22s %-9s %-9s %-8s %s" % (
-            label, "%.1f GB/s" % traffic, "%.4f" % m, "%+.1f %%" % pen, source))
-
-    # one line through all eight, including the two that move no DRAM: the intercept is the part of
-    # the penalty that is present with no traffic at all, and it is the interesting coefficient
-    t_mean = statistics.mean(t for _, t, _, _ in rows)
-    p_mean = statistics.mean(p for _, _, _, p in rows)
-    slope = sum((t - t_mean) * (p - p_mean) for _, t, _, p in rows) / sum(
-        (t - t_mean) ** 2 for _, t, _, _ in rows)
-    inter = p_mean - slope * t_mean
-    print("\n  through all eight: penalty = %+.1f %% + %.3f %% per GB/s" % (inter, slope))
-    worst = max(abs(p - (inter + slope * t)) for _, t, _, p in rows)
-    print("  worst residual: %.1f points, so one line describes all eight" % worst)
-    print("  at the demand of the real co-runners (21-38 GB/s) the traffic term is %.0f-%.0f points,"
-          % (slope * 21, slope * 38))
-    print("  and about %.0f points are present anyway." % inter)
+    dest = os.environ.get("DATA", "/mnt/nvme/f.scarfato") + "/bench/mem-demand.csv"
+    with open(dest, "w") as fh:
+        fh.write("co_runner,demand_gb_s,penalty_pct,demand_share_pct,the_rest_pct,residual_pts\n")
+        for label, d, pen, _ in ARMS:
+            fh.write("%s,%.1f,%.1f,%.2f,%.2f,%.2f\n"
+                     % (label, d, pen, slope * d, pen - slope * d, pen - (inter + slope * d)))
+    print("  wrote %s" % dest)
 
 
 if __name__ == "__main__":

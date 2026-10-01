@@ -154,8 +154,11 @@ def main():
         read_gb = r_peak / COPY_READ_PCT * COPY_GB_S
         write_gb = w_peak / COPY_WRITE_PCT * COPY_GB_S
         total_gb = read_gb + write_gb
+        # the same conversion applied to the sustained statistic, which is the one the
+        # demand table uses: each direction against its own calibration point
+        busy_gb = r_busy / COPY_READ_PCT * COPY_GB_S + w_busy / COPY_WRITE_PCT * COPY_GB_S
         per_inf = (total_gb * 1e9 / rate) if rate else float("nan")
-        rows.append((name, r_peak, w_peak, total_gb, rate, per_inf, r_busy, w_busy))
+        rows.append((name, r_peak, w_peak, total_gb, rate, per_inf, r_busy, w_busy, busy_gb))
         print("  %-34s %-8.2f %-8.2f %-10.1f %-10s %-9s %d   busy %.1f/%.1f" % (
             name, r_peak, w_peak, total_gb, "{:.0f}".format(rate) if rate else "?",
             "{:.2e}".format(per_inf) if rate else "?", len(s["read"]), r_busy, w_busy))
@@ -165,12 +168,12 @@ def main():
         w = csv.writer(fh)
         w.writerow(["configuration", "dram_read_peak_pct", "dram_write_peak_pct",
                     "gb_per_s_peak_estimate", "inf_per_s", "bytes_per_inference",
-                    "dram_read_busy_pct", "dram_write_busy_pct"])
-        for name, r, w_, gb, rate, per, rb, wb in rows:
+                    "dram_read_busy_pct", "dram_write_busy_pct", "gb_per_s_sustained"])
+        for name, r, w_, gb, rate, per, rb, wb, bg in rows:
             w.writerow([name, "{:.2f}".format(r), "{:.2f}".format(w_), "{:.2f}".format(gb),
                         "" if not rate else "{:.0f}".format(rate),
                         "" if not rate else "{:.0f}".format(per),
-                        "{:.2f}".format(rb), "{:.2f}".format(wb)])
+                        "{:.2f}".format(rb), "{:.2f}".format(wb), "{:.2f}".format(bg)])
     print("\n  wrote {}".format(dest))
 
 
