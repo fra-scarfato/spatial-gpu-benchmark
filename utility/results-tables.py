@@ -898,7 +898,8 @@ if _ovl:
                 _desc, float(_r["co_runner_covers"]), float(_r["kernels_free_us"]),
                 float(_r["kernels_overlapped_us"]), float(_r["fixed_us_per_kernel"]),
                 100 * float(_r["proportional"]),
-                _r["gap_us_co_idle"] or "---", _r["gap_us_co_busy"]))
+                "{:.2f}".format(float(_r["gap_us_co_idle"])) if _r["gap_us_co_idle"] else "---",
+                "{:.2f}".format(float(_r["gap_us_co_busy"]))))
     close_table()
 
 

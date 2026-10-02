@@ -102,7 +102,7 @@ void Interferer::submit() {
     } else if (kind_ == Kind::Spin) {
         // One long kernel per unit, 16 blocks of 256 threads: resident in a single wave on four
         // SMs or eight, so the unit adds one launch and sixteen block dispatches every few
-        // milliseconds and nothing else. About 3e6 dependent FMAs per thread is ~10 ms here.
+        // milliseconds and nothing else. 3e6 dependent FMAs per thread last 27 ms on four SMs, 13.5 on eight.
         if (launchSpin(stream_, 16, 3000000LL) != cudaSuccess)
             throw std::runtime_error("spin kernel launch failed");
     }
