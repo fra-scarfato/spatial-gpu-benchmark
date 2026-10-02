@@ -326,7 +326,7 @@ close_table()
 CPU = [("t1_unpinned", "GC", "1 thread"),
        ("t1_pinfifo99", "GC", "1 thread, FIFO 99"),
        ("t2_unpinned", "GC", "2 threads"),
-       ("t2_core67", "GC", "2 threads, cores 6-7"),
+       ("t2_core67", "GC", "2 threads, 2 cores"),
        ("mps_owncores", "MPS static", "1 core each")]
 cols, spec = wide_head([r"Mechanism", r"Configuration"], False, True)
 open_table(cols, spec,
@@ -335,7 +335,8 @@ open_table(cols, spec,
            "keeping one inference in flight per network; \\texttt{2 threads} gives each "
            "network its own thread, which is what an application does by accident, and "
            "\\texttt{FIFO 99} additionally pins the submitter to one core at the highest "
-           "real-time priority the kernel offers. The last row is the same split under MPS "
+           "real-time priority the kernel offers; \\texttt{2 cores} confines the two "
+           "submitters to cores 6 and 7. The last row is the same split under MPS "
            "static, one process per network and one core each.",
            "tab:cpu-rates")
 prev = None
@@ -366,7 +367,7 @@ close_table()
 # The subject is RetinaNet's aux8 build, the only engine in the corpus whose stream
 # count (9) exceeds the platform's default declaration (8), with MobileNet as the
 # co-runner at 50/50: one stream, so it never competes for the declaration.
-WQ = [("pair-sms-only", "SMs only (descriptor carries no work queues, declaration 8)"),
+WQ = [("pair-sms-only", "SMs only, declaration 8 (default)"),
       ("pair-device-ctx-10", "declared 10, \\texttt{device\\_ctx}"),
       ("pair-balanced-10", "declared 10, \\texttt{green\\_ctx\\_balanced}")]
 open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) & "
@@ -376,7 +377,7 @@ open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) &
            "\\texttt{aux8} build with nine stream-ordered workloads against a default "
            "declaration of eight, and MobileNet as the co-runner, 50\\,\\% each, one "
            "submitting thread. The first row is the descriptor every earlier measurement "
-           "used.",
+           "used, which carries SMs and no work queues.",
            "tab:wq-rows")
 for cfg, desc in WQ:
     for net in ("retinanet", "mobilenet"):
@@ -557,8 +558,8 @@ _mx_base = {k: must(val(e, c, "mobilenet", "median"), c) for k, (e, c) in _mx_re
 _mx_base_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
                  for k, (e, c) in _mx_ref.items()}
 
-open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
-            r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
+open_table([r"Configuration & Mechanism & Median (ms) & $\times$iso & Thr.\ (inf/s) & "
+            r"tail (ms) & $\times$iso \\"], "llrrrrr",
            "What a participant's kind and budget cost a target holding its own 8\\,SMs, under "
            "each mechanism. Each configuration appears twice, under green contexts and under "
            "MPS static partitions, and the two rows of a pair differ in the mechanism alone; "
@@ -589,21 +590,21 @@ close_table()
 # same engine on the same share, so one column carries them and the caption records how far the
 # other is from it.
 WQAUX_ROWS = [
-    ("RetinaNet + RetinaNet", "SMs only", "retinanet-retinanet-sms-only", ("retinanet_a", "retinanet_b")),
-    ("RetinaNet + RetinaNet", "device-ctx 9", "retinanet-retinanet-device-ctx-9", ("retinanet_a", "retinanet_b")),
-    ("RetinaNet + RetinaNet", "balanced 9", "retinanet-retinanet-balanced-9", ("retinanet_a", "retinanet_b")),
-    ("RetinaNet + RetinaNet", "device-ctx 18", "retinanet-retinanet-device-ctx-18", ("retinanet_a", "retinanet_b")),
-    ("RetinaNet + RetinaNet", "balanced 18", "retinanet-retinanet-balanced-18", ("retinanet_a", "retinanet_b")),
+    ("2 RetinaNet", "SMs only", "retinanet-retinanet-sms-only", ("retinanet_a", "retinanet_b")),
+    ("2 RetinaNet", "device-ctx 9", "retinanet-retinanet-device-ctx-9", ("retinanet_a", "retinanet_b")),
+    ("2 RetinaNet", "balanced 9", "retinanet-retinanet-balanced-9", ("retinanet_a", "retinanet_b")),
+    ("2 RetinaNet", "device-ctx 18", "retinanet-retinanet-device-ctx-18", ("retinanet_a", "retinanet_b")),
+    ("2 RetinaNet", "balanced 18", "retinanet-retinanet-balanced-18", ("retinanet_a", "retinanet_b")),
     ("RetinaNet + Inception", "SMs only", "retinanet-inception-sms-only", ("retinanet", "inception")),
     ("RetinaNet + Inception", "device-ctx 9", "retinanet-inception-device-ctx-9", ("retinanet", "inception")),
     ("RetinaNet + Inception", "balanced 9", "retinanet-inception-balanced-9", ("retinanet", "inception")),
     ("RetinaNet + Inception", "device-ctx 12", "retinanet-inception-device-ctx-12", ("retinanet", "inception")),
     ("RetinaNet + Inception", "balanced 12", "retinanet-inception-balanced-12", ("retinanet", "inception")),
-    ("RetinaNet + RetinaNet + Inception", "SMs only", "retinanet-retinanet-inception-sms-only", ("retinanet_a", "retinanet_b", "inception")),
-    ("RetinaNet + RetinaNet + Inception", "device-ctx 9", "retinanet-retinanet-inception-device-ctx-9", ("retinanet_a", "retinanet_b", "inception")),
-    ("RetinaNet + RetinaNet + Inception", "balanced 9", "retinanet-retinanet-inception-balanced-9", ("retinanet_a", "retinanet_b", "inception")),
-    ("RetinaNet + RetinaNet + Inception", "device-ctx 21", "retinanet-retinanet-inception-device-ctx-21", ("retinanet_a", "retinanet_b", "inception")),
-    ("RetinaNet + RetinaNet + Inception", "balanced 21", "retinanet-retinanet-inception-balanced-21", ("retinanet_a", "retinanet_b", "inception")),
+    ("2 RetinaNet + Inception", "SMs only", "retinanet-retinanet-inception-sms-only", ("retinanet_a", "retinanet_b", "inception")),
+    ("2 RetinaNet + Inception", "device-ctx 9", "retinanet-retinanet-inception-device-ctx-9", ("retinanet_a", "retinanet_b", "inception")),
+    ("2 RetinaNet + Inception", "balanced 9", "retinanet-retinanet-inception-balanced-9", ("retinanet_a", "retinanet_b", "inception")),
+    ("2 RetinaNet + Inception", "device-ctx 21", "retinanet-retinanet-inception-device-ctx-21", ("retinanet_a", "retinanet_b", "inception")),
+    ("2 RetinaNet + Inception", "balanced 21", "retinanet-retinanet-inception-balanced-21", ("retinanet_a", "retinanet_b", "inception")),
 ]
 WQAUX_NETS = {"retinanet-retinanet-sms-only": ("retinanet_a", "retinanet_b"),
               "retinanet-retinanet-device-ctx-9": ("retinanet_a", "retinanet_b"),
@@ -669,7 +670,7 @@ ADDT_TARGETS = [("mobilenet", "retinanet", "inception"),
 ADDT_MECHS = (("exp11", "GC"), ("exp12", "MPS static"))
 
 open_table([r"Target & Co-runners & Mechanism & Median (ms) & Thr.\ (inf/s) & Residual & "
-            r"Sum of the two & tail (ms) \\"], "lllrrrrr",
+            r"Sum & tail (ms) \\"], "lllrrrrr",
            "One target at 8\\,SMs and two co-runners at 4\\,SMs each, the device fully used. Each "
            "co-runner is measured alone before both are measured together, so the first row of a "
            "block is the reference the residuals are against. The sum column is the two "
