@@ -362,6 +362,12 @@ add "memory-interferers_computegemm-4sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:25|"
 add "memory-interferers_computegemm-8sm" \
     "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer compute_gemm:50|"
+# spin keeps one register-only kernel resident in its partition and touches no memory: what a
+# co-runner costs by merely executing, with no traffic and almost no launches.
+add "memory-interferers_spin-4sm" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer spin:25|"
+add "memory-interferers_spin-8sm" \
+    "solo|off|||$RUNNER --submit-threads 1 --dataset $DS --allocation greenctx --net $MOB:50:mobilenet --interferer spin:50|"
 
 # The same two kinds of co-runner, in a separate process under MPS static partitions.
 #

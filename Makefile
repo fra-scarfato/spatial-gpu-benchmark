@@ -26,6 +26,10 @@ SRCDIR   := src
 TARGET   := runner
 
 SOURCES  := $(wildcard $(SRCDIR)/*.cpp)
+# The one CUDA source, the spin participant's kernel, is compiled by nvcc for the Orin (sm_87)
+# and linked like any other object.
+NVCC     := /usr/local/cuda/bin/nvcc
+CUOBJS   := $(patsubst %.cu,%.o,$(wildcard $(SRCDIR)/*.cu))
 HEADERS  := $(wildcard $(INCDIR)/*.hpp)
 
 # System paths. Absolute on purpose: this is a shared lab machine, and the build
@@ -54,8 +58,11 @@ LIBS     := -L/usr/local/cuda/targets/sbsa-linux/lib \
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCES) $(HEADERS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) -o $(TARGET) $(LIBS)
+$(TARGET): $(SOURCES) $(HEADERS) $(CUOBJS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) $(CUOBJS) -o $(TARGET) $(LIBS)
+
+$(SRCDIR)/%.o: $(SRCDIR)/%.cu
+	$(NVCC) -O2 -arch=sm_87 -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(CUOBJS)

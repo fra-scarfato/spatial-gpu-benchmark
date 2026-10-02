@@ -210,7 +210,7 @@ def load(outdir):
             elif exp == "exp11" and config.endswith("-alone"):
                 # The additivity family: only the target runs, and the configuration names it.
                 net = config[: -len("-alone")]
-            elif exp == "exp9" and config.startswith(("mem", "compute", "mps_", "mps-")):
+            elif exp == "exp9" and config.startswith(("mem", "compute", "spin", "mps_", "mps-")):
                 net = "mobilenet"
             elif exp.startswith("exp5") and config == "aux1_whole":
                 # The isolated baseline of the auxiliary-stream family is the

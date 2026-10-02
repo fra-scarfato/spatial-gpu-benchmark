@@ -103,6 +103,7 @@ Run::Run(const Options& opts)
         Interferer::Kind k = Interferer::Kind::MemSaxpy;
         if (opts_.interferer.kind == "compute_gemm")  k = Interferer::Kind::ComputeGemm;
         if (opts_.interferer.kind == "idle")          k = Interferer::Kind::Idle;
+        if (opts_.interferer.kind == "spin")          k = Interferer::Kind::Spin;
         const std::size_t megabytes = 256;   // far above L2: the traffic leaves the chip
         interferer_ = std::make_unique<Interferer>(k, std::move(allocations[nets_.size()]),
                                                    megabytes, opts_.interferer.size);

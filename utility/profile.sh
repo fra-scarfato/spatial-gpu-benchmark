@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# profile.sh - every profiled run of this work, from one place.
+#
+#   utility/profile.sh traces           CUDA kernel traces of the target beside each co-runner (no root)
+#   sudo utility/profile.sh soc-budget  DRAM counters: each network alone on four budgets, three pairs
+#   sudo utility/profile.sh soc-itf     DRAM counters: the target alone and beside compute_gemm
+#   sudo utility/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
+#   sudo utility/profile.sh calibration DRAM counters during devprobe's device-to-device copies
+#   utility/profile.sh <set> --list     print the arms and their commands, run nothing
+#
+# A profiled run is a diagnostic, not a campaign measurement: the profiler perturbs the run, so
+# these are one run per arm and are read for shapes, ratios and per-kernel structure, never for a
+# latency that a table reports. The campaign is sweep.sh's.
+#
+# Output: $DATA/profiles/<set>/<arm>.nsys-rep, <arm>.log (the runner's own report) and
+# <arm>_stats.csv. An arm whose report exists is skipped unless FORCE=1. Every arm is guarded like
+# the campaign (clocks locked, nobody else on the GPU, the sentinel within tolerance); with
+# WAIT_MIN=<n> an arm waits up to n minutes for the board to become quiet instead of aborting.
+#
+# Read them with: python3 utility/profiles.py
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DATA="${DATA:-/mnt/nvme/f.scarfato}"
+NSYS="${NSYS:-/usr/local/bin/nsys}"
+WAIT_MIN="${WAIT_MIN:-0}"
+DS="$DATA/dataset/imagenet-1k"
+M="$DATA/models"
+MOB="$M/mobilenetv2-12/engine/mobilenetv2-12.engine"
+RES="$M/resnet50-v2-7/engine/resnet50-v2-7.engine"
+INC="$M/inception_v3-onnx-float/engine/inception_v3.engine"
+RET="$M/retinanet-9/engine/retinanet-9.engine"
+RUNNER="$ROOT/runner"
+
+set_name="${1:-}"; shift || true
+LIST=0; [ "${1:-}" = "--list" ] && LIST=1
+
+# The protocols. The campaign's 30 s and 5000 inferences for everything that is compared with the
+# campaign; the budget curve keeps the 20 s it was taken with, since its quantity is bytes per
+# inference and not a latency.
+LONG=(--min-inferences 5000 --min-duration 30)
+SHORT=(--min-inferences 100 --min-duration 20)
+TRACE=(--trace=cuda --sample=none --cpuctxsw=none)
+SOC=("${TRACE[@]}" --soc-metrics=true --soc-metrics-set=t234 --soc-metrics-frequency=10000)
+
+# The arms of each set, one per line: name|protocol|runner arguments. The target is MobileNet on 8
+# of the 16 SMs wherever there is a target; a co-runner gets 4 unless its name says otherwise.
+arms() {
+    local T="--allocation greenctx --net $MOB:50:mobilenet"
+    case "$1" in
+    traces)
+        echo "alone|LONG|$T"
+        echo "mem4|LONG|$T --interferer mem_saxpy:25"
+        echo "compute4|LONG|$T --interferer compute_gemm:25"
+        echo "spin4|LONG|$T --interferer spin:25"
+        echo "resnet4|LONG|$T --net $RES:25:resnet"
+        ;;
+    soc-budget)
+        local m p
+        for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9"; do
+            for p in 100 75 50 25; do
+                echo "soc-greenctx-${m#*:}-$p|SHORT|--allocation greenctx --net ${m%%:*}:$p:${m#*:}"
+            done
+        done
+        echo "soc-greenctx-mobilenetv2-12-50_resnet50-v2-7-25|SHORT|--allocation greenctx --net $MOB:50:mobilenetv2-12 --net $RES:25:resnet50-v2-7"
+        echo "soc-greenctx-mobilenetv2-12-50_resnet50-v2-7-50|SHORT|--allocation greenctx --net $MOB:50:mobilenetv2-12 --net $RES:50:resnet50-v2-7"
+        echo "soc-greenctx-mobilenetv2-12-50_retinanet-9-25|SHORT|--allocation greenctx --net $MOB:50:mobilenetv2-12 --net $RET:25:retinanet-9"
+        ;;
+    soc-itf)
+        echo "alone|LONG|$T"
+        echo "compute4|LONG|$T --interferer compute_gemm:25"
+        ;;
+    calibration)
+        echo "devprobe|NONE|"
+        ;;
+    footprint)
+        echo "A0-idle|LONG|$T --interferer idle:25"
+        local a
+        for a in A1-l1:64 B-1mb:288 C-2mb:400 D-3mb:512 E-4mb:576 F-12mb:1024; do
+            echo "${a%%:*}|LONG|$T --interferer compute_gemm:25 --interferer-size ${a#*:}"
+        done
+        ;;
+    *) return 1 ;;
+    esac
+}
+
+flags_for() { case "$1" in traces) echo TRACE ;; *) echo SOC ;; esac; }
+
+arms "$set_name" >/dev/null || {
+    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+}
+
+OUT="$DATA/profiles/$set_name"
+if [ "$LIST" = 1 ]; then
+    arms "$set_name" | while IFS='|' read -r name proto args; do
+        printf '%-50s %s %s\n' "$name" "$proto" "$args"
+    done
+    exit 0
+fi
+
+if [ "$(flags_for "$set_name")" = SOC ] && [ "$(id -u)" != 0 ]; then
+    echo "profile.sh: the $set_name set reads the SoC counters, which need root: sudo $0 $set_name" >&2
+    exit 1
+fi
+
+mkdir -p "$OUT"
+export OUT RUNNER MOB DS
+source "$ROOT/utility/lib/guards.sh"
+check_clocks || exit 1
+
+wait_quiet() {   # the campaign's guard, retried once a minute for up to WAIT_MIN minutes
+    local n=0
+    until require_quiet_gpu; do
+        n=$((n + 1))
+        [ "$n" -gt "$WAIT_MIN" ] && { echo "[profile] the board stayed busy; stopping" >&2; return 1; }
+        echo "[profile] waiting for a quiet board ($n/$WAIT_MIN min)"
+        sleep 60
+    done
+}
+
+# The guard only sees the board before an arm. A co-tenant who starts during one would go unnoticed,
+# so a watcher polls the GPU device nodes every two seconds while the arm runs, ignoring this work's
+# own processes (their command lines name the scarfato paths), and an arm it flags is moved to
+# rejected/ and taken again.
+intruders() {
+    local p f t cmd
+    for p in /proc/[0-9]*; do
+        for f in "$p"/fd/*; do
+            t=$(readlink "$f" 2>/dev/null) || continue
+            case "$t" in /dev/nvgpu/*|/dev/nvmap|/dev/dri/renderD*) ;; *) continue ;; esac
+            cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)
+            case "$cmd" in ""|*scarfato*|*nvidia-cuda-mps*) ;; *) echo "${p#/proc/} $cmd"; return 0 ;; esac
+            break
+        done
+    done
+    return 1
+}
+watch_gpu() { while sleep 2; do intruders >> "$OUT/.intruded" && return; done; }
+
+declare -n FLAGS="$(flags_for "$set_name")"
+"$NSYS" --version | head -1
+while IFS='|' read -r name proto args; do
+    if [ -f "$OUT/$name.nsys-rep" ] && [ "${FORCE:-0}" != 1 ]; then
+        echo "== $name: profiled already, skipped (FORCE=1 to repeat)"
+        continue
+    fi
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    wait_quiet </dev/null || exit 1
+    echo "== $name"
+    rm -f "$OUT/.intruded"
+    watch_gpu & WATCH=$!
+    if [ "$proto" = NONE ]; then      # the calibration: devprobe's copies, not the runner
+        make -s -C "$ROOT/utility" devprobe
+        "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$name" \
+            "$ROOT/utility/devprobe" > "$OUT/$name.log" 2>&1 </dev/null
+        echo "   exit $?"
+    else
+    declare -n P="$proto"
+    # shellcheck disable=SC2086  # args is a list of words by construction
+    "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$name" \
+        "$RUNNER" --submit-threads 1 --dataset "$DS" --fixed 32 "${P[@]}" $args \
+        --csv "/dev/shm/fs-$name" > "$OUT/$name.log" 2>&1 </dev/null
+    echo "   exit $?"
+    # A single-network run writes <prefix>_stats.csv, a multi-network one <prefix>_<label>_stats.csv.
+    for f in /dev/shm/fs-"$name"_*stats.csv; do
+        [ -e "$f" ] && cp -f "$f" "$OUT/$name${f#/dev/shm/fs-$name}"
+    done
+    rm -f /dev/shm/fs-"$name"_*
+    awk -F, '$1=="gpu_ms"{printf "   median %s ms over %s inferences\n", $4, $2}' "$OUT/$name"*_stats.csv
+    fi
+    kill "$WATCH" 2>/dev/null; wait "$WATCH" 2>/dev/null
+    [ -s "$OUT/.intruded" ] || break
+    echo "   REJECTED: another process used the GPU during the run: $(head -1 "$OUT/.intruded")"
+    mkdir -p "$OUT/rejected/$attempt"
+    mv -f "$OUT/$name".* "$OUT/$name"_* "$OUT/rejected/$attempt/" 2>/dev/null
+  done
+done < <(arms "$set_name")
+rm -f "$OUT/.intruded"
+rm -f "$OUT"/_sentinel_*
+
+# Under sudo everything above belongs to root; hand it back to the account that owns the data.
+[ "$(id -u)" = 0 ] && chown -R "${SUDO_USER:-nvidia}:" "$OUT" 2>/dev/null
+exit 0

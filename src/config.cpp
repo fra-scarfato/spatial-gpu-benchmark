@@ -97,12 +97,13 @@ void printUsage(const char* prog) {
         << "                        co-runner\x27s footprint: small enough to sit in L1,\n"
         << "                        around 4 MB to fill L2, larger to leave it.\n"
         << "  --interferer <k>:<p>  add a synthetic participant to the joint SM\n"
-        << "                        split: mem_saxpy or compute_gemm (or\n"
-
+        << "                        split: mem_saxpy, compute_gemm, spin or idle,\n"
         << "                        with its percentage of the device. The first\n"
         << "                        two move memory and do arithmetic respec-\n"
         << "                        tively, which is the point: a real co-runner\n"
-        << "                        varies both at once. Needs greenctx.\n"
+        << "                        varies both at once. spin keeps a kernel\n"
+        << "                        resident that touches no memory; idle holds\n"
+        << "                        the partition and runs nothing. Needs greenctx.\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -262,9 +263,9 @@ Options parseArgs(int argc, char** argv) {
             if (a == std::string::npos)
                 throw std::runtime_error("--interferer expects <kind>:<pct>[:<label>], got: " + spec);
             const std::string kind = spec.substr(0, a);
-            if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "idle")
+            if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "idle" && kind != "spin")
                 throw std::runtime_error(
-                    "--interferer expects mem_saxpy, compute_gemm or idle, got: " + kind);
+                    "--interferer expects mem_saxpy, compute_gemm, idle or spin, got: " + kind);
             const auto b = spec.find(':', a + 1);
             o.interferer.kind = kind;
             o.interferer.smPercent = std::stoi(

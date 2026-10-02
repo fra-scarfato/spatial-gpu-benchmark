@@ -947,106 +947,11 @@ Other established facts:
 
 ## 11. The SoC counters, and how the pressure curve is produced
 
-ncu reaches this board but collects nothing: it renames the kernels, reports the launch geometry and
-reports every metric value as `n/a`. That is the vGPU counter restriction seen in its "Failed to
-profile" message and in the GPU-metrics path of `nsys`, and it is a property of the board rather than
-of any flag, so the traffic per network comes from the SoC counters instead.
-
-### From a report to a number
-
-1. **Profile with the SoC counters.** `sudo nsys profile --soc-metrics=true
-   --soc-metrics-set=t234 --soc-metrics-frequency=10000`. T234 is the Orin's part number, and 10 kHz
-   gives about 215 000 samples for a run of twenty seconds.
-2. **Export to sqlite.** `nsys export --type sqlite --force-overwrite=true --output <db> <rep>`. The
-   database goes to a directory this user owns rather than beside the report: the reports come from a
-   root-owned run, so their directory is root's, and reading a report is possible while creating
-   anything next to it is not.
-3. **Read the counters by position.** The export writes `NULL` for every column name, so
-   `SOC_METRICS` cannot be queried by name. Its rows are `(start_ns, end_ns, domain, index, value)`
-   and the reading is field 4. Which index carries which counter comes from
-   `TARGET_INFO_SOC_METRICS`, resolved by name rather than assumed; on this board index 6 is DRAM
-   read throughput and index 7 is DRAM write.
-4. **Summarise without a window.** The values are percent of peak. The **peak** is the maximum over
-   the run and the **busy mean** is the mean over the samples above 1 %, a threshold that excludes
-   the gaps between inferences, in which a single-submitter runner leaves the device idle. Both are
-   deliberately window-free: the CUDA clock and the SoC clock sit about 14 s apart in the export, so
-   anything needing a window boundary would rest on that offset being right.
-5. **Percent to GB/s.** Read and write percentages are on different scales, so each divides by its
-   own calibration point and multiplies by the rate at which the calibration was taken. The one
-   measurement here is a D2D copy: 48 % of peak read and 83 % of peak write at 91.5 GB/s counted,
-   which implies roughly 190 GB/s of peak read bandwidth and 110 of write.
-6. **Cache the series.** Each extracted pair of series goes to a small CSV, so the twenty minutes of
-   exporting happens once and every later analysis is instant. The sqlite, 100-330 MB per trace, is
-   deleted after it has been read.
-
-`utility/soc-pressure.py` performs all six steps and writes one row per report to
-`$DATA/bench/soc-pressure.csv`. Every number below comes from it.
-
-### What the counters can and cannot say
-
-They are **device-wide**. They belong to the SoC and not to any client, so a reading attributes to a
-single network only because that run contains a single network. For a pair the reading is the pair
-jointly, and no share within the pair can be recovered from it. The isolated runs therefore carry the
-per-network curve and the pair runs carry the question of whether two clients' traffic adds, and
-neither run can be asked the other's question.
-
-### The numbers
-
-Sustained means the busy mean, read and write together, in GB/s.
-
-| configuration | peak read % | busy read % | busy write % | sustained GB/s |
-|---------------|-------------|-------------|--------------|----------------|
-| mobile @ 25 %   | 25 |  6.2 |  5.9 | 18.4 |
-| mobile @ 50 %   | 29 |  7.6 |  7.9 | 23.1 |
-| mobile @ 75 %   | 27 |  7.6 |  8.9 | 24.3 |
-| mobile @ 100 %  | 30 |  7.1 |  8.0 | 22.4 |
-| resnet @ 25 %   | 42 | 10.8 |  5.4 | 26.6 |
-| resnet @ 50 %   | 54 | 15.4 |  8.2 | 38.4 |
-| resnet @ 75 %   | 58 | 17.2 |  8.8 | 42.6 |
-| resnet @ 100 %  | 58 | 19.4 | 10.1 | 48.1 |
-| inception @ 25 %| 36 |  8.8 |  3.8 | 20.8 |
-| inception @ 50 %| 49 | 12.5 |  4.8 | 29.1 |
-| inception @ 75 %| 54 | 14.1 |  5.4 | 32.8 |
-| inception @ 100 %| 55 | 15.4 |  6.0 | 35.9 |
-| retinanet @ 25 %| 50 | 11.7 |  6.4 | 29.3 |
-| retinanet @ 50 %| 56 | 16.0 |  8.9 | 40.4 |
-| retinanet @ 75 %| 60 | 20.1 | 11.4 | 50.8 |
-| retinanet @ 100 %| 61 | 22.4 | 13.3 | 57.3 |
-| mobile@50 + resnet@25 | 57 | 13.6 |  7.7 | 34.5 |
-| mobile@50 + resnet@50 | 61 | 17.0 | 10.3 | 43.8 |
-| mobile@50 + retinanet@25 | 64 | 17.0 |  8.9 | 42.2 |
-
-### Reading
-
-**One network does not saturate the memory system.** The demand is quoted here in the counters' own
-units, because the conversion to GB/s rests on a single copy calibration and on a statistic that
-averages over the whole run rather than over the time the kernels ran. For MobileNet on the whole
-device the three figures from the same run are 7.1 % of peak read as that run-average, 17.4 %
-averaged over the kernels, and 30 % at the instant of the peak. The during-kernel average is the one
-to put against a roof: 17.4 % of the read peak and 9.9 % of the write peak, which is about 44 GB/s
-on the copy calibration. The busiest configuration in the corpus, RetinaNet on all sixteen SMs,
-reaches 22.4 % by the same run-average, so nothing here asks the memory system for more than a third
-of what it can deliver, and the run-average understates rather than overstates that.
-
-**The pressure grows sub-linearly with the budget.** Going from a quarter of the SMs to all of them
-multiplies the sustained traffic by 1.2 for MobileNet, 1.7 for Inception, 1.8 for ResNet and 2.0 for
-RetinaNet: four times the SMs for at most twice the traffic, and for MobileNet almost nothing. The
-memory system is already the binding constraint at four SMs.
-
-**Two clients ask for less than the sum of the two alone.** In all three pairs, read and write
-together, the pair sustains 69, 71 and 81 % of what the two would apply separately (74, 74 and 89 %
-on the read side alone). The shared resource is already partly occupied, so the second client's
-traffic does not add to the first's.
-
-**Consequence for the interference.** A co-runner that applies a fifth to a third of the board's
-bandwidth cannot saturate it, and the median penalty it causes is therefore not aggregate saturation.
-That agrees with two independent measurements: the kernel traces, which locate the tail in host
-submission rather than in memory, and the additivity family, in which how a target combines two
-co-runners turned out to be a property of the target.
-
-**One caveat.** The absolute GB/s rest on a single calibration point taken from one copy. The ratios,
-the shape of the curve and the sub-additivity do not depend on it; the absolute values do, and they
-are the weakest numbers in this document.
+This section used to carry the procedure and a table of numbers. Both now live in one place,
+`MEASUREMENTS.md`, together with the kernel traces, because the numbers depend on the copy
+calibration and that calibration was revised: the write percentage first taken for the copy (83 %)
+belonged to devprobe's memsets, and the copy itself reads 45 %. Every GB/s in the earlier table was
+computed with the old point and understated the write traffic by a factor of about 1.8.
 
 ## 12. Open items
 
@@ -1215,12 +1120,9 @@ locked (`sudo jetson_clocks`) and the GPU quiet. The MPS static arms additionall
 `--static-chunks 8`; they start and stop their own daemon, and the 4 SM co-runner arms use a
 colon ratio (50:25) which places three partitions and leaves the last quarter unassigned.
 
-Two stages need root or a profiler and are deliberately outside the sweep, because profiling
-perturbs what it measures:
-
-    sudo ./utility/soc-traces.sh itf     # DRAM counters for the two interferer arms
-    ./utility/take-traces.sh             # three kernel traces, then exported to sqlite
-    python3 utility/itf-trace.py $DATA/scratch/traces/trc   # the per-inference decomposition
+The profiled runs are deliberately outside the sweep, because profiling perturbs what it measures.
+They are taken by `utility/profile.sh <set>` and read by `utility/profiles.py`; MEASUREMENTS.md
+lists the sets and defines every derived number.
 
 `utility/overview.py` writes the same split the tables make: a family feeds the results section
 if its aggregate key appears in `utility/results-tables.py`, and everything else is the appendix.

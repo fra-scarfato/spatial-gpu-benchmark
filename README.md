@@ -70,14 +70,18 @@ The stages are four commands, and can be run by hand:
     python3 utility/overview.py                         # $DATA/bench/OVERVIEW.md
 
 Groups: `section`, `appendix`, `mem`, `all`, or any single family. The MPS static arms need
-`--static-chunks 8`, which the pipeline passes by default. Two stages stay outside the sweep
-because profiling perturbs what it measures, and the second needs root:
+`--static-chunks 8`, which the pipeline passes by default. The profiled runs stay outside the sweep
+because profiling perturbs what it measures. One driver takes them and one script reads them:
 
-    ./utility/take-traces.sh                            # kernel traces, then sqlite exports
-    python3 utility/itf-trace.py $DATA/scratch/traces/trc
-    sudo ./utility/soc-traces.sh itf                    # DRAM counters
+    ./utility/profile.sh traces                         # CUDA kernel traces (no root)
+    sudo ./utility/profile.sh soc-budget                # DRAM counters, each network alone
+    sudo ./utility/profile.sh soc-itf                   # DRAM counters, target alone and with compute_gemm
+    sudo ./utility/profile.sh footprint                 # DRAM counters, compute_gemm's operand side
+    sudo ./utility/profile.sh calibration               # DRAM counters during devprobe's copies
+    python3 utility/profiles.py                         # all of it -> $DATA/profiles/derived/*.csv
 
-Both are reachable as `--traces` and `--soc`.
+The same are pipeline stages (`./pipeline.py mem --stage traces,profiles`, ...). What every derived number means and
+how it is computed is in `MEASUREMENTS.md`.
 ### Every stage goes through the entry point
 
 **Measurements** produce the numbers the thesis reports, and measuring a family produces all of its
@@ -88,13 +92,14 @@ job spec cannot express three clients:
     ./pipeline.py interference-additivity --stage measure   # ... and its MPS static half
 
 **Diagnostics** profile the thing they measure, so their numbers describe mechanisms rather than
-latencies; four of the five need root:
+latencies; the counter sets need root:
 
-    ./pipeline.py section --stage probes            # build and run the probe tools
-    ./pipeline.py section --stage soc-budget        # DRAM pressure curve: 4 networks x 4 budgets (root)
-    ./pipeline.py section --stage soc               # DRAM counters on the interferer pairs (root)
-    ./pipeline.py section --stage ncu               # per-kernel DRAM bytes: diagnostic, then the matrix (root)
-    ./pipeline.py section --traces                  # kernel traces, then the per-inference decomposition
+    ./pipeline.py mem --stage probes                  # build and run the probe tools
+    ./pipeline.py mem --stage traces                  # CUDA kernel traces of the target and each co-runner
+    ./pipeline.py mem --stage soc-budget              # DRAM counters: 4 networks x 4 budgets, 3 pairs (root)
+    ./pipeline.py mem --stage soc-itf,footprint       # DRAM counters around compute_gemm (root)
+    ./pipeline.py mem --stage profiles                # read every profile into $DATA/profiles/derived
+    ./pipeline.py mem --stage ncu                     # does Nsight Compute work here (root)
 
 The two groups are the same everywhere: in `pipeline.py`, in the menu it prints, in `--help`, and
 here. `--stage all` means the quick measurement stages, so a default run is unchanged. `--dry-run`
@@ -114,15 +119,17 @@ never a pooled percentile.
     utility/          the harness: sweep, aggregate, tables, tools, probes
     utility/README.md the probe tools
     DOC.md            design notes, methodology, traps, data model, table conventions
+    MEASUREMENTS.md   how every number of the memory subsection is collected and computed
 
 Measurements live outside the repository, under `$DATA` (default `/mnt/nvme/f.scarfato`), one
 directory per family and one per configuration inside it:
 
-    bench/            results, the aggregate, the tables, OVERVIEW.md
+    bench/            the campaign: results, the aggregate, the tables, OVERVIEW.md
+    profiles/         every profiled run, one directory per set, and derived/ (profiles.py's CSVs)
     models/           ONNX files and the engines built from them
     dataset/          ImageNet, 50 000 JPEGs of which 32 are used
     labels/           the label file
-    scratch/          traces and captures; disposable
+    scratch/          temporary files only; nothing in it is read by any script
 
 `$DATA/bench/OVERVIEW.md` lists every experiment, what it feeds and every configuration with its
 replicates, generated from the tree by `utility/overview.py`.

@@ -10,7 +10,7 @@ Interactive when run bare, scriptable with the same words:
     ./pipeline.py mem-s2                a single family
     ./pipeline.py --tables              regenerate and split the tables, measure nothing
     ./pipeline.py all --stage measure   stop after measuring
-    ./pipeline.py section --traces --soc    also take the kernel traces and the DRAM counters
+    ./pipeline.py --stage traces,profiles    take the kernel traces and read every profile
 
 Stages, in order, each skippable with --stage:
     engines   rebuild every TensorRT engine from its ONNX file
@@ -18,6 +18,16 @@ Stages, in order, each skippable with --stage:
     reduce    utility/aggregate.py
     tables    both generators, split into one file per table
     overview  utility/overview.py
+
+Diagnostics, run only when named with --stage. Each one profiles what it measures, so its output
+is evidence about a mechanism and never a latency a table reports. All write under $DATA/profiles:
+    traces      utility/profile.sh traces       CUDA kernel traces, no root
+    soc-budget  utility/profile.sh soc-budget   DRAM counters, each network alone (root)
+    soc-itf     utility/profile.sh soc-itf      DRAM counters, target alone and with compute_gemm (root)
+    footprint   utility/profile.sh footprint    DRAM counters, compute_gemm's operand side (root)
+    profiles    utility/profiles.py             read all of the above into profiles/derived
+    ncu         utility/ncu.sh diagnose         does Nsight Compute work here (root)
+    probes      the standalone probes of utility/
 
 The measurement is never started without the sweep's own guard, which the pipeline runs first so
 a free governor is reported before a warm-up rather than after it.
@@ -40,7 +50,8 @@ STAGES = ("engines", "measure", "reduce", "tables", "overview")
 # thesis reports; a diagnostic profiles what it measures and therefore perturbs it, so its output
 # is evidence about mechanisms and not a latency. Four diagnostics need root.
 STAGES_MEASUREMENT = STAGES
-STAGES_DIAGNOSTIC = ("traces", "soc", "soc-budget", "soc-pressure", "l2-footprint", "ncu", "probes")
+PROFILE_SETS = ("traces", "soc-budget", "soc-itf", "footprint")      # utility/profile.sh <set>
+STAGES_DIAGNOSTIC = PROFILE_SETS + ("profiles", "ncu", "probes")
 EXTRA_STAGES = STAGES_DIAGNOSTIC
 
 
@@ -111,8 +122,6 @@ def parse():
     p.add_argument("--force", action="store_true", help="re-measure configurations whose output exists")
     p.add_argument("--dry-run", action="store_true", help="print the commands, run nothing")
     p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
-    p.add_argument("--traces", action="store_true", help="also take the kernel traces and reduce them")
-    p.add_argument("--soc", action="store_true", help="also take the DRAM counters (needs root)")
     p.add_argument("--state", action="store_true", help="print what is measured and stop")
     return p.parse_args()
 
@@ -213,7 +222,6 @@ def main():
         say("\n== tables ==")
         out = bench / "aggregate"
         out.mkdir(parents=True, exist_ok=True)
-        run([sys.executable, "utility/mem-correlation.py"], args.dry_run)
         if run([sys.executable, "utility/results-tables.py"], args.dry_run,
                capture_to=out / "tables.tex") != 0:
             return 1
@@ -237,43 +245,18 @@ def main():
         for probe in ("auxprobe", "wqprobe", "devprobe", "itfproc"):
             run(["./utility/" + probe], args.dry_run)
 
-    if "soc-budget" in wanted:
-        say("\n== the SoC pressure curve, one network at a time (needs root) ==")
-        models = families.data_root() / "models"
-        engines = {"mobilenetv2-12": "mobilenetv2-12/engine/mobilenetv2-12.engine",
-                   "resnet50-v2-7": "resnet50-v2-7/engine/resnet50-v2-7.engine",
-                   "inception_v3-onnx-float": "inception_v3-onnx-float/engine/inception_v3.engine",
-                   "retinanet-9": "retinanet-9/engine/retinanet-9.engine"}
-        for model, path in engines.items():
-            for pct in (100, 75, 50, 25):
-                run(["sudo", "./utility/soc-budget-sweep.sh", "greenctx", str(pct),
-                     "{}:{}".format(models / path, pct)], args.dry_run)
-        # No MPS static points: nsys cannot instrument a client of the MPS daemon, so the
-        # counters cannot be taken under a partition. The mechanism check for MPS static
-        # rests on the latency and throughput agreement instead.
-        for a, b, pa, pb in (("mobilenetv2-12", "resnet50-v2-7", 50, 50),
-                             ("mobilenetv2-12", "resnet50-v2-7", 50, 25),
-                             ("mobilenetv2-12", "retinanet-9", 50, 25)):
-            run(["sudo", "./utility/soc-budget-sweep.sh", "greenctx", str(pa),
-                 "{}:{}".format(models / engines[a], pa),
-                 "{}:{}".format(models / engines[b], pb)], args.dry_run)
+    for name in PROFILE_SETS:
+        if name in wanted:
+            say("\n== profiles: {} ==".format(name))
+            run(([] if name == "traces" else ["sudo"]) + ["./utility/profile.sh", name], args.dry_run)
 
-    if "soc" in wanted:
-        say("\n== the SoC counters on the interferer pairs (needs root) ==")
-        run(["sudo", "./utility/soc-traces.sh", "itf"], args.dry_run)
-
-    if "soc-pressure" in wanted:
-        say("\n== the DRAM pressure each network applies, from the counters (no root) ==")
-        run([sys.executable, "utility/soc-pressure.py"], args.dry_run)
+    if "profiles" in wanted:
+        say("\n== profiles: reading them into $DATA/profiles/derived ==")
+        run([sys.executable, "utility/profiles.py"], args.dry_run)
 
     if "ncu" in wanted:
         say("\n== ncu: does it work here, and under which flags (needs root) ==")
         run(["sudo", "./utility/ncu.sh", "diagnose"], args.dry_run)
-
-    if "l2-footprint" in wanted:
-        say("\n== the co-runner's cache footprint against the penalty (needs root) ==")
-        run(["sudo", "./utility/l2-footprint-sweep.sh"], args.dry_run)
-        run([sys.executable, "utility/l2-footprint-verdict.py"], args.dry_run)
 
     say("\ndone")
     return 0

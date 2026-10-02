@@ -14,6 +14,8 @@
 
 #include "interferer.hpp"
 
+cudaError_t launchSpin(cudaStream_t stream, int blocks, long long iters);   // spin.cu
+
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
@@ -74,6 +76,7 @@ const char* Interferer::kindName() const noexcept {
         case Kind::MemSaxpy:    return "mem_saxpy";
         case Kind::ComputeGemm: return "compute_gemm";
         case Kind::Idle:        return "idle";
+        case Kind::Spin:        return "spin";
     }
     return "?";
 }
@@ -107,6 +110,12 @@ void Interferer::submit() {
                         static_cast<const float*>(dB_), k,
                         &zero, static_cast<float*>(dC_), m);
         flops_ += double(reps) * 2.0 * m * n * k;
+        } else if (kind_ == Kind::Spin) {
+            // One long kernel per unit, 16 blocks of 256 threads: resident in a single wave on four
+            // SMs or eight, so the unit adds one launch and sixteen block dispatches every few
+            // milliseconds and nothing else. About 3e6 dependent FMAs per thread is ~10 ms here.
+            if (launchSpin(stream_, 16, 3000000LL) != cudaSuccess)
+                throw std::runtime_error("spin kernel launch failed");
         } else if (kind_ == Kind::Idle) {
             // Occupies its partition and asks the device for nothing: the control for whether
             // the floor of the penalty is contention at all, or merely the existence of a
