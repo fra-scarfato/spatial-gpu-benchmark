@@ -62,11 +62,9 @@ def main():
         if not st:
             continue
         med, n = stats(st[0])
-        r, w = soc.series(rep)
-        if not r:
-            continue
+        print("  reading %s ..." % label, flush=True)
+        r, w, secs = soc.with_kernels(rep, "sgemm")
         gb = soc.gb(sum(r), sum(w))
-        secs = soc.kernel_seconds(rep, "sgemm") if "idle" not in label else 0.0
         co = co_rate_gb_s(os.path.join(d, label + ".log"))
         own = gb - co * secs                      # GB/s times seconds is GB
         if base is None:
@@ -80,20 +78,29 @@ def main():
     if len(rows) < 3:
         print("\n  too few arms read to draw a conclusion")
         return
-    n0, n1, nlast = rows[0], rows[1], rows[-1]
-    d0, d1, dlast = n0[3], n1[3], nlast[3]
-    print("\n  A0 %s: %.1f%%; A1 (operands inside L1) %s: %.1f%%; %s (past the cache) %s: %.1f%%"
-          % (n0[0], d0 * 100, n1[0], d1 * 100, nlast[0], dlast * 100))
-    if d0 > 0.05:
-        print("  -> the second partition costs something even idle: the floor is the topology")
-    elif d1 > 0.08 and abs(dlast - d1) < 0.05:
-        print("  -> the floor is there in A1, where almost nothing reaches the L2, and does not grow:")
-        print("     a co-runner occupying SMs costs this by existing, not by cache traffic")
-    elif dlast > d1 + 0.05:
-        print("  -> the penalty grows with the footprint: the shared resource is cache-side")
+    by = {r[0].split("-")[0]: r for r in rows}
+    a0, a1 = by.get("A0"), by.get("A1")
+    sweep = [r for r in rows if r[0].split("-")[0] not in ("A0", "A1")]
+    print("\n  A0, an idle partition:                    %+.1f %%   (the topology alone)" % (a0[3] * 100))
+    if sweep:
+        lo, hi = sweep[0], sweep[-1]
+        print("  the footprint sweep, %.2f MB to %.2f MB:  %+.1f %% to %+.1f %%"
+              % (lo[1], hi[1], lo[3] * 100, hi[3] * 100))
+    if a1:
+        print("  A1, whose operands fit in the L1:         %+.1f %%" % (a1[3] * 100))
+    print()
+    if a0 and a0[3] > 0.05:
+        print("  -> the partition by itself costs something: the floor is the topology")
+    elif sweep and abs(sweep[-1][3] - sweep[0][3]) < 0.08:
+        print("  -> FLAT across the footprint: twelve times the working set moves the penalty by")
+        print("     %.1f points, so the shared resource is not the cache's capacity."
+              % abs(sweep[-1][3] - sweep[0][3]) * 100)
+    elif sweep and sweep[-1][3] > sweep[0][3] + 0.05:
+        print("  -> the penalty grows with the footprint: the resource is cache-side")
     else:
-        print("  -> flat across the footprints: the cache's footprint is not the mechanism")
-
-
-if __name__ == "__main__":
-    main()
+        print("  -> no monotone trend in the footprint sweep; see the columns above")
+    if a1 and a1[3] > 2 * (sweep[0][3] if sweep else 0.1):
+        print("     A1 is a different regime, not a point on this curve: a side-64 GEMM repeated")
+        print("     16400 times per unit is a storm of tiny launches, so it measures how the")
+        print("     co-runner delivers work rather than what it keeps in the cache, and it costs")
+        print("     the target more than any footprint does.")

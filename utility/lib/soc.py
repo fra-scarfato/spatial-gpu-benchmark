@@ -27,7 +27,15 @@ def _export(rep, suffix=""):
     the report is possible while creating anything next to it is not.
     """
     os.makedirs(SQLITE_DIR, exist_ok=True)
-    db = os.path.join(SQLITE_DIR, os.path.basename(rep)[:-len(".nsys-rep")] + suffix + ".sqlite")
+    stem = os.path.basename(rep)[:-len(".nsys-rep")]
+    db = os.path.join(SQLITE_DIR, stem + suffix + ".sqlite")
+    # An export costs minutes and the database holds everything the trace has, so a file already
+    # there under the other suffix is moved into place rather than exported again. Two suffixes
+    # existed because two functions each exported the same trace; this makes the cost disappear
+    # without pretending the files are different.
+    other = os.path.join(SQLITE_DIR, stem + ("-k" if not suffix else "") + ".sqlite")
+    if not os.path.exists(db) and os.path.exists(other):
+        os.rename(other, db)
     if not os.path.exists(db):
         subprocess.run([NSYS, "export", "--type", "sqlite", "--force-overwrite=true",
                         "--output", db, rep], check=True, capture_output=True)
@@ -99,13 +107,28 @@ def busy_mean(values, threshold=1.0):
     return sum(v) / len(v) if v else 0.0
 
 
-def kernel_seconds(rep, pattern):
-    """How long the kernels whose name matches spent executing, in seconds.
+def with_kernels(rep, pattern="sgemm"):
+    """The counter series and the kernel seconds from ONE export.
 
-    Needed to subtract a co-runner's contribution from the device-wide counters: its rate is known
-    from the profiler, and the trace says how long it was running.
+    Two functions each exporting the same trace was fourteen exports for seven arms, and the second
+    one looked like a hang: several minutes with no output. The counters and the kernel table live in
+    the same database, so they are read together.
     """
-    db = _export(rep, "-k")
+    r, w = series(rep)
+    db = _export(rep)
+    con = sqlite3.connect(db)
+    ids = dict(con.execute("SELECT id, value FROM StringIds"))
+    total = 0
+    for nm, a, b in con.execute("SELECT shortName, start, end FROM CUPTI_ACTIVITY_KIND_KERNEL"):
+        if pattern in ids.get(nm, str(nm)):
+            total += (b - a)
+    con.close()
+    return r, w, total / 1e9
+
+
+def kernel_seconds(rep, pattern):
+    """How long the kernels whose name matches spent executing, in seconds."""
+    db = _export(rep)
     con = sqlite3.connect(db)
     ids = dict(con.execute("SELECT id, value FROM StringIds"))
     total = 0
