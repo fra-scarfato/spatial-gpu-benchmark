@@ -15,10 +15,7 @@
 // The census is entirely in the engine, so this deserializes and prints — no
 // inference, no timing, nothing that perturbs a measurement in flight.
 //
-// Build (matches the runner's toolchain):
-//   g++ -O2 -std=c++17 -I/usr/local/cuda/include -I/usr/include/aarch64-linux-gnu \
-//       auxprobe.cpp -o auxprobe \
-//       -L/usr/local/cuda/targets/sbsa-linux/lib -lnvinfer -lcudart
+// Build: make -C utility/probes auxprobe
 
 #include <cstdio>
 #include <fstream>

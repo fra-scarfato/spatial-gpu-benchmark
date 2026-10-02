@@ -1,6 +1,7 @@
 #!/bin/bash
 # The preconditions, checked before every run: the clocks, and a quiet GPU and CPU.
-# Sourced by sweep.sh. The functions read the configuration variables sweep.sh defines.
+# Sourced by sweep.sh and profile.sh. The functions read a few configuration variables, defaulted
+# below when the caller does not set them.
 #
 # The board cannot be locked (no compute mode on Tegra, no MIG, one shared account), so
 # quiet is measured rather than assumed: a known workload is timed and compared against a

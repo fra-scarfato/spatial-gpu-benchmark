@@ -238,9 +238,9 @@ def main():
 
     if "probes" in wanted:
         say("\n== the probes ==")
-        run(["make", "-C", "utility"], args.dry_run)
+        run(["make", "-C", "utility/probes"], args.dry_run)
         for probe in ("auxprobe", "wqprobe", "devprobe", "itfproc"):
-            run(["./utility/" + probe], args.dry_run)
+            run(["./utility/probes/" + probe], args.dry_run)
 
     for name in PROFILE_SETS:
         if name in wanted:

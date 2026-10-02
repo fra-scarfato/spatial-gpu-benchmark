@@ -1,4 +1,4 @@
-# utility/ — tools that answer questions the runner cannot answer about itself.
+# utility/probes/ — tools that answer questions the runner cannot answer about itself.
 #
 # Standalone, and built independently of the runner, so that rebuilding the
 # runner does not invalidate a measurement tool and vice versa. The paths below

@@ -34,6 +34,7 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 
 ```sh
 make                          # builds ./runner
+make -C utility/probes        # builds the probes (devprobe, itfproc, ...)
 make -f engines.mk            # builds every TensorRT engine from its ONNX file
 sudo jetson_clocks
 
@@ -107,18 +108,38 @@ These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 ## Repository layout
 
 ```
-src/, include/          the runner: options, inputs, statistics, SM allocation (green contexts,
-                        MPS), the TensorRT engine, networks, the synthetic co-runner, the run
-src/spin.cu             the spin co-runner's kernel, built by nvcc
-pipeline.py             the entry point
-engines.mk              every TensorRT engine, rebuilt from its ONNX file
-utility/sweep.sh        the campaign; its arms are listed in utility/lib/matrix.sh
-utility/aggregate.py    runs -> per-experiment CSVs and summary.csv, and flags suspect runs
-utility/results-tables.py, tex-tables.py   the LaTeX tables of the section and the appendix
-utility/profile.sh      every profiled run;  utility/profiles.py  their reading
-utility/lib/            the guards, the MPS helpers, the arm list, the family map, the table writer
-utility/*.cpp           standalone probes (auxprobe, wqprobe, devprobe, itfproc); see utility/README.md
+src/, include/              the runner: options, inputs, statistics, SM allocation, the TensorRT
+                            engine, networks, the synthetic co-runner, the run
+src/spin.cu                 the spin co-runner's kernel, built by nvcc
+pipeline.py                 the entry point: every stage below, in order
+engines.mk                  every TensorRT engine, rebuilt from its ONNX file
+utility/
+  sweep.sh                  the campaign: runs every arm of a family, guarded, resumable
+  mps-additivity-block.sh   the additivity family under MPS (three clients, three processes)
+  aggregate.py              runs -> bench/aggregate/<exp>.csv and summary.csv; flags suspect runs
+  results-tables.py         the LaTeX tables of the results section
+  tex-tables.py             the LaTeX tables of the appendix
+  split-tables.py           a generator's output -> one .tex file per table
+  overview.py               bench/OVERVIEW.md: every family, its configurations and runs
+  profile.sh                every profiled run (kernel traces, DRAM counters), guarded
+  profiles.py               the profiled runs -> profiles/derived/*.csv
+  streams.py                per-stream activity and overlap in one trace (run by hand)
+  ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures
+  lib/                      shared by the scripts above:
+    guards.sh                 the checks before every run: clocks locked, GPU quiet, sentinel
+    matrix.sh                 the campaign's arms, one line each: what sweep.sh can run
+    mps.sh                    the MPS daemon and its static partitions
+    families.py               family folder -> aggregate key, and the groups (section, mem, ...)
+    tables.py                 the LaTeX table writer and the accessors the two generators share
+  probes/                   four standalone CUDA programs with their own Makefile and README:
+                            auxprobe, wqprobe, devprobe (the GB/s calibration), itfproc (the
+                            co-runner as a separate process, for the MPS arms)
 ```
+
+To add a configuration, add an arm to `utility/lib/matrix.sh` (and, for a new family, its folder
+to `utility/lib/families.py`); a single-network arm whose network the configuration name does not
+state also needs a rule in `aggregate.py`'s `load()`. To add a table, add it to
+`utility/results-tables.py`.
 
 ## Data
 
@@ -140,7 +161,7 @@ scratch/                         temporary files; nothing reads from it
 - [`DOC.md`](DOC.md): design decisions, methodology, the data model and the traps found on the way
 - [`MEASUREMENTS.md`](MEASUREMENTS.md): how every number of the memory analysis is collected and
   computed (GB/s, bytes per inference, kernel gaps, the calibration)
-- [`utility/README.md`](utility/README.md): the probe tools
+- [`utility/probes/README.md`](utility/probes/README.md): the probe programs
 
 ## Caveats
 

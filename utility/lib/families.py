@@ -1,8 +1,8 @@
 """Where the experiments are, what they are called, and what state they are in.
 
-Two things are read rather than repeated: the family-to-key map from `aggregate.py`, which is
-where the reduction uses it, and the group lists from `sweep.sh`, which is where the sweep uses
-them. A copy of either would be a copy that can disagree with the thing that matters.
+The family-to-key map lives here, and aggregate.py imports it; the group lists are read from
+`sweep.sh`, which is where the sweep uses them, rather than repeated. A copy of either would be a
+copy that can disagree with the thing that matters.
 
     from lib import families
     families.groups()                 # {'section': [...], 'appendix': [...], ...}

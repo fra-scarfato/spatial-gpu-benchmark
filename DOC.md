@@ -1064,7 +1064,7 @@ the process dies. Always build on the machine that will run it.
 ### Adding a network
 
 1. Build it the same way, with `--fp16`, and keep `trtexec`'s log beside the engine.
-2. Run `utility/auxprobe <engine>` for the auxiliary-stream count, and build the
+2. Run `utility/probes/auxprobe <engine>` for the auxiliary-stream count, and build the
    0/1/2/4 caps if it reports more than zero. That is the census, and it decides
    whether the declared-concurrency experiments have anything to test on it: a
    network with one stream cannot exercise them.

@@ -25,18 +25,14 @@ bench_*
 # repository, so anything logged here is scratch.
 *.log
 
-# The two probe binaries. Build products of utility/Makefile, like `runner` is of
-# this one: committed they would only be a diff of unreadable bytes.
-utility/auxprobe
-utility/wqprobe
-
 # Editor and shell leftovers.
 *~
 *.swp
 .vscode/
 
-# Built artefacts: rebuild with make (runner) or make -C utility (tools).
-utility/auxprobe
-utility/wqprobe
-utility/devprobe
-utility/itfproc
+# The probe binaries, build products of utility/probes/Makefile like `runner` is of this one:
+# committed they would only be a diff of unreadable bytes.
+utility/probes/auxprobe
+utility/probes/wqprobe
+utility/probes/devprobe
+utility/probes/itfproc

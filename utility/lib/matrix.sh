@@ -377,7 +377,7 @@ add "memory-interferers_spin-8sm" \
 # (`mem_saxpy` at 8 SMs and `compute_gemm` at 8 SMs), so the process model is the only
 # difference between the two sets of rows.
 #
-# The co-runner is utility/itfproc: the same work as the in-process interferer, written as
+# The co-runner is utility/probes/itfproc: the same work as the in-process interferer, written as
 # its own program, because a co-tenant is a process and not a thread. Same kernels, same
 # buffer sizes, same reporting, so its own log states the load it applied.
 #
@@ -386,9 +386,9 @@ add "memory-interferers_spin-8sm" \
 add "memory-mps-interferers_mps-alone" \
     "solo|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet||50"
 add "memory-mps-interferers_mps-memsaxpy-8sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/probes/itfproc mem_saxpy|50"
 add "memory-mps-interferers_mps-computegemm-8sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/probes/itfproc compute_gemm|50"
 
 # The fixed-budget measurement under MPS static partitions: MobileNet holds 8 SMs and ResNet
 # is varied, the same two rows the green-context arm measures. A static partition set covers
@@ -404,9 +404,9 @@ add "memory-mps-budget_mps-mobilenet8-resnet8" \
 # 50:25 creates three partitions - 8 SMs to the target, 4 to the participant, 4 unassigned -
 # so the participant budget matches the green-context row it is paired with.
 add "memory-mps-interferers-4sm_mps-memsaxpy-4sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc mem_saxpy|50:25"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/probes/itfproc mem_saxpy|50:25"
 add "memory-mps-interferers-4sm_mps-computegemm-4sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/itfproc compute_gemm|50:25"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/utility/probes/itfproc compute_gemm|50:25"
 
 # The two-thread check on the tail. One measured client with the interferer inside its own
 # process, two submitting threads, both pinned. The tail of this arm says whether the pathology

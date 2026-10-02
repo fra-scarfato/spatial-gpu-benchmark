@@ -9,9 +9,7 @@
 //   3. whether asking for DeviceCtx versus GreenCtxBalanced is observable at all
 //      — if the two read back identically, the whole experiment is void.
 //
-// Build (matches the runner's toolchain):
-//   g++ -O2 -std=c++17 -I/usr/local/cuda/include wqprobe.cpp -o wqprobe \
-//       -L/usr/local/cuda/targets/sbsa-linux/lib -lcudart
+// Build: make -C utility/probes wqprobe
 
 #include <cstdio>
 #include <cstdlib>

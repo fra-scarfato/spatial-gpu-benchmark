@@ -1,4 +1,4 @@
-// utility/itfproc.cpp — the interferer as its own client process.
+// utility/probes/itfproc.cpp — the interferer as its own client process.
 //
 // The in-process interferer shares the target's CUDA context, and therefore its launch
 // path. That is exactly the variable the MPS static arms need to move: here the same work

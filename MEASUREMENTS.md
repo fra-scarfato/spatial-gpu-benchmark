@@ -119,7 +119,7 @@ in GB is built from it.
 A percentage becomes GB/s through one measurement (`profile.sh calibration`; `calibrate()` in
 `profiles.py`, written to `derived/calibration.csv`):
 
-1. `utility/devprobe` performs device-to-device copies under the counters. The trace records each
+1. `utility/probes/devprobe` performs device-to-device copies under the counters. The trace records each
    copy's bytes and duration: 635 copies, 25.54 GB in 0.279 s, so the copies ran at
    **91.5 GB/s**. A copy reads every byte once and writes it once, so that is 91.5 GB/s of read
    and 91.5 GB/s of write.

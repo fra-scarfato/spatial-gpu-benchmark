@@ -120,18 +120,33 @@ wait_quiet() {   # the campaign's guard, retried once a minute for up to WAIT_MI
 }
 
 # The guard only sees the board before an arm. A co-tenant who starts during one would go unnoticed,
-# so a watcher polls the GPU device nodes every two seconds while the arm runs, ignoring this work's
-# own processes (their command lines name the scarfato paths), and an arm it flags is moved to
-# rejected/ and taken again.
+# so a watcher polls the GPU device nodes every two seconds while the arm runs, and an arm it flags
+# is moved to rejected/ and taken again. A process is this arm's own when it descends from this
+# script, or when it is the Nsight agent of a session whose nsys does: the agent is started as a
+# separate process and names its session after that nsys's pid.
+descends_from_me() {   # $1 = pid
+    local p=$1
+    while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+        [ "$p" = "$$" ] && return 0
+        p=$(awk '/^PPid:/{print $2}' "/proc/$p/status" 2>/dev/null)
+    done
+    return 1
+}
 intruders() {
-    local p f t cmd
+    local p f t cmd pid
     for p in /proc/[0-9]*; do
+        pid=${p#/proc/}
         for f in "$p"/fd/*; do
             t=$(readlink "$f" 2>/dev/null) || continue
             case "$t" in /dev/nvgpu/*|/dev/nvmap|/dev/dri/renderD*) ;; *) continue ;; esac
             cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)
-            case "$cmd" in ""|*scarfato*|*nvidia-cuda-mps*) ;; *) echo "${p#/proc/} $cmd"; return 0 ;; esac
-            break
+            [ -n "$cmd" ] || break
+            descends_from_me "$pid" && break
+            if [[ $cmd =~ --session-name\ profile-([0-9]+) ]] && descends_from_me "${BASH_REMATCH[1]}"; then
+                break
+            fi
+            case "$cmd" in *nvidia-cuda-mps*) break ;; esac
+            echo "$pid $cmd"; return 0
         done
     done
     return 1
@@ -151,9 +166,9 @@ while IFS='|' read -r name proto args; do
     rm -f "$OUT/.intruded"
     watch_gpu & WATCH=$!
     if [ "$proto" = NONE ]; then      # the calibration: devprobe's copies, not the runner
-        make -s -C "$ROOT/utility" devprobe
+        make -s -C "$ROOT/utility/probes" devprobe
         "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$name" \
-            "$ROOT/utility/devprobe" > "$OUT/$name.log" 2>&1 </dev/null
+            "$ROOT/utility/probes/devprobe" > "$OUT/$name.log" 2>&1 </dev/null
         echo "   exit $?"
     else
     declare -n P="$proto"
