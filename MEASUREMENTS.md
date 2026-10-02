@@ -200,10 +200,10 @@ The correlation id links a kernel to the call that launched it. No root is neede
 
 The target is MobileNet on 8 SMs. Its stream is the one on which `copyPackedKernel`, the first
 kernel of an inference, recurs every 55 kernels (`target_stream()`). The first 1000 kernels (the
-warm-up) are dropped, and the rest is cut into consecutive blocks of 55, each block one inference.
-Each kernel's position 0–54 within its block is then the same layer in every inference. The
-`aligned` column of `trace-split.csv` checks this: it is the fraction of blocks that open with
-`copyPackedKernel`, and it must be 1.
+warm-up) are dropped. An inference begins at each `copyPackedKernel`, and only inferences with
+exactly 55 kernels are kept, so a kernel missing from the trace can never shift the positions of
+those after it. Position 0–54 within an inference is then the same layer in every inference. The
+`whole_inferences` column of `trace-split.csv` is the share of inferences kept, and should be 1.
 
 ### Per inference (`derived/trace-split.csv`, Table `tab:mem-trace-split`)
 
@@ -230,6 +230,10 @@ All kernels on other streams belong to the co-runner: the interferer's, or the o
 | **overlapped** duration of position p | the median over the inferences where its coverage was above 99 % |
 | **fixed** and **proportional** | the least-squares line `overlapped − free = fixed + proportional × free` through the 55 positions. *Fixed* is µs added to every kernel regardless of its length; *proportional* is the share of its length added. |
 | **gap, co-runner idle / running** | the median gap between consecutive target kernels whose interval was covered by co-runner kernels below 1 % / above 99 % |
+| **gap, co-runner running, nothing queued** | the same, restricted to gaps that opened while the co-runner had no launch that had returned to the host and not yet started on the device, so that its queue was empty |
+
+The side-64 footprint arm (`footprint/A1-l1`) carries a CUDA trace as well. It is read by the same
+code under the name `gemm64`, with its own idle stretches as the free reference.
 
 **Launch calls** (`derived/launch-calls.csv`): the mean duration of the launch calls of each host
 thread. The target's thread is the one that launched the target's kernels.

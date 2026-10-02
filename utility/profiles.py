@@ -238,8 +238,11 @@ def covered(a, b, os_, oe):
 def trace_tables():
     split, overlap, launch, perkernel = [], [], [], []
     ref = None
-    for arm in ("alone", "mem4", "compute4", "spin4", "resnet4"):
-        rep = os.path.join(PROF, "traces", arm + ".nsys-rep")
+    # The five traces of one session, and the side-64 footprint arm, whose report has a CUDA trace
+    # too: the co-runner that launches tens of thousands of small kernels a second.
+    for arm, rep in [(a, os.path.join(PROF, "traces", a + ".nsys-rep"))
+                     for a in ("alone", "mem4", "compute4", "spin4", "resnet4")] + \
+                    [("gemm64", os.path.join(PROF, "footprint", "A1-l1.nsys-rep"))]:
         if not os.path.exists(rep):
             continue
         stem = rep[:-len(".nsys-rep")]
@@ -251,11 +254,17 @@ def trace_tables():
         ts = target_stream(k)
         t = k[k.stream == ts].reset_index(drop=True)
         o = k[k.stream != ts].sort_values("start")
-        first = t.index[t.name.str.contains("copyPacked")]
-        first = first[(first > 1000) & (first < len(t) - TARGET_KPI)]   # drop the warm-up
-        t = t.iloc[first[0]: first[-1]].reset_index(drop=True)
-        t["pos"] = np.arange(len(t)) % TARGET_KPI
-        t["inf"] = np.arange(len(t)) // TARGET_KPI
+        # An inference begins at each copyPackedKernel; the warm-up (the first 1000 kernels) and the
+        # last, possibly cut, inference are dropped, and only inferences of exactly 55 kernels are
+        # kept, so a missing kernel can never shift the positions of the ones after it.
+        t = t.iloc[1000:].reset_index(drop=True)
+        t["inf"] = t.name.str.contains("copyPacked").cumsum()
+        t = t[(t.inf > 0) & (t.inf < t.inf.max())]
+        size = t.groupby("inf").inf.transform("size")
+        whole = (size == TARGET_KPI)
+        kept = whole.groupby(t.inf).first().mean()
+        t = t[whole].reset_index(drop=True)
+        t["pos"] = t.groupby("inf").cumcount()
         t["dur"] = t.end - t.start
         gap = t.start - t.end.shift(1)
         late = (t.launch_end - t.end.shift(1)).clip(lower=0)
@@ -270,8 +279,8 @@ def trace_tables():
         split.append(dict(arm=arm, inferences=len(per), **{c + "_us": round(v, 1)
                                                          for c, v in med.items()},
                           gap_median_us=round(t.gap[t.pos > 0].median() / 1e3, 2),
-                          # the check on the slicing: every block must open with copyPackedKernel
-                          aligned=round(t[t.pos == 0].name.str.contains("copyPacked").mean(), 4)))
+                          # the check on the slicing: the share of inferences with all 55 kernels
+                          whole_inferences=round(kept, 4)))
         free = t.groupby("pos").dur.median()
         if arm == "alone":
             ref = free
@@ -285,8 +294,16 @@ def trace_tables():
         t["cov"] = covered(t.start.values, t.end.values, os_, oe)
         g = t[(t.pos > 0) & (t.gap > 0)]
         gcov = covered((g.start - g.gap).values, g.start.values, os_, oe)
-        on = t[t.cov > 0.99].groupby("pos").dur.median()
-        off = t[t.cov < 0.01].groupby("pos").dur.agg(["median", "size"])
+        # The co-runner's launches already returned to the host and not yet started on the device,
+        # at the moment each gap opens: zero means its queue was empty.
+        returned = np.sort(o.launch_end.dropna().values)
+        pending = (np.searchsorted(returned, (g.start - g.gap).values)
+                   - np.searchsorted(os_, (g.start - g.gap).values))
+        on = t[t["cov"] > 0.99].groupby("pos").dur.agg(["median", "size"])
+        on = on[on["size"] >= 30]["median"]
+        if len(on) < TARGET_KPI:
+            continue          # the co-runner overlapped too few kernels for a per-position reading
+        off = t[t["cov"] < 0.01].groupby("pos").dur.agg(["median", "size"])
         within = off[off["size"] >= 30]["median"]
         # The free reference: the same run when the co-runner was idle often enough, otherwise the
         # alone trace taken in the same session. The column says which.
@@ -295,11 +312,14 @@ def trace_tables():
                           t.groupby("pos").blocks.first()], axis=1).dropna()
         d = (both.on - both.free) / 1e3
         b, a = np.polyfit(both.free / 1e3, d, 1)
-        overlap.append(dict(arm=arm, co_runner_covers=round((t.cov * t.dur).sum() / t.dur.sum(), 3),
+        overlap.append(dict(arm=arm, co_runner_covers=round((t["cov"] * t.dur).sum() / t.dur.sum(), 3),
                             free_basis=basis, kernels_free_us=round(both.free.sum() / 1e3, 1),
                             kernels_overlapped_us=round(both.on.sum() / 1e3, 1),
                             fixed_us_per_kernel=round(a, 3), proportional=round(b, 4),
                             gap_us_co_busy=round(g.gap[gcov > 0.99].median() / 1e3, 2),
+                            gap_us_co_busy_none_queued=round(
+                                g.gap[(gcov > 0.99) & (pending <= 0)].median() / 1e3, 2),
+                            gaps_co_busy_none_queued=int(((gcov > 0.99) & (pending <= 0)).sum()),
                             gap_us_co_idle=round(g.gap[gcov < 0.01].median() / 1e3, 2)
                             if (gcov < 0.01).sum() >= 100 else ""))
         for p, r in both.iterrows():

@@ -790,14 +790,14 @@ if _pairs:
 # Presence: the same two clients, partitions and submitting thread, with the device either free to
 # overlap their kernels or forced by a single work queue to run them in turn.
 _PRES = (("alone", "exp1", "mobilenet_gc50", False),
-         ("ResNet on 8\\,SMs, one work queue, kernels in turn", "exp4-1t", "devctx_1_50_50", True),
-         ("ResNet on 8\\,SMs, eight work queues, kernels concurrent", "exp4-1t", "devctx_8_50_50", True))
+         ("one work queue: kernels in turn", "exp4-1t", "devctx_1_50_50", True),
+         ("eight work queues: kernels concurrent", "exp4-1t", "devctx_8_50_50", True))
 open_table([r"Configuration & \multicolumn{2}{c}{MobileNet, 8\,SMs} & "
             r"\multicolumn{2}{c}{ResNet, 8\,SMs} & Aggregate \\",
             r"\cmidrule(lr){2-3} \cmidrule(lr){4-5}",
             r" & Median (ms) & $\times$iso & Median (ms) & $\times$iso & (inf/s) \\"], "lrrrrr",
            "Whether the penalty needs the two clients' kernels to execute at the same time. The two "
-           "lower rows are the same process, the same submitting thread and the same two "
+           "lower rows run MobileNet and ResNet on 8\\,SMs each, in the same process, the same submitting thread and the same two "
            "disjoint green contexts; they differ only in the work-queue limit of the descriptor, "
            "which at one queue makes the device execute the two clients' kernels in turn. The "
            "multipliers are against each network alone on 8\\,SMs, and the aggregate is the sum of "
@@ -853,17 +853,20 @@ _split = {r["arm"]: r for r in _derived("trace-split")}
 _ovl = {r["arm"]: r for r in _derived("trace-overlap")}
 _ARMS = (("alone", "none"), ("spin4", r"\texttt{spin} at 4\,SMs"),
          ("compute4", r"\texttt{compute\_gemm} at 4\,SMs"), ("resnet4", r"resnet at 4\,SMs"),
-         ("mem4", r"\texttt{mem\_saxpy} at 4\,SMs"))
+         ("mem4", r"\texttt{mem\_saxpy} at 4\,SMs"),
+         ("gemm64", r"\texttt{compute\_gemm}, side 64, at 4\,SMs"))
 if _split:
-    open_table([r"Co-runner & Inferences & Span ($\mu$s) & Kernels ($\mu$s) & "
-                r"Queued gaps ($\mu$s) & Host-late gaps ($\mu$s) \\"], "lrrrrr",
+    open_table([r"Co-runner & Inferences & \multicolumn{4}{c}{One inference, median ($\mu$s)} \\",
+                r"\cmidrule(lr){3-6}",
+                r" & & span & kernels & queued gaps & host-late gaps \\"], "lrrrrr",
                "One inference of the target, MobileNet on 8\\,SMs, decomposed from a CUDA kernel "
                "trace: the span from its first kernel's start to its last kernel's end, the sum "
                "of its 55 kernels' durations, and the gaps between consecutive kernels, split by "
                "whether the next kernel's launch call had returned to the host before the previous "
                "kernel ended (queued: the device owed it) or after (host-late: the host owed it). "
-               "Medians over the inferences of one profiled run of 30\\,s per row, all taken in "
-               "one session.",
+               "Medians over the inferences of one profiled run of 30\\,s per row, taken in one "
+               "session; the last row is the side-64 arm of the footprint set, profiled with the "
+               "DRAM counters as well.",
                "tab:mem-trace-split")
     for _arm, _desc in _ARMS:
         _r = _split.get(_arm)
@@ -873,11 +876,10 @@ if _split:
                 float(_r["queued_us"]), float(_r["host_late_us"])))
     close_table()
 if _ovl:
-    open_table([r"Co-runner & Covers & \multicolumn{2}{c}{Target kernels, sum ($\mu$s)} & "
-                r"Fixed & Proportional & \multicolumn{2}{c}{Gap between kernels ($\mu$s)} \\",
+    open_table([r"Co-runner & Covers & \multicolumn{2}{c}{Kernels, sum ($\mu$s)} & "
+                r"Fixed & Prop. & \multicolumn{2}{c}{Gap ($\mu$s), co-runner} \\",
                 r"\cmidrule(lr){3-4} \cmidrule(lr){7-8}",
-                r" & & free & overlapped & ($\mu$s/kernel) & (\%) & co-runner idle & "
-                r"co-runner running \\"], "lrrrrrrr",
+                r" & & free & overlapped & ($\mu$s) & (\%) & idle & running \\"], "lrrrrrrr",
                "The same target kernel with and without a co-runner kernel executing at the same "
                "time, from the traces of Table~\\ref{tab:mem-trace-split}. \\emph{Covers} is the "
                "fraction of the target's kernel time during which a co-runner kernel was "
@@ -886,7 +888,8 @@ if _ovl:
                "where enough such inferences exist and otherwise in the trace of the target alone; "
                "the overlapped duration is the median over those fully overlapped. The fixed and "
                "proportional parts are the least-squares line through the 55 differences against "
-               "the free durations. A gap is classified by whether a co-runner kernel covered it.",
+               "the free durations: \\emph{fixed} is added to every kernel, \\emph{prop.} is the share of "
+               "its duration added. A gap is classified by whether a co-runner kernel covered it.",
                "tab:mem-trace-overlap")
     for _arm, _desc in _ARMS[1:]:
         _r = _ovl.get(_arm)
