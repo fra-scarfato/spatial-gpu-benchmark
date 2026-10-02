@@ -21,15 +21,6 @@
 
 namespace {
 
-// steady_clock, not system_clock: it is monotonic, so an NTP step during a
-// 30-second measurement window cannot make an elapsed time negative or absurd.
-// On Linux this maps to CLOCK_MONOTONIC.
-using Clock = std::chrono::steady_clock;
-
-double secondsSince(Clock::time_point t0) {
-    return std::chrono::duration<double>(Clock::now() - t0).count();
-}
-
 // With one network the output keeps the plain name; with several, each network
 // gets its own suffix so the files never collide. This is the whole reason the
 // label exists in the file names.

@@ -1,12 +1,6 @@
 #pragma once
 //
-// run.hpp — one process invocation: the networks, the protocol, the results.
-//
-// A Run is one process with fresh CUDA/GPU state, one dataset, one protocol,
-// and ONE OR MORE networks:
-//
-//   one network  -> the characterisation runs
-//   two networks -> the concurrent runs, one green context each
+// network.hpp — one client of a Run: a network and its measurement.
 //
 // A Network is the subject AND its measurement: it owns the SM allocation, the
 // TensorRT engine and the inputs, and it knows how to warm itself up, measure

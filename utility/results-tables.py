@@ -107,7 +107,7 @@ for net in NETS:
     pass
 ISO_ROWS = []
 for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
-    ISO_ROWS.append(("GC %d\,\%%" % pct, sm, "exp1", "%s_gc%d" % ("mobilenet", pct),
+    ISO_ROWS.append(("GC %d\\,\\%%" % pct, sm, "exp1", "%s_gc%d" % ("mobilenet", pct),
                      "exp1", "%s_gc%d" % ("resnet", pct)))
 cols, spec = wide_head([r"Configuration"], True, False)
 open_table(cols, spec,
@@ -115,7 +115,7 @@ open_table(cols, spec,
            "green context, which both networks receive in full. \\texttt{GC} is a green "
            "context and the percentage is the share of the device's sixteen SMs it "
            "reserves. \\texttt{whole device} is no reservation at all, and the pair "
-           "\\texttt{whole device} and \\texttt{GC 100\,\%} is the same reservation "
+           "\\texttt{whole device} and \\texttt{GC 100\\,\\%} is the same reservation "
            "measured twice, so it also shows the run-to-run spread of one configuration.",
            "tab:iso-rates")
 emit(r"whole device & 16 & {} & {:.0f} & {} & {:.0f} \\".format(
@@ -155,7 +155,7 @@ disp_rows = []
 for net in NETS:
     disp_rows.append((net, "whole device", "exp1", net + "_whole", 16))
     for pct, sm in ((100, 16), (75, 12), (50, 8), (25, 4)):
-        disp_rows.append((net, "GC %d\,\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
+        disp_rows.append((net, "GC %d\\,\\%%" % pct, "exp1", "%s_gc%d" % (net, pct), sm))
 open_table(DISP_COLS, DISP_SPEC,
            "The same builds by dispersion. \\emph{tail} is $p99-\\mathrm{median}$; "
            "$\\times$iso is against the network's own whole-device run.",
@@ -250,8 +250,8 @@ SHARE = {("50_50", "mobilenet"): 8, ("50_50", "resnet"): 8,
 FLOOR = {("50_50", "mobilenet"): "mobilenet_gc50", ("50_50", "resnet"): "resnet_gc50",
          ("75_25", "mobilenet"): "mobilenet_gc75", ("75_25", "resnet"): "resnet_gc25",
          ("25_75", "mobilenet"): "mobilenet_gc25", ("25_75", "resnet"): "resnet_gc75"}
-RATIOS = [("50_50", "50\,\% / 50\,\%"), ("75_25", "75\,\% / 25\,\%"),
-          ("25_75", "25\,\% / 75\,\%")]
+RATIOS = [("50_50", "50\\,\\% / 50\\,\\%"), ("75_25", "75\\,\\% / 25\\,\\%"),
+          ("25_75", "25\\,\\% / 75\\,\\%")]
 FOUR_COLS = [
     r"Ratio & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
     r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
@@ -330,7 +330,7 @@ CPU = [("t1_unpinned", "GC", "1 thread"),
        ("mps_owncores", "MPS static", "1 core each")]
 cols, spec = wide_head([r"Mechanism", r"Configuration"], False, True)
 open_table(cols, spec,
-           "Two networks at 75\,\% / 25\,\% with the submission model as the only "
+           "Two networks at 75\\,\\% / 25\\,\\% with the submission model as the only "
            "variable. \\texttt{1 thread} drives both networks from one thread while "
            "keeping one inference in flight per network; \\texttt{2 threads} gives each "
            "network its own thread, which is what an application does by accident, and "
@@ -374,7 +374,7 @@ open_table([r"Network & Configuration & Median (ms) & Thr.\ (inf/s) & p99 (ms) &
            "The work-queue half of a green context descriptor varied on the pair whose "
            "client has more streams than the platform declares by default: RetinaNet's "
            "\\texttt{aux8} build with nine stream-ordered workloads against a default "
-           "declaration of eight, and MobileNet as the co-runner, 50\,\% each, one "
+           "declaration of eight, and MobileNet as the co-runner, 50\\,\\% each, one "
            "submitting thread. The first row is the descriptor every earlier measurement "
            "used.",
            "tab:wq-rows")
@@ -450,10 +450,10 @@ close_table()
 # device in two parts.
 MB_ROWS = [("none", "GC", "exp1", "mobilenet_gc50", False),
            ("none", "MPS static", "exp9", "mps-alone", False),
-           ("resnet 4\,SMs", "GC", "exp9", "mobilenet8-resnet4", True),
-           ("resnet 4\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet4", True),
-           ("resnet 8\,SMs", "GC", "exp2-1t", "50_50", True),
-           ("resnet 8\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet8", True)]
+           ("resnet 4\\,SMs", "GC", "exp9", "mobilenet8-resnet4", True),
+           ("resnet 4\\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet4", True),
+           ("resnet 8\\,SMs", "GC", "exp2-1t", "50_50", True),
+           ("resnet 8\\,SMs", "MPS static", "exp9", "mps-mobilenet8-resnet8", True)]
 MB_COLS = [
     r"Configuration & Mechanism & \multicolumn{2}{c}{MobileNet V2-12} & "
     r"\multicolumn{2}{c}{ResNet-50 v2-7} & Aggregate \\",
@@ -463,12 +463,12 @@ MB_COLS = [
 
 open_table(MB_COLS, "llrrrrr",
            "Memory contention with the target's budget fixed, under each mechanism, with one "
-           "submitting thread per process. MobileNet holds the same 8\,SMs in every row, so "
+           "submitting thread per process. MobileNet holds the same 8\\,SMs in every row, so "
            "each configuration appears twice, under green contexts and under MPS static "
            "partitions, and the two rows of a pair differ in the mechanism alone. An MPS "
-           "static partition set covers the device in two parts, so the 4\,SM co-runner is "
+           "static partition set covers the device in two parts, so the 4\\,SM co-runner is "
            "given its own partition and the last quarter of the device is left unassigned, as "
-           "the green-context arm leaves it, so the 4\,SM arms use half the device. The aggregate is the two clients' rates together.",
+           "the green-context arm leaves it, so the 4\\,SM arms use half the device. The aggregate is the two clients' rates together.",
            "tab:mem-budget")
 _mb_cfg = None
 for _desc, _mech, _exp, _cfg, _co in MB_ROWS:
@@ -559,7 +559,7 @@ _mx_base_tail = {k: must(val(e, c, "mobilenet", "p99_minus_median"), c)
 
 open_table([r"Configuration & Mechanism & Median (ms) & Median $\times$iso & Thr.\ (inf/s) & "
             r"tail (ms) & tail $\times$iso \\"], "llrrrrr",
-           "What a participant's kind and budget cost a target holding its own 8\,SMs, under "
+           "What a participant's kind and budget cost a target holding its own 8\\,SMs, under "
            "each mechanism. Each configuration appears twice, under green contexts and under "
            "MPS static partitions, and the two rows of a pair differ in the mechanism alone; "
            "the participant reaches the same rate under both. The configuration carries the "
@@ -670,7 +670,7 @@ ADDT_MECHS = (("exp11", "GC"), ("exp12", "MPS static"))
 
 open_table([r"Target & Co-runners & Mechanism & Median (ms) & Thr.\ (inf/s) & Residual & "
             r"Sum of the two & tail (ms) \\"], "lllrrrrr",
-           "One target at 8\,SMs and two co-runners at 4\,SMs each, the device fully used. Each "
+           "One target at 8\\,SMs and two co-runners at 4\\,SMs each, the device fully used. Each "
            "co-runner is measured alone before both are measured together, so the first row of a "
            "block is the reference the residuals are against. The sum column is the two "
            "single-co-runner residuals above it added together within the same mechanism, filled "

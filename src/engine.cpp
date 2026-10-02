@@ -1,4 +1,4 @@
-// engine.cpp - the TensorRT engine and the pinned host buffers. Moved out of gpu.cpp, unchanged.
+// engine.cpp - the TensorRT engine and the pinned host buffers.
 #include "gpu.hpp"
 
 #include <fstream>
@@ -8,7 +8,6 @@ void Logger::log(Severity severity, const char* msg) noexcept {
     if (severity <= Severity::kWARNING)
         std::cerr << "[TRT] " << msg << std::endl;
 }
-
 
 PinnedHostBuffer::PinnedHostBuffer(std::size_t floats)
     : data_(nullptr), floats_(floats)
@@ -63,7 +62,6 @@ PinnedHostBuffer& PinnedHostBuffer::operator=(PinnedHostBuffer&& other) noexcept
 // It is in-process and inside the same joint split as the networks, because a second
 // process serialises, as the two-process arms of the first campaign showed.
 
-
 std::vector<char> TrtEngine::readFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("cannot open file: " + path);
@@ -95,33 +93,31 @@ TrtEngine::TrtEngine(const std::string& enginePath, SmAllocation& allocation)
     //    "input"/"output": engines can name their tensors anything, and some
     //    have more than one input. From TRT 8 on, everything is addressed by
     //    name.
-nvinfer1::Dims inputDims{};
-std::vector<nvinfer1::Dims> outputDims;
-for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
-    const char* name = engine_->getIOTensorName(i);
-    const nvinfer1::Dims dims = engine_->getTensorShape(name);
-    if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
-        inputName_  = name;
-        inputDims   = dims;
-    } else {
-        // Every output, in engine order. A network with ten of them is still
-        // one network with one input.
-        outputNames_.emplace_back(name);
-        outputDims.push_back(dims);
+    nvinfer1::Dims inputDims{};
+    std::vector<nvinfer1::Dims> outputDims;
+    for (int i = 0; i < engine_->getNbIOTensors(); ++i) {
+        const char* name = engine_->getIOTensorName(i);
+        const nvinfer1::Dims dims = engine_->getTensorShape(name);
+        if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+            inputName_  = name;
+            inputDims   = dims;
+        } else {
+            // Every output, in engine order. A network with ten of them is still
+            // one network with one input.
+            outputNames_.emplace_back(name);
+            outputDims.push_back(dims);
+        }
     }
-}
-if (outputNames_.empty())
-    throw std::runtime_error("the engine has no output tensors");
-
+    if (outputNames_.empty())
+        throw std::runtime_error("the engine has no output tensors");
 
     // 3. Buffer sizes: the product of the dimensions, in elements.
-inputVolume_ = 1;
-for (int d = 0; d < inputDims.nbDims; ++d) inputVolume_ *= inputDims.d[d];
-outputVolumes_.assign(outputNames_.size(), 1);
-for (std::size_t o = 0; o < outputDims.size(); ++o)
-    for (int d = 0; d < outputDims[o].nbDims; ++d)
-        outputVolumes_[o] *= outputDims[o].d[d];
-
+    inputVolume_ = 1;
+    for (int d = 0; d < inputDims.nbDims; ++d) inputVolume_ *= inputDims.d[d];
+    outputVolumes_.assign(outputNames_.size(), 1);
+    for (std::size_t o = 0; o < outputDims.size(); ++o)
+        for (int d = 0; d < outputDims[o].nbDims; ++d)
+            outputVolumes_[o] *= outputDims[o].d[d];
 
     // The input geometry comes from the engine, not from config.hpp, so a network
     // with any input size works without a source change. What the preprocessing
@@ -139,27 +135,25 @@ for (std::size_t o = 0; o < outputDims.size(); ++o)
 
     // 4. Device buffers, plus a pinned host buffer for the output (pinned
     //    because of the async download in infer()).
-const std::size_t inputBytes = std::size_t(inputVolume_) * sizeof(float);
-if (cudaMalloc(&dInput_, inputBytes) != cudaSuccess)
-    throw std::runtime_error("cudaMalloc (input) failed");
-dOutputs_.assign(outputNames_.size(), nullptr);
-hostOutputs_.reserve(outputNames_.size());
-for (std::size_t o = 0; o < outputNames_.size(); ++o) {
-    const std::size_t bytes = std::size_t(outputVolumes_[o]) * sizeof(float);
-    if (cudaMalloc(&dOutputs_[o], bytes) != cudaSuccess)
-        throw std::runtime_error("cudaMalloc (output) failed");
-    hostOutputs_.emplace_back(std::size_t(outputVolumes_[o]));
-}
-
+    const std::size_t inputBytes = std::size_t(inputVolume_) * sizeof(float);
+    if (cudaMalloc(&dInput_, inputBytes) != cudaSuccess)
+        throw std::runtime_error("cudaMalloc (input) failed");
+    dOutputs_.assign(outputNames_.size(), nullptr);
+    hostOutputs_.reserve(outputNames_.size());
+    for (std::size_t o = 0; o < outputNames_.size(); ++o) {
+        const std::size_t bytes = std::size_t(outputVolumes_[o]) * sizeof(float);
+        if (cudaMalloc(&dOutputs_[o], bytes) != cudaSuccess)
+            throw std::runtime_error("cudaMalloc (output) failed");
+        hostOutputs_.emplace_back(std::size_t(outputVolumes_[o]));
+    }
 
     // 5. Context and tensor addresses. The addresses are set once here because
     //    the buffers never move, so enqueueV3 needs no per-call binding array.
     context_.reset(engine_->createExecutionContext());
     if (!context_) throw std::runtime_error("failed to create execution context");
-context_->setTensorAddress(inputName_.c_str(), dInput_);
-for (std::size_t o = 0; o < outputNames_.size(); ++o)
-    context_->setTensorAddress(outputNames_[o].c_str(), dOutputs_[o]);
-
+    context_->setTensorAddress(inputName_.c_str(), dInput_);
+    for (std::size_t o = 0; o < outputNames_.size(); ++o)
+        context_->setTensorAddress(outputNames_[o].c_str(), dOutputs_[o]);
 
     // 6. The stream comes from the allocation — under a green context that is a
     //    stream bound to its SMs — plus the two timing events.
@@ -184,16 +178,13 @@ TrtEngine::~TrtEngine() {
     if (spanStopEvt_)  cudaEventDestroy(spanStopEvt_);
     if (stream_)   cudaStreamDestroy(stream_);
     if (dInput_)   cudaFree(dInput_);
-for (void* p : dOutputs_)
-    if (p) cudaFree(p);
-// hostOutputs_ (pinned), engine_ and runtime_ free themselves.
-
+    for (void* p : dOutputs_)
+        if (p) cudaFree(p);
+    // hostOutputs_ (pinned), engine_ and runtime_ free themselves.
 }
 
 void TrtEngine::submit(const float* hostInput) {
-
     const std::size_t inputBytes  = std::size_t(inputVolume_)  * sizeof(float);
-
 
     // The whole choreography on one stream, so the order is guaranteed by the
     // stream and no host-side waiting is needed in between.
@@ -225,11 +216,11 @@ void TrtEngine::submit(const float* hostInput) {
     if (!allocation_.enqueue(*context_, stream_))     // the partitioning hook
         throw std::runtime_error("inference failed");
     cudaCheck(cudaEventRecord(stopEvt_, stream_), "cudaEventRecord (stop)");
-for (std::size_t o = 0; o < dOutputs_.size(); ++o)
-    cudaCheck(cudaMemcpyAsync(hostOutputs_[o].data(), dOutputs_[o],
-                              std::size_t(outputVolumes_[o]) * sizeof(float),
-                              cudaMemcpyDeviceToHost, stream_),
-              "cudaMemcpyAsync (device to host)");
+    for (std::size_t o = 0; o < dOutputs_.size(); ++o)
+        cudaCheck(cudaMemcpyAsync(hostOutputs_[o].data(), dOutputs_[o],
+                                  std::size_t(outputVolumes_[o]) * sizeof(float),
+                                  cudaMemcpyDeviceToHost, stream_),
+                  "cudaMemcpyAsync (device to host)");
 
     cudaCheck(cudaEventRecord(spanStopEvt_, stream_),
               "cudaEventRecord (span stop)");

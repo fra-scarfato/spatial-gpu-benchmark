@@ -49,10 +49,8 @@ STAGES = ("engines", "measure", "reduce", "tables", "overview")
 # The stages, in the two groups the pipeline distinguishes. A measurement produces the numbers the
 # thesis reports; a diagnostic profiles what it measures and therefore perturbs it, so its output
 # is evidence about mechanisms and not a latency. Four diagnostics need root.
-STAGES_MEASUREMENT = STAGES
 PROFILE_SETS = ("traces", "soc-budget", "soc-itf", "footprint")      # utility/profile.sh <set>
 STAGES_DIAGNOSTIC = PROFILE_SETS + ("profiles", "ncu", "probes")
-EXTRA_STAGES = STAGES_DIAGNOSTIC
 
 
 def say(text=""):
@@ -114,7 +112,7 @@ def parse():
     p.add_argument("selection", nargs="*",
                    help="a group (section, appendix, mem, all), a family, or nothing for the menu")
     p.add_argument("--stage", default="all",
-                   help="all (the default set), or any of: " + ", ".join(STAGES + EXTRA_STAGES))
+                   help="all (the default set), or any of: " + ", ".join(STAGES + STAGES_DIAGNOSTIC))
     p.add_argument("--runs", type=int, default=5, help="replicates per configuration (default 5)")
     p.add_argument("--static-chunks", type=int, default=8,
                    help="enable the MPS static arms (default 8; 0 disables them)")
@@ -145,7 +143,6 @@ def main():
         except EOFError:
             selection = "section"
         say("  measurement stages: {}   (default)".format(" ".join(STAGES)))
-        say("  measurement, long:  {}".format(" ".join(STAGES_MEASUREMENT[len(STAGES):])))
         say("  diagnostics:        {}   (perturb what they measure; 4 need root)"
             .format(" ".join(STAGES_DIAGNOSTIC)))
         stages = input("  stages, space-separated, or 'all' for the default set ").strip()
@@ -159,9 +156,9 @@ def main():
         wanted = STAGES if args.stage == "all" else tuple(args.stage.split(","))
 
     for stage in wanted:
-        if stage not in STAGES + EXTRA_STAGES:
+        if stage not in STAGES + STAGES_DIAGNOSTIC:
             say("  unknown stage '{}'; expected one of {}".format(
-                stage, ", ".join(STAGES + EXTRA_STAGES)))
+                stage, ", ".join(STAGES + STAGES_DIAGNOSTIC)))
             return 2
 
     chosen = families.expand(selection)

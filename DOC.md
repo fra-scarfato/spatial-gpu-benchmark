@@ -446,8 +446,8 @@ stream genuinely governs the work.
 Board: Jetson AGX Orin 64 GB, 16 SMs, CC 8.7, clocks locked at 1.3005 GHz.
 **Five runs per configuration, 30 s windows, one fresh process each**; every
 number is the median of the five run medians and the run-to-run spread is under
-1 % throughout. Raw data in `$DATA/bench/`, derived tables in
-`$DATA/bench/aggregate/tables.txt`.
+1 % throughout. Raw data in `$DATA/bench/`, the reduction in
+`$DATA/bench/aggregate/`, the LaTeX tables from `utility/results-tables.py`.
 
 ### 6.1 Experiment 1 — one network, varying the SM budget (medians, ms)
 
@@ -538,8 +538,7 @@ The **observed maximum** (§3.5) is a different view, and the p99 does not bound
 it: it exceeds the p99 by up to 4.0× in the isolated MobileNet runs (2.7468 ms at
 8 SMs against a 0.6816 ms p99), and `mps_default` holds the worst single event in
 the campaign — 4.6940 ms for ResNet, 3.09× isolated. Per-configuration numbers
-with their `× iso` multipliers are in `$DATA/bench/aggregate/tables.txt` (the
-DISPERSION block), which is also where the thesis tables come from.
+with their `× iso` multipliers are in the dispersion tables `utility/results-tables.py` renders.
 
 ---
 
@@ -779,7 +778,7 @@ $DATA/bench/
 │     50_50/r3_latencies.csv   r3_mobilenet_stats.csv   …       (4 configs)
 ├── pair-mpsstatic-2submit/       two networks, TWO processes, MPS
 │     mps_static_50_50/r3_mobilenet_stats.csv   …               (9 configs)
-└── aggregate/            <exp>.csv   summary.csv   tables.txt
+└── aggregate/            <exp>.csv   summary.csv
 ```
 
 The folder names say what each experiment *is* rather than which number it has
@@ -796,7 +795,6 @@ Outputs, all in `$DATA/bench/aggregate/`:
 |---|---|
 | `<exp>.csv` | per-run detail, tidy/long, **one file per experiment**: one row per (config, network, run, metric) — for plotting. The experiment stays a column, so the files concatenate back into the single table this used to be |
 | `summary.csv` | across-run point estimate and spread per config/network |
-| `tables.txt` | the derived tables (also printed) |
 | `<run>.log` | full stdout of each run (holds the granted SM counts) |
 
 The tables: **Exp 1** (latency vs SM share, ratio vs `whole`), **Exp 2**
@@ -987,7 +985,7 @@ Everything reported in the thesis comes from the runs in `$DATA/bench/`, and the
 from those runs to a number on a page is three commands:
 
     ./utility/sweep.sh [--exp <family>]     # measure: bench/<experiment>/<config>/r<k>_{latencies,stats}.csv
-    python3 utility/aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv + tables.txt
+    python3 utility/aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv
     python3 utility/tex-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
 
 Each step reads only what the previous one wrote, so any step can be re-run alone.
@@ -1006,10 +1004,8 @@ small and shared, and not in this repository, which stays code. They do not need
 follow the method, but the numbers will only match with the same board, the same
 engines, the same images and the same protocol.
 
-**Not yet scripted:** the LaTeX for Experiments 1 to 4. Those tables were
-transcribed from `$DATA/bench/aggregate/tables.txt` and verified against it, but only
-Experiment 5 is rendered by `tex-tables.py`. The numbers are reproducible either
-way, because `tables.txt` is generated from the runs.
+Every table of the results section is rendered by `utility/results-tables.py`, and the appendix's
+by `utility/tex-tables.py`; no number is transcribed by hand.
 
 ## The models
 

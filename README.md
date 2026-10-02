@@ -1,135 +1,151 @@
 # runner
 
-Measures how much two clients interfere on a Jetson AGX Orin when they are given **disjoint SM
-partitions**, and where the interference comes from.
+A TensorRT inference benchmark for the NVIDIA Jetson AGX Orin, built to measure how much
+co-located clients interfere when each is given a **disjoint partition of the GPU's SMs**, and
+where that interference comes from. It runs one or more networks on CUDA **green contexts** or
+under **MPS static partitions**, optionally beside a synthetic co-runner, and records every
+inference.
 
-TensorRT engines over a fixed set of inputs, one stats file per network per run, green contexts
-and MPS static partitions at matched SM budgets. Built for the KubeDeadline thesis, on spatial
-GPU reservation.
+Part of the KubeDeadline master's thesis on spatial GPU reservation for real-time containers.
 
-## What it does
+## Features
 
-- runs one or two networks in one process on **green contexts**, or two processes under **MPS**
-- gives every client an SM budget, quantised to two SMs on this SoC, and reports what is left idle
-- can run a synthetic **participant** that does either memory traffic or arithmetic and never
-  both, so the two can be told apart
-- times every inference and writes `r<k>_stats.csv` and `r<k>_latencies.csv` per network per run
-- refuses to measure when the clocks are not locked, or when somebody else is using the GPU
+- One or more TensorRT networks per process, each on its own green context, or one per process
+  under MPS. SM budgets are quantised to two SMs on this SoC, and the grant is reported.
+- Synthetic co-runners in their own partition: `mem_saxpy` (DRAM traffic only), `compute_gemm`
+  (L2-resident arithmetic), `spin` (a resident kernel that touches no memory) and `idle`.
+- One or two submitting threads, CPU pinning and real-time priority, as experimental variables.
+- Per-inference GPU time from CUDA events, written as `r<k>_latencies.csv` and summarised in
+  `r<k>_stats.csv`.
+- Refuses to measure when the clocks are unlocked or another process holds the GPU.
+- A campaign driver, a reducer, LaTeX table generators and a profiling driver that turn the runs
+  into the thesis tables with no number typed by hand.
 
-## Build
+## Requirements
 
-    make                    # the runner, into ./runner
-    make -C utility         # the probe tools
+- Jetson AGX Orin, JetPack 7.2: CUDA 13.2 (with `nvcc`), TensorRT 10.16, cuBLAS, OpenCV 4
+- GPU and CPU clocks locked with `sudo jetson_clocks`, which needs repeating after every boot
+- Python 3 with numpy and pandas for `utility/profiles.py`; the rest uses the standard library
+- Nsight Systems (`nsys`) for the profiled runs, and root for the DRAM counter sets
+- ONNX models and ImageNet validation images under `$DATA`, default `/mnt/nvme/f.scarfato`
+  (see [Data](#data))
 
-Needs CUDA, TensorRT and cuBLAS on aarch64. Nothing else is linked.
+## Quick start
 
-    make -f engines.mk      # rebuild every TensorRT engine from its ONNX file
+```sh
+make                          # builds ./runner
+make -f engines.mk            # builds every TensorRT engine from its ONNX file
+sudo jetson_clocks
 
-Engines are not bit-reproducible across builds: results compare within one build, never across
-two. That is why every engine carries the log of the build that produced it.
+./runner --dataset $DATA/dataset/imagenet-1k \
+         --net $DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine:50:mobilenet \
+         --allocation greenctx --submit-threads 1 --fixed 32 \
+         --min-inferences 5000 --min-duration 30 --csv /dev/shm/out
+```
 
-## Run
+The run prints the configuration it was granted and a summary per network:
 
-    sudo jetson_clocks                 # with a free governor the sweep refuses to measure
+```
+[info] network 'mobilenet': greenctx 8/16 SMs (50%), 32 inputs, 3x224x224 in
+=== LATENCY SUMMARY (timed phase) ===
+inferences: 40839   duration: 30.00 s
+metric                        n        mean      median         std  ...     p99-med
+gpu compute (ms)          40839      0.6748      0.6747      0.0023  ...      0.0060
+Throughput (whole loop): 1361.3 inferences/s
+```
 
-    ./runner --dataset $DATA/dataset/imagenet-1k \
-             --net $DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine:50:mobilenet \
-             --allocation greenctx --submit-threads 1 --fixed 32 \
-             --min-inferences 5000 --min-duration 30 --csv /dev/shm/out
+`./runner --help` lists every option. A plain `./runner` call has **no** busy-board guard; the
+scripts below run every measurement behind one.
 
-    [info] network 'mobilenet': greenctx 8/16 SMs (50%), 32 inputs, 3x224x224 in
-    --- network 'mobilenet' ---
-      median      0.6752 ms
-      p99         0.6816 ms
-      tail        0.0066 ms
-      1361 inf/s over 30.0 s
+## Reproducing the results
 
-`./runner --help` lists every option: `--allocation whole|greenctx|mps-static`, `--net` (repeatable),
-`--interferer mem_saxpy|compute_gemm`, `--submit-threads`, `--cpu`, `--priority`, `--wq-scope`,
-`--wq-limit`, and the protocol bounds.
+`pipeline.py` is the single entry point. It runs the stages in order (engines, measure, reduce,
+tables, overview) and stops at the first failure:
 
-## Reproduce
+```sh
+./pipeline.py                               # interactive: what is measured, then what to run
+./pipeline.py section                       # every family the results section uses
+./pipeline.py mem --runs 3                  # one group, fewer replicates
+./pipeline.py all --stage reduce,tables     # regenerate the tables, measure nothing
+./pipeline.py section --dry-run             # print every command instead of running it
+./pipeline.py --state                       # what is measured so far
+```
 
-    ./pipeline.py                       # menu: what is measured, then what to run
-    ./pipeline.py section               # the families the results section renders
-    ./pipeline.py appendix              # the rest, for the history and the tools
-    ./pipeline.py mem --runs 3          # one group, fewer replicates
-    ./pipeline.py --tables              # regenerate and split the tables, measure nothing
+The same stages by hand:
 
-It runs the stages in order — engines, measure, reduce, tables, overview — and stops at the
-first failure. `--dry-run` prints every command instead of running it, `--stage measure` stops
-after the measurement, `--state` prints what is measured and stops, and a selection can be a
-group, a family, or a list of either.
+```sh
+./utility/sweep.sh --exp section                       # measure -> $DATA/bench/<family>/<config>/
+python3 utility/aggregate.py                           # reduce  -> $DATA/bench/aggregate/
+python3 utility/results-tables.py > tables.tex         # the results section's tables
+python3 utility/split-tables.py tables.tex --out tables/   # one file per table
+```
 
-The stages are four commands, and can be run by hand:
+Profiled runs (Nsight Systems kernel traces and DRAM counters) perturb what they measure, so they
+are kept out of the campaign and serve as evidence about mechanisms, not as latencies:
 
-    ./utility/sweep.sh --exp section    # measure -> $DATA/bench/<family>/<config>/r<k>_*
-    python3 utility/aggregate.py        # reduce  -> $DATA/bench/aggregate/
-    python3 utility/results-tables.py > tables.tex      # the section's tables
-    python3 utility/split-tables.py tables.tex          # one file per table, plus an index
-    python3 utility/overview.py                         # $DATA/bench/OVERVIEW.md
+```sh
+./utility/profile.sh traces                 # CUDA kernel traces (no root)
+sudo ./utility/profile.sh soc-budget        # DRAM counters: each network alone on 4 budgets
+sudo ./utility/profile.sh soc-itf           # DRAM counters: target alone and beside compute_gemm
+sudo ./utility/profile.sh footprint         # DRAM counters: compute_gemm's operand size
+sudo ./utility/profile.sh calibration       # DRAM counters during devprobe's copies
+python3 utility/profiles.py                 # all of the above -> $DATA/profiles/derived/*.csv
+```
 
-Groups: `section`, `appendix`, `mem`, `all`, or any single family. The MPS static arms need
-`--static-chunks 8`, which the pipeline passes by default. The profiled runs stay outside the sweep
-because profiling perturbs what it measures. One driver takes them and one script reads them:
+These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 
-    ./utility/profile.sh traces                         # CUDA kernel traces (no root)
-    sudo ./utility/profile.sh soc-budget                # DRAM counters, each network alone
-    sudo ./utility/profile.sh soc-itf                   # DRAM counters, target alone and with compute_gemm
-    sudo ./utility/profile.sh footprint                 # DRAM counters, compute_gemm's operand side
-    sudo ./utility/profile.sh calibration               # DRAM counters during devprobe's copies
-    python3 utility/profiles.py                         # all of it -> $DATA/profiles/derived/*.csv
+## Measurement protocol
 
-The same are pipeline stages (`./pipeline.py mem --stage traces,profiles`, ...). What every derived number means and
-how it is computed is in `MEASUREMENTS.md`.
-### Every stage goes through the entry point
+- Five independent runs per configuration, each in a fresh process.
+- Each run does 200 untimed warm-up inferences, then at least 5000 timed inferences **and** at
+  least 30 s.
+- The same 32 preprocessed inputs in every configuration, and one submitting thread unless the
+  experiment varies it.
+- A reported value is the median of the five run medians, never a pooled percentile. The tail is
+  `p99 - median`, reduced the same way.
 
-**Measurements** produce the numbers the thesis reports, and measuring a family produces all of its
-measurements — for `interference-additivity` that means the sweep and the MPS static block, whose
-job spec cannot express three clients:
+## Repository layout
 
-    ./pipeline.py section --stage measure           # the sweep, at the campaign protocol
-    ./pipeline.py interference-additivity --stage measure   # ... and its MPS static half
+```
+src/, include/          the runner: options, inputs, statistics, SM allocation (green contexts,
+                        MPS), the TensorRT engine, networks, the synthetic co-runner, the run
+src/spin.cu             the spin co-runner's kernel, built by nvcc
+pipeline.py             the entry point
+engines.mk              every TensorRT engine, rebuilt from its ONNX file
+utility/sweep.sh        the campaign; its arms are listed in utility/lib/matrix.sh
+utility/aggregate.py    runs -> per-experiment CSVs and summary.csv, and flags suspect runs
+utility/results-tables.py, tex-tables.py   the LaTeX tables of the section and the appendix
+utility/profile.sh      every profiled run;  utility/profiles.py  their reading
+utility/lib/            the guards, the MPS helpers, the arm list, the family map, the table writer
+utility/*.cpp           standalone probes (auxprobe, wqprobe, devprobe, itfproc); see utility/README.md
+```
 
-**Diagnostics** profile the thing they measure, so their numbers describe mechanisms rather than
-latencies; the counter sets need root:
+## Data
 
-    ./pipeline.py mem --stage probes                  # build and run the probe tools
-    ./pipeline.py mem --stage traces                  # CUDA kernel traces of the target and each co-runner
-    ./pipeline.py mem --stage soc-budget              # DRAM counters: 4 networks x 4 budgets, 3 pairs (root)
-    ./pipeline.py mem --stage soc-itf,footprint       # DRAM counters around compute_gemm (root)
-    ./pipeline.py mem --stage profiles                # read every profile into $DATA/profiles/derived
-    ./pipeline.py mem --stage ncu                     # does Nsight Compute work here (root)
+All data lives outside the repository under `$DATA` (default `/mnt/nvme/f.scarfato`):
 
-The two groups are the same everywhere: in `pipeline.py`, in the menu it prints, in `--help`, and
-here. `--stage all` means the quick measurement stages, so a default run is unchanged. `--dry-run`
-prints a stage's commands instead of running them, which is how each was checked.
+```
+bench/<family>/<config>/r<k>_*   the campaign: one stats, latencies and log file per run
+bench/aggregate/                 the reduction: <exp>.csv per experiment, summary.csv
+bench/OVERVIEW.md                every experiment and configuration, from utility/overview.py
+profiles/<set>/                  the profiled runs: report, log, stats, extracted .csv.gz
+profiles/derived/                everything profiles.py computes
+models/<model>/                  ONNX files, and engine/ with the built engines and their logs
+dataset/imagenet-1k/             ImageNet validation images (32 are used)
+scratch/                         temporary files; nothing reads from it
+```
 
-## Protocol
+## Documentation
 
-Five independent runs per configuration, each in a fresh process. At least 5 000 inferences and
-30 seconds per run. The same 32 preprocessed inputs in every configuration. One submitting
-thread. The run is the unit of replication: a reported value is the median of five run medians,
-never a pooled percentile.
+- [`DOC.md`](DOC.md): design decisions, methodology, the data model and the traps found on the way
+- [`MEASUREMENTS.md`](MEASUREMENTS.md): how every number of the memory analysis is collected and
+  computed (GB/s, bytes per inference, kernel gaps, the calibration)
+- [`utility/README.md`](utility/README.md): the probe tools
 
-## Layout
+## Caveats
 
-    src/ include/     the runner: config, inputs, stats, the SM allocation hierarchy,
-                      the TensorRT engine, the synthetic participant, the run
-    utility/          the harness: sweep, aggregate, tables, tools, probes
-    utility/README.md the probe tools
-    DOC.md            design notes, methodology, traps, data model, table conventions
-    MEASUREMENTS.md   how every number of the memory subsection is collected and computed
-
-Measurements live outside the repository, under `$DATA` (default `/mnt/nvme/f.scarfato`), one
-directory per family and one per configuration inside it:
-
-    bench/            the campaign: results, the aggregate, the tables, OVERVIEW.md
-    profiles/         every profiled run, one directory per set, and derived/ (profiles.py's CSVs)
-    models/           ONNX files and the engines built from them
-    dataset/          ImageNet, 50 000 JPEGs of which 32 are used
-    labels/           the label file
-    scratch/          temporary files only; nothing in it is read by any script
-
-`$DATA/bench/OVERVIEW.md` lists every experiment, what it feeds and every configuration with its
-replicates, generated from the tree by `utility/overview.py`.
+- The board is shared. Every scripted run checks the clocks, the GPU's other users and a sentinel
+  latency first, and a profiled run is also watched while it runs.
+- TensorRT engines are not bit-reproducible across builds. Compare results within one build.
+- Profiled runs are single runs and are perturbed by the profiler. Only shapes, ratios and
+  traffic are taken from them, never latencies.

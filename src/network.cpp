@@ -1,5 +1,5 @@
 //
-// run.cpp — a Run: the networks, the protocol and the results.
+// network.cpp — a Network: one client's engine, inputs, warm-up, timed phase and results.
 //
 
 #include "run.hpp"
@@ -28,15 +28,6 @@ using Clock = std::chrono::steady_clock;
 
 double secondsSince(Clock::time_point t0) {
     return std::chrono::duration<double>(Clock::now() - t0).count();
-}
-
-// With one network the output keeps the plain name; with several, each network
-// gets its own suffix so the files never collide. This is the whole reason the
-// label exists in the file names.
-std::string csvPrefixFor(const Options& opts, std::size_t index) {
-    if (opts.networks.size() == 1)
-        return opts.csvPrefix;
-    return opts.csvPrefix + "_" + opts.networks[index].label;
 }
 
 } // namespace

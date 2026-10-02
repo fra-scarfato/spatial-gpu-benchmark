@@ -1,4 +1,4 @@
-// allocation.cpp - the SM partitioning layer. Moved out of gpu.cpp, unchanged.
+// allocation.cpp - the SM partitioning layer.
 #include "gpu.hpp"
 
 #include <iostream>

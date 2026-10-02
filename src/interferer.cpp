@@ -1,25 +1,12 @@
-// This file was split out of gpu.cpp; the code is unchanged.
-
-#include "gpu.hpp"
-#include <cublas_v2.h>
-#include <thread>
-#include <algorithm>
-#include <cstddef>
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <vector>
+//
+// interferer.cpp - the synthetic participant: one kind of work in its own SM partition.
+//
 
 #include "interferer.hpp"
-
-cudaError_t launchSpin(cudaStream_t stream, int blocks, long long iters);   // spin.cu
 
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
 
-#include <cstddef>
 #include <algorithm>
 #include <chrono>
 #include <iostream>
@@ -27,6 +14,8 @@ cudaError_t launchSpin(cudaStream_t stream, int blocks, long long iters);   // s
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+cudaError_t launchSpin(cudaStream_t stream, int blocks, long long iters);   // spin.cu
 
 Interferer::Interferer(Kind kind, std::unique_ptr<SmAllocation> allocation, std::size_t megabytes,
                        int gemmSide)
@@ -110,23 +99,12 @@ void Interferer::submit() {
                         static_cast<const float*>(dB_), k,
                         &zero, static_cast<float*>(dC_), m);
         flops_ += double(reps) * 2.0 * m * n * k;
-        } else if (kind_ == Kind::Spin) {
-            // One long kernel per unit, 16 blocks of 256 threads: resident in a single wave on four
-            // SMs or eight, so the unit adds one launch and sixteen block dispatches every few
-            // milliseconds and nothing else. About 3e6 dependent FMAs per thread is ~10 ms here.
-            if (launchSpin(stream_, 16, 3000000LL) != cudaSuccess)
-                throw std::runtime_error("spin kernel launch failed");
-        } else if (kind_ == Kind::Idle) {
-            // Occupies its partition and asks the device for nothing: the control for whether
-            // the floor of the penalty is contention at all, or merely the existence of a
-            // second partition. Sleeping rather than spinning keeps the CPU out of it.
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        } else {
-        // Not SM work at all: kept as a control for the copy path, which an SM
-        // partition cannot contain because it does not run on SMs.
-        cudaMemcpyAsync(dB_, dA_, mb_ * 1024ull * 1024ull,
-                        cudaMemcpyDeviceToDevice, stream_);
-        bytes_ += 2.0 * double(mb_) * 1024.0 * 1024.0;
+    } else if (kind_ == Kind::Spin) {
+        // One long kernel per unit, 16 blocks of 256 threads: resident in a single wave on four
+        // SMs or eight, so the unit adds one launch and sixteen block dispatches every few
+        // milliseconds and nothing else. About 3e6 dependent FMAs per thread is ~10 ms here.
+        if (launchSpin(stream_, 16, 3000000LL) != cudaSuccess)
+            throw std::runtime_error("spin kernel launch failed");
     }
     ++units_;
 }

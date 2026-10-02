@@ -64,16 +64,7 @@ def agg_tp(exp, cfg):
 
 
 def net_tp(exp, cfg, net):
-    """The measured throughput of one network: its inference count over the window
-    the runner timed, median across the runs of that configuration. Deliberately not
-    1000/median, which is the GPU-only figure and reads higher."""
-    import statistics as _st
-    vals = []
-    for r in sorted(A.runs_of(DATA, exp, cfg)):
-        rec = DATA[(exp, cfg, r)][net]["gpu_ms"]
-        if rec["duration_s"] > 0:
-            vals.append(rec["count"] / rec["duration_s"])
-    return _st.median(vals) if vals else None
+    return T.thr(exp, cfg, net)
 
 
 def emit(s):
