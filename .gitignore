@@ -36,3 +36,4 @@ utility/probes/auxprobe
 utility/probes/wqprobe
 utility/probes/devprobe
 utility/probes/itfproc
+utility/probes/gpu-latency/gpu-latency

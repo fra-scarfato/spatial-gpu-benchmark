@@ -1,0 +1,16 @@
+gpu-latency, from RRZE-HPC gpu-benches (GPL-3.0, see LICENSE)
+  https://github.com/RRZE-HPC/gpu-benches
+  commit 23e586dd8d8a19e72abd9d385a088623cefabfae (2025-10-24)
+  files: gpu-latency/main.cu, gpu-error.h, dtime.hpp (the latter two unchanged)
+
+What the patch changes in main.cu, and nothing else:
+  - main() takes --sizes-kb and --duration instead of sweeping ~340 sizes from 16 lines to 128 MB.
+    Each chain is built once, with upstream's code moved into buildChain(), then sampled in turn
+    until the duration ends; one output line per sample (size, dereferences, ms, ns per access).
+  - The GPU clock is not read (upstream reads it through NVML after a full-device warm-up kernel,
+    which a 2-SM MPS partition and a Jetson do not suit); the result is reported in ns per access.
+    The clock is pinned at 1300.5 MHz on this board, so cycles = ns * 1.3005.
+  - Includes point at the copies in this directory, plus <algorithm> for std::shuffle, which
+    upstream received through MeasurementSeries.hpp; that header and gpu-clock.cuh are not needed.
+Unchanged: the pchase<<<1,1>>> kernel, the random cache-line chain, the iteration count
+max(LEN, 100000), the carveout setting, and the timing with CUDA events.
