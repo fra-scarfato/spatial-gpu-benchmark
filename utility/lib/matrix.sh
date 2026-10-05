@@ -510,7 +510,8 @@ add "interference-additivity_resnet+retinanet+inception" \
 # The stress model, under MPS static partitions only (MEASUREMENTS.md, "The stress model").
 #
 # stress-sensitivity: each target on 8 SMs, alone and beside the throttled SAXPY on the other 8 SMs
-# at levels 0, 0.1 ... 1 (itfproc saxpy --level, achieved bandwidth as a fraction of full speed).
+# at levels 0 ... 1, finer below 0.2 where the networks fall (itfproc saxpy --level, achieved
+# bandwidth as a fraction of full speed).
 # The target's slowdown against its alone row, per level, is its sensitivity curve.
 #
 # stress-validation: each target on 8 SMs beside each other network on 4 SMs, as a separate process.
@@ -524,7 +525,7 @@ stress_target() { echo "$RUNNER --submit-threads 1 --dataset $DS --allocation wh
 for t in $STRESS_TARGETS; do
     tn="${t%%:*}"; te="${t#*:}"
     add "stress-sensitivity_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
-    for p in 000 010 020 030 040 050 060 070 080 090 100; do
+    for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity_${tn}-saxpy-L$p" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:50"
     done

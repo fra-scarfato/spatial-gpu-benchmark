@@ -275,24 +275,44 @@ scale, and the kernel stays resident at every level.
 
 ### The reporter: gpu-latency
 
-RRZE-HPC's pointer chase (`utility/probes/gpu-latency/UPSTREAM` gives the commit and the patch).
-One thread follows a random chain through 128-byte cache lines, so each access waits for the one
-before. It runs in its own 2-SM partition and adds almost no traffic.
-- Two buffers are sampled in turn for 30 s: **2 MB** (L2-sized) and **64 MB** (DRAM-sized).
-- One sample is `max(LEN, 100000)` dereferences timed with CUDA events, giving ns per access.
-- The statistic of a run is the median over its samples, and of a configuration the median of
-  its five run medians, separately for each buffer.
-- Idle board: 304 ns (2 MB) and 617 ns (64 MB), with variation under 0.5 % between samples.
+RRZE-HPC's pointer chase (`utility/probes/gpu-latency/UPSTREAM` gives the commit and every change).
+One thread follows a random chain through 128-byte cache lines of a **64 MB** buffer, so every access
+goes to DRAM and waits for the one before. It runs in its own 2-SM partition and adds almost no
+traffic.
+
+**Windows.** One long launch of 2000 windows of 512 dereferences (about 0.3 ms each), each closed by a
+`clock64` mark. The mark is read only after the window's last load has completed, because the
+thread first branches on the loaded pointer (verified in the SASS). Cycles are converted to ns with
+the pinned 1300.5 MHz, and the first window of each launch is dropped. A 30 s run gives about 45,000
+windows.
+
+**Why windows.** A network's DRAM traffic comes in bursts. Upstream's samples, each a separate launch
+averaging 0.3 s of accesses, hid them: all four networks read 603–612 ns, within the band between
+SAXPY 0 % and 10 %. Short separate launches carry about 0.3 ms of launch and event overhead under MPS,
+as long as the chase itself. Windows timed inside the kernel resolve the bursts with no overhead.
+
+**Validation.** The window means reproduce upstream's values on the 64 MB chain: 617 against 617 ns
+idle, 603 against 606 beside SAXPY 0 %, 648 against 649 beside SAXPY 20 %.
+
+**The coordinate:** the **p99 of a run's windows**, with the median recorded too. Configuration value
+= the median over five runs.
+
+Not used:
+- a 2 MB (L2-sized) chain, which any co-runner, even SAXPY at 10 %, evicts to DRAM latency at once:
+  it carries no level;
+- the idle reading, which is about 14 ns slower than SAXPY 0 %, a resident kernel that moves no data.
+  This is consistent with the shared LPDDR5 dropping into a low-power state when nothing touches it.
+  The zero of the scale is SAXPY 0 %.
 
 ### Steps and quantities
 
 | quantity | from | definition |
 |---|---|---|
-| `R_c(L)` | `reporter.sh calibration` | reporter latency on buffer c (L2 or DRAM) beside SAXPY at achieved level L, SAXPY 8 SMs + reporter 2 SMs |
-| `L_eq,c(net)` | `reporter.sh networks` | the level whose `R_c` equals the reporter's latency beside the network (network 4 SMs + reporter 2 SMs), by inverse linear interpolation; a reading outside the calibrated range is clipped and flagged |
+| `R(L)` | `reporter.sh calibration` | the reporter's p99 (and median) window latency beside SAXPY at achieved level L, at levels 0, 2, 4, 6, 8, 10, 15, 20, 30 … 100 %; SAXPY 8 SMs + reporter 2 SMs |
+| `L_eq(net)` | `reporter.sh networks` | the level whose `R` equals the reporter's reading beside the network (network 4 SMs, at least 5000 inferences and 30 s, + reporter 2 SMs for as long as the network runs), by inverse linear interpolation; a reading outside the calibrated range is clipped and flagged |
 | occupancy, inf/s | the network co-runner's own `_stats.csv` | mean GPU time per inference x inferences / run duration, and inferences per second |
 | `S_p99(L)`, `S_med(L)` | `stress-sensitivity` | the target's p99 (median) beside SAXPY at level L divided by its p99 (median) alone, target 8 SMs + SAXPY 8 SMs, medians over five runs |
-| predicted slowdown | `stress.py predict` | `S(L_eq(co-runner))` by linear interpolation, for p99 and median, from each buffer |
+| predicted slowdown | `stress.py predict` | `S(L_eq(co-runner))` by linear interpolation, for p99 and median, from each reporter statistic (p99 is the model's coordinate) |
 | measured slowdown | `stress-validation` | the target's p99 (median) beside the co-runner (target 8 + co-runner 4 SMs) over its alone p99 (median) |
 | error | `stress.py compare` | predicted minus measured slowdown, in points (x100) |
 

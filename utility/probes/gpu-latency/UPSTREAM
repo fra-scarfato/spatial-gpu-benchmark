@@ -7,6 +7,14 @@ What the patch changes in main.cu, and nothing else:
   - main() takes --sizes-kb and --duration instead of sweeping ~340 sizes from 16 lines to 128 MB.
     Each chain is built once, with upstream's code moved into buildChain(), then sampled in turn
     until the duration ends; one output line per sample (size, dereferences, ms, ns per access).
+  - --iters N optionally sets the dereferences per sample (upstream: max(LEN, 100000)), so that a
+    sample can be short enough to resolve bursts of a co-runner's traffic.
+  - --window W [--windows K] adds pchase_windows, a copy of pchase that times itself from inside:
+    one launch of K windows of W dereferences, each closed by a clock64 mark read only after the
+    window's last load has completed (a branch on the loaded pointer). It removes the per-sample
+    launch and event overhead (about 0.3 ms under MPS, as long as a 512-dereference chase) and
+    resolves bursts at window scale. One 8-byte store per window is its only added traffic; the
+    first window of each launch includes the kernel's start and is dropped.
   - The GPU clock is not read (upstream reads it through NVML after a full-device warm-up kernel,
     which a 2-SM MPS partition and a Jetson do not suit); the result is reported in ns per access.
     The clock is pinned at 1300.5 MHz on this board, so cycles = ns * 1.3005.

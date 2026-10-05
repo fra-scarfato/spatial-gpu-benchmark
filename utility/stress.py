@@ -10,8 +10,9 @@ family. It never reads stress-validation: those pairs are the ground truth and m
 model. compare is the one place that reads them, and it refuses to run before predict has written
 its file. Every quantity is defined in MEASUREMENTS.md, "The stress model".
 
-  R(L)       the reporter's latency (L2 and DRAM buffer) beside SAXPY at achieved level L
-  L_eq(net)  the level whose R equals the reporter's latency beside that network, per coordinate
+  R(L)       the reporter's DRAM latency beside SAXPY at achieved level L: per run, the p99 (the
+             model's coordinate) and the median of its 0.3 ms windows
+  L_eq(net)  the level whose R equals the reporter's reading beside that network, per statistic
   S(L)       a target's slowdown beside SAXPY at level L, against the target alone (p99 and median)
   predicted  S_target(L_eq(co-runner))
 """
@@ -30,7 +31,8 @@ import aggregate as A  # noqa: E402
 BENCH = os.path.join(A.DATA_ROOT, "bench")
 REPORTER = os.path.join(BENCH, "stress-reporter")
 OUT = os.path.join(BENCH, "aggregate")
-SIZES = {"2048": "l2", "65536": "dram"}
+# The reporter's coordinates, all on the 64 MB (DRAM) chain: a statistic of the run's windows.
+STATS = {"p99": lambda v: float(np.percentile(v, 99)), "median": lambda v: float(np.median(v))}
 NETS = ("mobilenet", "resnet", "inception", "retinanet")
 
 
@@ -41,13 +43,14 @@ def achieved_level(log):
 
 
 def reporter_latency(path):
-    """Per buffer coordinate, the median ns per access of one reporter run."""
-    per = {}
+    """Per coordinate, one statistic of the DRAM-chain window latencies (ns) of one reporter run."""
+    v = []
     for line in open(path):
         f = line.split()
-        if f and not line.startswith("#") and f[0] in SIZES:
-            per.setdefault(SIZES[f[0]], []).append(float(f[3]))
-    return {k: st.median(v) for k, v in per.items()}
+        # four fields: a reporter stopped mid-line (beside networks) leaves a partial last line
+        if len(f) == 4 and not line.startswith("#") and f[0] == "65536":
+            v.append(float(f[3]))
+    return {k: fn(v) for k, fn in STATS.items()}
 
 
 def reporter_config(name):
@@ -58,7 +61,7 @@ def reporter_config(name):
     if not runs:
         return None
     lat = [reporter_latency(r) for r in runs]
-    row = {c: st.median(x[c] for x in lat) for c in SIZES.values()}
+    row = {c: st.median(x[c] for x in lat) for c in STATS}
     row["runs"] = len(runs)
     levels = [achieved_level(f) for f in sorted(glob.glob(os.path.join(d, "r*_c0.log")))]
     levels = [lv for lv in levels if lv]
@@ -105,6 +108,9 @@ def sensitivity(data, target):
 
 
 def write(name, rows):
+    if not rows:
+        print("  %s: nothing to write yet" % name)
+        return
     path = os.path.join(OUT, name)
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
@@ -141,7 +147,7 @@ def predict():
         if not r:
             continue
         row = dict(corunner=net, runs=r["runs"])
-        for c in SIZES.values():
+        for c in STATS:
             leq, inside = invert(r[c], xs, [k[c] for k in calib])
             row[c + "_ns"], row["L_eq_" + c], row[c + "_inside"] = fmt(r[c]), fmt(leq), inside
             eq[(net, c)] = leq
@@ -165,10 +171,10 @@ def predict():
     for t, pts in curves.items():
         L = [p[0] for p in pts]
         for net in NETS:
-            if net == t or (net, "dram") not in eq:
+            if net == t or (net, "p99") not in eq:
                 continue
             row = dict(target=t, corunner=net)
-            for c in SIZES.values():
+            for c in STATS:
                 row["L_eq_" + c] = fmt(eq[(net, c)])
                 row["pred_p99_" + c] = fmt(float(np.interp(eq[(net, c)], L, [p[1] for p in pts])))
                 row["pred_median_" + c] = fmt(float(np.interp(eq[(net, c)], L, [p[2] for p in pts])))
@@ -195,18 +201,18 @@ def compare():
         meas = {"p99": p99[0] / alone99[0], "median": med[0] / alone[0]}
         row = dict(target=t, corunner=net, measured_p99=fmt(meas["p99"]), measured_median=fmt(meas["median"]))
         for q in ("p99", "median"):
-            for c in SIZES.values():
+            for c in STATS:
                 pred = float(p["pred_%s_%s" % (q, c)])
                 row["pred_%s_%s" % (q, c)] = fmt(pred)
                 row["err_%s_%s_pts" % (q, c)] = fmt((pred - meas[q]) * 100)       # slowdown points
-        row.update(L_eq_l2=p["L_eq_l2"], L_eq_dram=p["L_eq_dram"],
+        row.update(L_eq_p99=p["L_eq_p99"], L_eq_median=p["L_eq_median"],
                    occupancy=occ.get(net, {}).get("occupancy", ""),
                    inf_per_s=occ.get(net, {}).get("inf_per_s", ""))
         rows.append(row)
     if rows:
         write("stress-comparison.csv", rows)
         for q in ("p99", "median"):
-            for c in SIZES.values():
+            for c in STATS:
                 e = [abs(r["err_%s_%s_pts" % (q, c)]) for r in rows]
                 print("  %-6s from %-4s: mean |error| %.1f points, max %.1f, over %d pairs"
                       % (q, c, st.mean(e), max(e), len(e)))

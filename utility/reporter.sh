@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # reporter.sh - the stress reporter beside a set of co-runners, under MPS static partitions.
 #
-#   utility/reporter.sh calibration          idle, then SAXPY on 8 SMs at levels 0, 0.1 ... 1
+#   utility/reporter.sh calibration          idle, then SAXPY on 8 SMs at levels 0 ... 1
 #   utility/reporter.sh networks             each network alone as the co-runner, on 4 SMs
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
 # through an L2-sized and a DRAM-sized buffer, in its own 2-SM partition, so it adds almost no
 # traffic and reads the stress the co-runners put on the memory system as a latency. The co-runners
-# are started first, the reporter 3 s later for 30 s; itfproc is then stopped, and a network
-# co-runner finishes by itself, so its own statistics (occupancy, launch rate) are written too.
+# are started first and the reporter 3 s later. Beside itfproc (or alone) it runs for 30 s and
+# itfproc is then stopped; beside networks it runs until they have completed the campaign's protocol
+# (5000 inferences and 30 s), so their own statistics (occupancy, rate) are written too.
 #
 # Output: $DATA/bench/stress-reporter/<configuration>/r<k>_latency.txt, r<k>_c<i>.log and, for a
 # network co-runner, r<k>_c<i>_stats.csv. A run whose latency file exists is skipped; every run is
@@ -23,6 +24,12 @@ OUTROOT="${OUTROOT:-$DATA/bench/stress-reporter}"
 RUNS="${RUNS:-5}"
 LEAD=3          # co-runners start this long before the reporter
 DURATION=30     # the reporter's own measurement
+SIZES_KB="${SIZES_KB:-65536}"        # the reporter's chain: DRAM-sized (an L2-sized one is evicted
+                                     # outright by any co-runner, so it carries no level)
+ITERS="${ITERS:-0}"                  # dereferences per sample; 0 = upstream's max(LEN, 100000)
+WINDOW="${WINDOW:-512}"              # in-kernel windows of this many dereferences (~0.3 ms); 0 =
+                                     # upstream's per-launch samples, which average bursts away
+ONLY="${ONLY:-}"                     # a regular expression: run only the configurations it matches
 DS="$DATA/dataset/imagenet-1k"
 M="$DATA/models"
 MOB="$M/mobilenetv2-12/engine/mobilenetv2-12.engine"
@@ -39,9 +46,10 @@ MPS_PIPE="${MPS_PIPE:-/tmp/mps-$USER}"
 MPS_LOG="${MPS_LOG:-/tmp/mps-log-$USER}"
 MPS_MODE=off
 
-# A network as a co-runner: its own process, the whole of its partition, and a run long enough to
-# outlast the reporter, after which it exits and writes its statistics.
-net() { echo "$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $1:100:$2 --min-inferences 100 --min-duration $((LEAD + DURATION + 2))"; }
+# A network as a co-runner: its own process, the whole of its partition, and the campaign's protocol
+# (at least 5000 inferences and 30 s). The reporter runs for as long as it does, and the network then
+# exits by itself and writes its statistics.
+net() { echo "$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $1:100:$2 --min-inferences 5000 --min-duration $DURATION"; }
 
 # The configurations of each set, one per line: name|co-runner shares|co-runner commands (;-separated).
 # The reporter always takes one 2-SM chunk after the co-runners' partitions.
@@ -50,7 +58,8 @@ configs() {
     calibration)
         echo "idle||"
         local p
-        for p in 000 010 020 030 040 050 060 070 080 090 100; do
+        # finer below 0.2, where every real network falls
+        for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
             echo "saxpy-L$p|50|$ITF saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))"
         done
         ;;
@@ -82,6 +91,7 @@ trap 'mps_stop; rm -rf "$TMP"' EXIT
 check_clocks || exit 1
 
 while IFS='|' read -r name shares cmds; do
+    [ -n "$ONLY" ] && ! [[ $name =~ $ONLY ]] && continue
     dest="$OUTROOT/$name"
     mkdir -p "$dest"
     IFS=';' read -r -a co <<< "$cmds"
@@ -104,11 +114,23 @@ while IFS='|' read -r name shares cmds; do
             case "${co[$i]}" in "$ITF"*) stop+=($!) ;; esac
         done
         [ "${#co[@]}" -gt 0 ] && sleep "$LEAD"
+        # Beside networks the reporter runs until they have finished their protocol; beside itfproc,
+        # or alone, for DURATION. Its output is flushed sample by sample, so stopping it loses nothing.
+        dur="$DURATION"
+        [ "${#stop[@]}" -lt "${#co[@]}" ] && dur=100000
         env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="${PART_LIST[${#co[@]}]}" \
-            "$REPORTER" --sizes-kb 2048,65536 --duration "$DURATION" > "$TMP/latency.txt" 2>&1
-        rc=$?
+            "$REPORTER" --sizes-kb "$SIZES_KB" --duration "$dur" --iters "$ITERS" --window "$WINDOW" \
+            > "$TMP/latency.txt" 2>&1 &
+        rpid=$!
+        if [ "$dur" = "$DURATION" ]; then
+            wait "$rpid"; rc=$?
+        else
+            for pid in "${pids[@]}"; do wait "$pid"; done
+            kill -TERM "$rpid" 2>/dev/null; wait "$rpid" 2>/dev/null; rc=0
+            grep -q "^[0-9]" "$TMP/latency.txt" || rc=1
+        fi
         for pid in "${stop[@]}"; do kill -TERM "$pid" 2>/dev/null; done
-        for pid in "${pids[@]}"; do wait "$pid"; done
+        for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null; done
         for f in "$TMP"/r"${k}"_c*_stats.csv; do
             [ -e "$f" ] && mv -f "$f" "$dest/"
         done
