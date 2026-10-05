@@ -506,3 +506,32 @@ add "interference-additivity_resnet+inception" \
 add "interference-additivity_resnet+retinanet+inception" \
     "solo|off|||$ADDT --net $RES:50:resnet --net $RN:25:retinanet --net $INC:25:inception|"
 
+
+# The stress model, under MPS static partitions only (MEASUREMENTS.md, "The stress model").
+#
+# stress-sensitivity: each target on 8 SMs, alone and beside the throttled SAXPY on the other 8 SMs
+# at levels 0, 0.1 ... 1 (itfproc saxpy --level, achieved bandwidth as a fraction of full speed).
+# The target's slowdown against its alone row, per level, is its sensitivity curve.
+#
+# stress-validation: each target on 8 SMs beside each other network on 4 SMs, as a separate process.
+# These pairs are the ground truth of the prediction and never enter the model: the model is built
+# from the reporter (utility/reporter.sh) and from stress-sensitivity alone.
+#
+# A network co-runner runs long enough to outlast the target and is stopped by the sweep; its CSVs go
+# to shared memory, never to the working directory.
+STRESS_TARGETS="mobilenet:$MOB resnet:$RES inception:$INC retinanet:$RN"
+stress_target() { echo "$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $2:50:$1"; }
+for t in $STRESS_TARGETS; do
+    tn="${t%%:*}"; te="${t#*:}"
+    add "stress-sensitivity_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    for p in 000 010 020 030 040 050 060 070 080 090 100; do
+        add "stress-sensitivity_${tn}-saxpy-L$p" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:50"
+    done
+    for c in $STRESS_TARGETS; do
+        cn="${c%%:*}"; ce="${c#*:}"
+        [ "$cn" = "$tn" ] && continue
+        add "stress-validation_${tn}+${cn}" \
+            "itf|static|||$(stress_target "$tn" "$te")|$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $ce:100:$cn --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$cn|50:25"
+    done
+done

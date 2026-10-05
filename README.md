@@ -124,6 +124,8 @@ utility/
   profile.sh                every profiled run (kernel traces, DRAM counters), guarded
   profiles.py               the profiled runs -> profiles/derived/*.csv
   streams.py                per-stream activity and overlap in one trace (run by hand)
+  reporter.sh               the stress reporter beside SAXPY levels or networks, under MPS static
+  stress.py                 the stress model: calibration, equivalent stress, sensitivity, prediction
   ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures
   lib/                      shared by the scripts above:
     guards.sh                 the checks before every run: clocks locked, GPU quiet, sentinel
@@ -131,9 +133,10 @@ utility/
     mps.sh                    the MPS daemon and its static partitions
     families.py               family folder -> aggregate key, and the groups (section, mem, ...)
     tables.py                 the LaTeX table writer and the accessors the two generators share
-  probes/                   four standalone CUDA programs with their own Makefile and README:
+  probes/                   standalone CUDA programs with their own Makefile and README:
                             auxprobe, wqprobe, devprobe (the GB/s calibration), itfproc (the
-                            co-runner as a separate process, for the MPS arms)
+                            co-runner as a separate process, including the throttled SAXPY), and
+                            gpu-latency (RRZE-HPC's pointer chase, the stress reporter, GPL-3)
 ```
 
 To add a configuration, add an arm to `utility/lib/matrix.sh` (and, for a new family, its folder

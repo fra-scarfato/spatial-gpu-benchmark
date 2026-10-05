@@ -70,6 +70,8 @@ EXP_DIR = {
     "interference-additivity-mps": "exp12",
     "repeatability":               "exp6",
     "pair-mpsstatic-2submit":      "exp3",
+    "stress-sensitivity":          "exp13",
+    "stress-validation":           "exp14",
 }
 
 def key_map():

@@ -246,6 +246,72 @@ number of kernels per unit (4.3 × 10⁹ / side³). So the arms vary footprint, 
 rate together, and cannot attribute an effect to the footprint alone. One profiled run per arm,
 read for the target's median against the idle arm (`derived/footprint.csv`).
 
+## 8. The stress model (MPS static only)
+
+The question: how much does a network **stress** the memory system, how **sensitive** is a target
+to that stress, and does the pair of numbers **predict** the target's slowdown beside a co-runner
+that was never profiled with it. Code: `utility/probes/itfproc.cu` (the stressor),
+`utility/probes/gpu-latency/` (the reporter), `utility/reporter.sh` (reporter runs), the
+`stress-sensitivity` and `stress-validation` arms in `utility/lib/matrix.sh`, `utility/stress.py`
+(the model).
+
+### The stressor: throttled SAXPY
+
+`itfproc saxpy --level L` performs the same operation as `mem_saxpy` (y = a*x + y over two 256 MB
+vectors, so 3 x 256 MB moved per unit), as its own kernel so that it can be throttled from inside.
+Each thread moves 16 elements, then waits a fixed time on the GPU's own clock (`%globaltimer`).
+Thousands of threads, out of phase with one another, lower the pressure uniformly at microsecond
+scale, and the kernel stays resident at every level.
+
+- **The level L is the achieved bandwidth divided by the same kernel's full-speed bandwidth on the
+  same partition.** It is not a time-based duty cycle. The full-speed time comes from 9 warm-up
+  units. The wait is then set from the model unit time = full-speed time + bursts per thread x
+  wait, refined by three short corrections, and **frozen** for the run.
+- Once a second `itfproc` prints `level: setpoint S achieved A`, where A is the median of that
+  second's units (full-speed unit time / unit time). The analysis uses the median of A over the
+  run, and reports its spread.
+- L = 0 runs the same kernel with waits only: resident, no memory traffic.
+- The stressor always holds the same 8-SM partition (4 chunks).
+
+### The reporter: gpu-latency
+
+RRZE-HPC's pointer chase (`utility/probes/gpu-latency/UPSTREAM` gives the commit and the patch).
+One thread follows a random chain through 128-byte cache lines, so each access waits for the one
+before. It runs in its own 2-SM partition and adds almost no traffic.
+- Two buffers are sampled in turn for 30 s: **2 MB** (L2-sized) and **64 MB** (DRAM-sized).
+- One sample is `max(LEN, 100000)` dereferences timed with CUDA events, giving ns per access.
+- The statistic of a run is the median over its samples, and of a configuration the median of
+  its five run medians, separately for each buffer.
+- Idle board: 304 ns (2 MB) and 617 ns (64 MB), with variation under 0.5 % between samples.
+
+### Steps and quantities
+
+| quantity | from | definition |
+|---|---|---|
+| `R_c(L)` | `reporter.sh calibration` | reporter latency on buffer c (L2 or DRAM) beside SAXPY at achieved level L, SAXPY 8 SMs + reporter 2 SMs |
+| `L_eq,c(net)` | `reporter.sh networks` | the level whose `R_c` equals the reporter's latency beside the network (network 4 SMs + reporter 2 SMs), by inverse linear interpolation; a reading outside the calibrated range is clipped and flagged |
+| occupancy, inf/s | the network co-runner's own `_stats.csv` | mean GPU time per inference x inferences / run duration, and inferences per second |
+| `S_p99(L)`, `S_med(L)` | `stress-sensitivity` | the target's p99 (median) beside SAXPY at level L divided by its p99 (median) alone, target 8 SMs + SAXPY 8 SMs, medians over five runs |
+| predicted slowdown | `stress.py predict` | `S(L_eq(co-runner))` by linear interpolation, for p99 and median, from each buffer |
+| measured slowdown | `stress-validation` | the target's p99 (median) beside the co-runner (target 8 + co-runner 4 SMs) over its alone p99 (median) |
+| error | `stress.py compare` | predicted minus measured slowdown, in points (x100) |
+
+**Held-out rule:** `predict` reads only the reporter runs and `stress-sensitivity`, and writes
+`stress-predictions.csv` before any pair is read. `compare` is the only reader of
+`stress-validation`, and it refuses to run without the predictions.
+
+**Why the reporter is the bridge:** the stressor holds 8 SMs and a real co-runner 4. Equal GB/s
+from different numbers of SMs is not equal stress, because a different number of requests is in
+flight. The reporter reads either with the same instrument, in the same partition.
+
+**Domain:** at L = 1 the 8-SM SAXPY moves about 90 GB/s, against peaks of about 195 GB/s read and
+203 GB/s write. Predictions hold for co-runners whose reading falls inside the calibrated range.
+
+Output: `$DATA/bench/stress-reporter/<config>/r<k>_latency.txt`, `r<k>_c<i>.log` and
+`r<k>_c<i>_stats.csv`. `stress.py` writes `$DATA/bench/aggregate/stress-calibration.csv`,
+`stress-corunners.csv`, `stress-sensitivity.csv`, `stress-predictions.csv` and
+`stress-comparison.csv`.
+
 ## 7. Limits, all of which the text states where they apply
 
 - A profiled run is perturbed by the profiler. Its latencies (MobileNet alone: 0.69 ms profiled,
