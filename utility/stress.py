@@ -80,7 +80,15 @@ def reporter_config(name):
 
 def invert(y, xs, ys):
     """x with R(x) = y on a monotonically rising curve, by linear interpolation; flags a y outside
-    the calibrated range instead of extrapolating."""
+    the calibrated range instead of extrapolating.
+
+    The curve is used from its lowest point upward. At level 0 the stressor moves no data, the DRAM
+    drifts toward its low-power state, and the reporter's p99 there is power-state noise (621-635 ns
+    across five runs, against +-0.6 ns at 2 %), lying above the 2 % point. Points before the minimum
+    are therefore not part of the scale; a reading below the minimum maps to its level, flagged. Any
+    other non-monotonic point still refuses the curve."""
+    lo = int(np.argmin(ys))
+    xs, ys = list(xs)[lo:], list(ys)[lo:]
     if not all(b > a for a, b in zip(ys, ys[1:])):
         raise SystemExit("stress.py: the calibration curve is not monotonic: %s" % ys)
     inside = ys[0] <= y <= ys[-1]
@@ -226,6 +234,15 @@ def selftest():
     try:
         invert(350.0, xs, [300.0, 300.0, 600.0])
         raise AssertionError("a flat curve must be refused")
+    except SystemExit:
+        pass
+    # a level-0 point above the curve's minimum is dropped; a reading below the minimum maps to it
+    xs2, ys2 = [0.0, 0.02, 0.1, 0.2], [629.0, 623.0, 638.0, 657.0]
+    assert invert(612.0, xs2, ys2) == (0.02, False)
+    assert abs(invert(638.0, xs2, ys2)[0] - 0.1) < 1e-12
+    try:
+        invert(640.0, xs2, [623.0, 640.0, 630.0, 657.0])
+        raise AssertionError("a dip after the minimum must still be refused")
     except SystemExit:
         pass
     assert float(np.interp(0.25, xs, [1.0, 1.2, 1.6])) == 1.1

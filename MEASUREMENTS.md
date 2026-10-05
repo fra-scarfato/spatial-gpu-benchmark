@@ -316,6 +316,12 @@ Not used:
 | measured slowdown | `stress-validation` | the target's p99 (median) beside the co-runner (target 8 + co-runner 4 SMs) over its alone p99 (median) |
 | error | `stress.py compare` | predicted minus measured slowdown, in points (x100) |
 
+**The bottom of the p99 curve.** At level 0 the stressor moves no data, and the reporter's p99 there is
+power-state noise: 621-635 ns across five runs, against +-0.6 ns at 2 %, and above the 2 % point. The
+inversion therefore uses each curve from its lowest point upward. A reading below that point is
+mapped to its level and flagged as outside the range: MobileNet and Inception read below the 2 %
+point, so they show no tail stress beyond being present. The median curve is monotonic from 0 %.
+
 **Held-out rule:** `predict` reads only the reporter runs and `stress-sensitivity`, and writes
 `stress-predictions.csv` before any pair is read. `compare` is the only reader of
 `stress-validation`, and it refuses to run without the predictions.
