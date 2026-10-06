@@ -363,6 +363,12 @@ move_back() {  # $1 = tmpfs prefix, $2 = results prefix
     done
 }
 
+# A measured process that has not finished in this many seconds is stopped, and its run counts as
+# not done (no stats file), so a restart measures it again. A run takes under 3 minutes; two TensorRT
+# clients under MPS static partitions were seen to hang right after connecting (2 of 16 runs of
+# stress-validation), spinning for hours instead of failing.
+RUN_TIMEOUT="${RUN_TIMEOUT:-600}"
+
 do_job() {  # $1 = spec, $2 = output prefix
     local spec="$1" out="$2"
     local kind mps envA envB cmdA cmdB ratio rc_a=0 rc_b=0
@@ -388,7 +394,7 @@ do_job() {  # $1 = spec, $2 = output prefix
     # shellcheck warnings here are disabled rather than "fixed".)
     if [ "$kind" = solo ]; then
         # shellcheck disable=SC2086
-        env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
+        timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
         move_back "$tmp" "$out"
         return 0
     fi
@@ -410,7 +416,7 @@ do_job() {  # $1 = spec, $2 = output prefix
         local pid_b=$!
         sleep 3
         # shellcheck disable=SC2086
-        env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
+        timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
         kill -TERM "$pid_b" 2>/dev/null || true
         wait "$pid_b" 2>/dev/null || true
         move_back "$tmp" "$out"
@@ -422,10 +428,10 @@ do_job() {  # $1 = spec, $2 = output prefix
     # overwrite it, and each exit status is collected separately rather than
     # letting the failure of one mask the other.
     # shellcheck disable=SC2086
-    env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
+    timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
     local pid_a=$!
     # shellcheck disable=SC2086
-    env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
+    timeout "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
     local pid_b=$!
 
     # `|| rc=$?` instead of letting the failure propagate, because `set -e`
