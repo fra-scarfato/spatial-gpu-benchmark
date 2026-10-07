@@ -29,6 +29,13 @@ struct RunSpec {
     std::string csvPrefix     = std::string(cfg::defaultCsvPrefix);
 };
 
+// Set by SIGTERM/SIGINT (handler installed in main). The warm-up and timed loops
+// check it after each inference: the process finishes the work in flight and
+// leaves through the normal CUDA teardown. Dying mid-kernel instead made the MPS
+// server take ~3 s to clean up the client, and the next clients then hung in
+// context creation.
+extern std::atomic<bool> g_stop;
+
 // Everyone spins until all have arrived, so several networks begin their timed
 // phase in the same instant. The gate is what makes the two timed windows
 // identical, and identical windows are what make their throughputs comparable.

@@ -394,7 +394,7 @@ do_job() {  # $1 = spec, $2 = output prefix
     # shellcheck warnings here are disabled rather than "fixed".)
     if [ "$kind" = solo ]; then
         # shellcheck disable=SC2086
-        timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
         move_back "$tmp" "$out"
         return 0
     fi
@@ -412,11 +412,11 @@ do_job() {  # $1 = spec, $2 = output prefix
     # fall inside the measurement.
     if [ "$kind" = itf ]; then
         # shellcheck disable=SC2086
-        env $penv $envB $cmdB > "${out}_itf.log" 2>&1 &
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB > "${out}_itf.log" 2>&1 &
         local pid_b=$!
         sleep 3
         # shellcheck disable=SC2086
-        timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
         kill -TERM "$pid_b" 2>/dev/null || true
         wait "$pid_b" 2>/dev/null || true
         move_back "$tmp" "$out"
@@ -428,10 +428,10 @@ do_job() {  # $1 = spec, $2 = output prefix
     # overwrite it, and each exit status is collected separately rather than
     # letting the failure of one mask the other.
     # shellcheck disable=SC2086
-    timeout "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
+    timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
     local pid_a=$!
     # shellcheck disable=SC2086
-    timeout "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
+    timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
     local pid_b=$!
 
     # `|| rc=$?` instead of letting the failure propagate, because `set -e`

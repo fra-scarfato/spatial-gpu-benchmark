@@ -12,14 +12,22 @@
 // See README.md for the methodology, the measurements and the design notes.
 //
 
+#include <csignal>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
 
 #include "config.hpp"
+#include "network.hpp"
 #include "run.hpp"
 
 int main(int argc, char** argv) {
+    // A stop request ends the run cleanly (see g_stop), but writes no results:
+    // a run cut short is not a measurement, and a missing _stats.csv is how the
+    // sweep knows that.
+    for (int sig : {SIGTERM, SIGINT})
+        std::signal(sig, [](int) { g_stop = true; });
+
     try {
         const Options opts = parseArgs(argc, argv);
 
@@ -29,6 +37,10 @@ int main(int argc, char** argv) {
         // measurement, and report() writes it out.
         Run run(opts);     // assemble: images, allocations, networks
         run.execute();     // warm-up + timed phase (sequential or aligned threads)
+        if (g_stop) {
+            std::cerr << "[info] stopped by a signal: no results written\n";
+            return EXIT_FAILURE;
+        }
         run.report();      // per-network tables + CSVs, then the aggregate
 
     } catch (const std::exception& e) {

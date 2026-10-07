@@ -19,6 +19,9 @@
 #include <cerrno>
 #include <cstring>
 
+std::atomic<bool> g_stop{false};
+static_assert(std::atomic<bool>::is_always_lock_free);   // safe to set from a signal handler
+
 namespace {
 
 // steady_clock, not system_clock: it is monotonic, so an NTP step during a
@@ -95,7 +98,7 @@ void Network::warmup() {
     std::cout << "[info] warm-up: " << cfg::numWarmup << " inferences over "
               << inputSet_.count() << " distinct inputs\n";
 
-    for (std::size_t i = 0; i < cfg::numWarmup; ++i)
+    for (std::size_t i = 0; i < cfg::numWarmup && !g_stop; ++i)
         writeRow("warmup", i, step(i));
 }
 
@@ -144,6 +147,7 @@ void Network::measure(StartGate& gate) {
 
         // Checked on every iteration rather than only when the count is
         // reached: the duration bound can be the first one satisfied.
+        if (g_stop) break;
         if (!enforce) {
             if (n >= onePass) break;
         } else {
@@ -292,11 +296,11 @@ void Network::measureInterleaved(const std::vector<Network*>& nets) {
             ++count[i];
 
             const double elapsed = secondsSince(start);
-            const bool finished =
-                enforce[i]
+            const bool finished = g_stop ||
+                (enforce[i]
                     ? (count[i] >= nets[i]->spec_.minInferences &&
                        elapsed >= nets[i]->spec_.minDurationS)
-                    : (count[i] >= onePass[i]);
+                    : (count[i] >= onePass[i]));
 
             if (finished) {
                 doneAt[i]   = elapsed;
