@@ -72,6 +72,7 @@ EXP_DIR = {
     "pair-mpsstatic-2submit":      "exp3",
     "stress-sensitivity":          "exp13",
     "stress-validation":           "exp14",
+    "stress-sensitivity-4sm":      "exp15",
 }
 
 def key_map():

@@ -3,6 +3,8 @@
 #
 #   utility/reporter.sh calibration          idle, then SAXPY on 8 SMs at levels 0 ... 1
 #   utility/reporter.sh networks             each network alone as the co-runner, on 4 SMs
+#   utility/reporter.sh calibration-4sm      SAXPY on 4 SMs at levels 0 ... 1: the networks' geometry
+#   utility/reporter.sh probes-4sm           mem_saxpy (all DRAM) and compute_gemm (L2-resident), 4 SMs
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -62,6 +64,21 @@ configs() {
         for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
             echo "saxpy-L$p|50|$ITF saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))"
         done
+        ;;
+    calibration-4sm)
+        # The same levels with the stressor on 4 SMs, chunks {0,4} like a network co-runner here
+        # (and like the stressor of stress-sensitivity-4sm beside its target): calibration and use
+        # then share one geometry. L is relative to full speed on these 4 SMs.
+        local p
+        for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
+            echo "saxpy4-L$p|25|$ITF saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))"
+        done
+        ;;
+    probes-4sm)
+        # Two co-runners whose cost to MobileNet under MPS on 4 SMs is already measured
+        # (memory-mps-interferers-4sm): one whose traffic all reaches DRAM, one that hits the L2.
+        echo "memsaxpy-4sm|25|$ITF mem_saxpy"
+        echo "computegemm-4sm|25|$ITF compute_gemm"
         ;;
     networks)
         echo "mobilenet|25|$(net "$MOB" mobilenet)"

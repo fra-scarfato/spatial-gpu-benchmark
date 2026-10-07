@@ -529,6 +529,13 @@ for t in $STRESS_TARGETS; do
         add "stress-sensitivity_${tn}-saxpy-L$p" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:50"
     done
+    # The same curves with the stressor on 4 SMs, the co-runner geometry of stress-validation
+    # (target {0,1,4,5}, stressor {2,6}), and their own alone baseline.
+    add "stress-sensitivity-4sm_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
+        add "stress-sensitivity-4sm_${tn}-saxpy-L$p" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:25"
+    done
     for c in $STRESS_TARGETS; do
         cn="${c%%:*}"; ce="${c#*:}"
         [ "$cn" = "$tn" ] && continue
