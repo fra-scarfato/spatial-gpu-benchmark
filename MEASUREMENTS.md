@@ -87,11 +87,18 @@ The 0.5 % between the two references is the session-to-session spread of one con
 ### What the counter is
 
 `nsys profile --soc-metrics=true --soc-metrics-set=t234 --soc-metrics-frequency=10000` samples the
-Orin's memory-controller counters 10,000 times a second. Two of them matter: **DRAM Read
-Throughput** and **DRAM Write Throughput**, each given as a percentage of a peak.
+Orin's memory-controller counters 10,000 times a second, each as an integer percentage of a peak.
+Two pairs matter:
+- **GPU Read / GPU Write Throughput**: the GPU's own traffic to and from DRAM. **Every quantity in
+  GB is built from this pair.** It reads 0 when the GPU is idle.
+- **DRAM Read / DRAM Write Throughput**: every client of the memory controller, the CPU and the
+  display among them. It never reads below 1 %, and on a quiet GPU it reads 1–2 % read and 1.5–3 %
+  write. An earlier revision built the GB from this pair: it overstated a network's bytes by up to
+  7 % (MobileNet, the lightest) and by 0–3 % for the others, and left the pair ratios unchanged.
 
-- They are **device-wide**. A reading belongs to a network only when that network is the only
-  thing running, which is why the budget curve is taken one network at a time.
+Both pairs:
+- cover the **whole GPU**. A reading belongs to a network only when that network is the only
+  thing running on it, which is why the budget curve is taken one network at a time;
 - They need **root**.
 - They have no usable time alignment with the CUDA timeline: the SoC clock sits about 14 s from the
   CUDA clock in the export. No quantity below needs a time window. Each is either a statistic of
@@ -99,7 +106,8 @@ Throughput** and **DRAM Write Throughput**, each given as a percentage of a peak
 
 **Extraction.** The export's `SOC_METRICS` table has no column names, so its rows are read by
 position: `(start, end, domain, index, value)`. The index of each counter is looked up by name in
-`TARGET_INFO_SOC_METRICS`; on this board read is index 6 and write is index 7.
+`TARGET_INFO_SOC_METRICS` (`soc_series()`); on this board GPU read and write are indices 2 and
+3, DRAM read and write 6 and 7.
 
 ### The statistics of one series
 
@@ -107,12 +115,12 @@ position: `(start, end, domain, index, value)`. The index of each counter is loo
 |---|---|---|
 | **peak** | the largest sample | not used for any conclusion |
 | **busy mean** | the mean of the samples above 1 %, which drops the idle samples between inferences | Table `tab:mem-pressure` only |
-| **integral** | the sum of all samples, after subtracting the idle floor (the median of the samples below 1 %, zero on this board) | everything in GB |
+| **integral** | the sum of all samples; the GPU pair reads 0 when idle, so no floor is subtracted | everything in GB |
 
 The busy mean depends on how much idle time falls inside a 100 µs sample, so it understates the
-rate during the kernels: MobileNet on 16 SMs averages 7.1 % by this rule, against 17.4 % averaged
-over its kernels by Nsight Compute. The integral has no such problem, which is why every quantity
-in GB is built from it.
+rate during the kernels. (The 17.4 % per kernel once quoted from Nsight Compute against it is not a
+fair comparison: ncu flushed the L2 before every kernel, which inflates each kernel's DRAM
+traffic.) The integral has no such problem, which is why every quantity in GB is built from it.
 
 ### Percent to GB: the calibration
 
@@ -123,15 +131,16 @@ A percentage becomes GB/s through one measurement (`profile.sh calibration`; `ca
    copy's bytes and duration: 635 copies, 25.54 GB in 0.279 s, so the copies ran at
    **91.5 GB/s**. A copy reads every byte once and writes it once, so that is 91.5 GB/s of read
    and 91.5 GB/s of write.
-2. While the copies run, both counters sit on a plateau. The plateau is the samples where read
-   exceeds 20 %: 2799 samples, 280 ms, which matches the 279 ms of copy time. Their medians are
-   **47 % read and 45 % write**.
-3. So 1 % of read is 91.5/47 = 1.95 GB/s and 1 % of write is 91.5/45 = 2.03 GB/s. The implied
-   peaks are 195 GB/s read and 203 GB/s write, consistent with the Orin's 204.8 GB/s LPDDR5 peak.
+2. While the copies run, both GPU counters sit on a plateau. The plateau is the samples where GPU
+   read exceeds 20 %: 2799 samples, 280 ms, which matches the 279 ms of copy time. Their medians
+   are **45 % read and 44 % write** (the DRAM pair, CPU included, reads 47 and 45).
+3. So 1 % of read is 91.5/45 = 2.03 GB/s and 1 % of write is 91.5/44 = 2.08 GB/s. The implied
+   peaks are 203 GB/s read and 208 GB/s write, against the Orin's 204.8 GB/s LPDDR5 peak; the
+   counter is an integer, so each plateau median is only known to ±0.5 %, i.e. ±1 % in GB.
 
 The GB a run moved is then
 
-    GB = ( Σ read% / 47  +  Σ write% / 45 ) × 91.5 / 10000
+    GB = ( Σ GPU read% / 45  +  Σ GPU write% / 44 ) × 91.5 / 10000
 
 because each sample covers 1/10000 s.
 
@@ -178,7 +187,15 @@ means extra DRAM traffic when they share the device, such as extra L2 misses.
 
 **The fit** (`derived/demand-fit.csv`): an ordinary least-squares line of penalty (%) against
 demand (GB/s), over all co-runners with a measured demand and over the synthetic and network
-subsets. It is a description of seven points, not a model of the hardware.
+subsets. It is a description of nine points (`spin` twice, at 4 and 8 SMs), not a model of the
+hardware.
+
+**Two biases, both in the same direction.** A network's demand is its rate *alone*, while
+`mem_saxpy`'s is its own count *beside the target*; beside the target the networks run 6–15 % slower,
+so their real demand there is lower than the table's. `compute_gemm`'s subtraction counts as its
+own any extra traffic the target makes beside it, and real pairs move 9–15 % more than apart. Both
+overstate the demand of the non-SAXPY co-runners, so the excess of their penalty over the SAXPY
+slope is if anything understated.
 
 ## 5. Kernel timelines: the CUDA traces
 
@@ -199,8 +216,8 @@ The correlation id links a kernel to the call that launched it. No root is neede
 ### Slicing the target into inferences
 
 The target is MobileNet on 8 SMs. Its stream is the one on which `copyPackedKernel`, the first
-kernel of an inference, recurs every 55 kernels (`target_stream()`). The first 1000 kernels (the
-warm-up) are dropped. An inference begins at each `copyPackedKernel`, and only inferences with
+kernel of an inference, recurs every 55 kernels (`target_stream()`). The first 200 × 55 kernels
+(the warm-up) are dropped. An inference begins at each `copyPackedKernel`, and only inferences with
 exactly 55 kernels are kept, so a kernel missing from the trace can never shift the positions of
 those after it. Position 0–54 within an inference is then the same layer in every inference. The
 `whole_inferences` column of `trace-split.csv` is the share of inferences kept, and should be 1.
@@ -345,8 +362,10 @@ Output: `$DATA/bench/stress-reporter/<config>/r<k>_latency.txt`, `r<k>_c<i>.log`
   per-kernel structure are taken from it.
 - One profiled run per arm, against five in the campaign.
 - The absolute GB/s rest on one calibration: one copy pattern, one session.
-- Device-wide counters attribute traffic only when one client runs. Inside a pair only the total
-  is known.
+- The counters cover the whole GPU, and attribute traffic only when one client runs. Inside a pair
+  only the total is known.
+- The counters are integer percentages, about 2 GB/s a step. Over hundreds of thousands of samples
+  rounding averages out; truncation would not, and cannot be ruled out from the data.
 - The host-late split uses the time a launch call *returned*. A kernel can start before its call
   returns, so host-late is an upper bound on host lateness and queued a lower bound on device
   lateness.

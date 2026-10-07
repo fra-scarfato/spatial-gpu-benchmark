@@ -737,8 +737,8 @@ if _dram:
                "units of\nthe counters, read and write separately, on the four SM budgets of "
                "Table~\\ref{tab:iso-rates}. The\nstatistic is the mean over the samples above one "
                "per cent, which excludes the idle time between\ninferences, and the same rule is "
-               "applied to every row; the counters are device-wide, so a reading\nbelongs to the "
-               "network only because nothing else is running.",
+               "applied to every row; the counters cover the whole GPU, so a reading\nbelongs to the "
+               "network only because nothing else is running on it.",
                "tab:mem-pressure")
     for _i, (_net, _soc) in enumerate(_SOC_NETS):
         if _i:

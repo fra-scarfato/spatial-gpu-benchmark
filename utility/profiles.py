@@ -50,6 +50,10 @@ def extract(rep, parts=("kernels", "launches")):
     """The compact files of a report that are asked for, exporting the report at most once."""
     stem = rep[:-len(".nsys-rep")]
     missing = [p for p in parts if not os.path.exists("%s.%s.csv.gz" % (stem, p))]
+    # a counter file written before the GPU's own counters were kept is extracted again
+    if "dram" in parts and "dram" not in missing and \
+            "gpu_read_pct" not in pd.read_csv(stem + ".dram.csv.gz", nrows=1).columns:
+        missing.append("dram")
     if not missing:
         return
     db = stem + ".sqlite"
@@ -69,24 +73,27 @@ def extract(rep, parts=("kernels", "launches")):
                        stem + ".launches.csv.gz", index=False)
     tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if "SOC_METRICS" in tables:
-        # The export names no columns here, so the rows are read by position: (start, end,
-        # domain, index, value). Which index is which counter comes from TARGET_INFO_SOC_METRICS.
-        names = {}
-        for row in con.execute("SELECT * FROM TARGET_INFO_SOC_METRICS"):
-            label = next((v for v in row if isinstance(v, str) and "DRAM" in v), None)
-            idx = next((v for v in row if isinstance(v, int)), None)
-            if label and idx is not None:
-                names[idx] = label
-        read = [i for i, n in names.items() if "Read" in n] or [6]
-        write = [i for i, n in names.items() if "Write" in n] or [7]
-        rows = con.execute("SELECT * FROM SOC_METRICS").fetchall()
-        r = [row[4] for row in rows if row[3] in read]
-        w = [row[4] for row in rows if row[3] in write]
-        n = min(len(r), len(w))
-        pd.DataFrame({"read_pct": r[:n], "write_pct": w[:n]}).to_csv(
-            stem + ".dram.csv.gz", index=False)
+        pd.DataFrame(soc_series(con)).to_csv(stem + ".dram.csv.gz", index=False)
     con.close()
     os.remove(db)
+
+
+def soc_series(con):
+    """The DRAM counters of the whole SoC and the GPU's own, one row per 100 us sample.
+
+    The export names no columns, so SOC_METRICS is read by position: (start, end, domain, index,
+    value), and TARGET_INFO_SOC_METRICS maps each index to its name, at positions 3 and 4. The DRAM
+    pair counts every client of the memory controller, the CPU among them; the GPU pair counts the
+    GPU alone, and is the one every quantity in GB is built from."""
+    names = {row[4].split(" [")[0]: row[3] for row in
+             con.execute("SELECT * FROM TARGET_INFO_SOC_METRICS")}
+    cols = {"read_pct": "DRAM Read Throughput", "write_pct": "DRAM Write Throughput",
+            "gpu_read_pct": "GPU Read Throughput", "gpu_write_pct": "GPU Write Throughput"}
+    by_idx = {}
+    for row in con.execute("SELECT * FROM SOC_METRICS"):
+        by_idx.setdefault(row[3], []).append(row[4])
+    n = min(len(by_idx[names[c]]) for c in cols.values())
+    return {k: by_idx[names[c]][:n] for k, c in cols.items()}
 
 
 # ------------------------------------------------------------------ calibration
@@ -109,14 +116,9 @@ def calibrate():
     con = sqlite3.connect(db)
     n, nbytes, ns = con.execute("SELECT count(*), sum(bytes), sum(end - start) FROM "
                                 "CUPTI_ACTIVITY_KIND_MEMCPY WHERE copyKind = 8").fetchone()
-    rows = con.execute("SELECT * FROM SOC_METRICS").fetchall()
+    d = pd.DataFrame(soc_series(con), dtype=float)
     con.close()
-    series = {}
-    for row in rows:
-        series.setdefault(row[3], []).append(row[4])
-    r, w = pd.Series(series[6], dtype=float), pd.Series(series[7], dtype=float)
-    m = min(len(r), len(w))
-    r, w = r[:m], w[:m]
+    r, w = d.gpu_read_pct, d.gpu_write_pct
     plateau = r > 20
     COPY_GB_S = nbytes / ns
     COPY_READ_PCT = float(r[plateau].median())
@@ -164,15 +166,15 @@ def stats_median(path):
 # ------------------------------------------------------------------ dram
 
 def dram_gb(stem):
-    """Gigabytes the device moved over the run: the integral of both counters."""
+    """Gigabytes the GPU moved to and from DRAM over the run: the integral of its two counters.
+
+    The GPU's own counters, not the SoC's DRAM pair, which also counts the CPU and never reads
+    below 1 per cent. The GPU pair reads 0 when the GPU is idle, so no floor is subtracted."""
     d = pd.read_csv(stem + ".dram.csv.gz")
-    floor_r = d.read_pct[d.read_pct < 1].median() if (d.read_pct < 1).any() else 0.0
-    floor_w = d.write_pct[d.write_pct < 1].median() if (d.write_pct < 1).any() else 0.0
-    r = (d.read_pct - floor_r).clip(lower=0).sum()
-    w = (d.write_pct - floor_w).clip(lower=0).sum()
-    gb = (r / COPY_READ_PCT + w / COPY_WRITE_PCT) * COPY_GB_S / SOC_HZ
+    r, w = d.gpu_read_pct, d.gpu_write_pct
+    gb = (r.sum() / COPY_READ_PCT + w.sum() / COPY_WRITE_PCT) * COPY_GB_S / SOC_HZ
     busy = lambda s: s[s > 1].mean() if (s > 1).any() else 0.0
-    return gb, d.read_pct.max(), busy(d.read_pct), busy(d.write_pct)
+    return gb, r.max(), busy(r), busy(w)
 
 
 def dram_tables():
@@ -254,10 +256,10 @@ def trace_tables():
         ts = target_stream(k)
         t = k[k.stream == ts].reset_index(drop=True)
         o = k[k.stream != ts].sort_values("start")
-        # An inference begins at each copyPackedKernel; the warm-up (the first 1000 kernels) and the
+        # An inference begins at each copyPackedKernel; the warm-up (the first 200 inferences) and the
         # last, possibly cut, inference are dropped, and only inferences of exactly 55 kernels are
         # kept, so a missing kernel can never shift the positions of the ones after it.
-        t = t.iloc[1000:].reset_index(drop=True)
+        t = t.iloc[WARMUP * TARGET_KPI:].reset_index(drop=True)
         t["inf"] = t.name.str.contains("copyPacked").cumsum()
         t = t[(t.inf > 0) & (t.inf < t.inf.max())]
         size = t.groupby("inf").inf.transform("size")
