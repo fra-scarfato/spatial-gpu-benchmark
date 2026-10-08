@@ -44,7 +44,10 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
                      rep="stress-reporter"),
          # the baseline: time-based SAXPY, the unpatched reporter (WINDOW=0) on the target's SMs
          "tb": dict(cal="tb-D", exp="exp17", dir="stress-sensitivity-tb", suffix="-tb",
-                    rep="stress-reporter-baseline")}
+                    rep="stress-reporter-baseline"),
+         # the same time-based SAXPY and sensitivity, read by the windowed reporter on the target's SMs
+         "tbw": dict(cal="tb-D", exp="exp17", dir="stress-sensitivity-tb", suffix="-tbw",
+                     rep="stress-reporter-tbw")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
