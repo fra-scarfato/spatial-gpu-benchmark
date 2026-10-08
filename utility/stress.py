@@ -116,7 +116,7 @@ def sensitivity(data, target):
     if not alone or not alone99:
         return None
     pts = []
-    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(target + "-saxpy-")}):
+    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(target + "-") and c != target + "-alone"}):
         med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
         p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
         logs = sorted(glob.glob(os.path.join(BENCH, G["dir"], cfg, "r*_itf.log")))
