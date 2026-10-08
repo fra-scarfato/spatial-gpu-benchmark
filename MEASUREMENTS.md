@@ -263,7 +263,12 @@ thread. The target's thread is the one that launched the target's kernels.
 The side sets the footprint (3 × side² × 4 bytes), but also the size of every GEMM kernel and the
 number of kernels per unit (4.3 × 10⁹ / side³). So the arms vary footprint, kernel size and launch
 rate together, and cannot attribute an effect to the footprint alone. One profiled run per arm,
-read for the target's median against the idle arm (`derived/footprint.csv`).
+read for the target's median against the idle arm (`derived/footprint.csv`). `dram_mb_per_target_inference` is the
+device's DRAM bytes over the run (the GPU counters, as in section 4) divided by the target's
+inferences including warm-up: it holds the GEMM's own misses as well as the target's, so it shows
+where the combined traffic steps, not how much of it is the target's. The thesis reads the step
+between 0.9 and 1.8 MB (`tab:mem-footprint`) as consistent with the two working sets no longer
+fitting together in the 4 MB L2, and states the arms' confounds beside it.
 
 ## 7. The stress model (MPS static only)
 
