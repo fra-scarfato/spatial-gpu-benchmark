@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """stress.py - the stress model: predict a target's slowdown from a co-runner's stress.
 
-    python3 utility/stress.py predict     build the model, write the predictions (frozen)
-    python3 utility/stress.py compare     the predictions against the measured pairs
-    python3 utility/stress.py selftest    the interpolation and its inverse
+    python3 utility/stress.py predict [4sm]   build the model, write the predictions (frozen)
+    python3 utility/stress.py compare [4sm]   the predictions against the measured pairs
+    python3 utility/stress.py selftest        the interpolation and its inverse
+
+The stressor's geometry: 8sm (the default, SAXPY on 8 SMs, exp13) or 4sm (SAXPY on the 4 SMs the real
+co-runners use, exp15). Each writes its own files, so the frozen 8 SM predictions are never touched.
 
 predict reads only the reporter runs ($DATA/bench/stress-reporter) and the stress-sensitivity
 family. It never reads stress-validation: those pairs are the ground truth and must not enter the
@@ -34,6 +37,10 @@ OUT = os.path.join(BENCH, "aggregate")
 # The reporter's coordinates, all on the 64 MB (DRAM) chain: a statistic of the run's windows.
 STATS = {"p99": lambda v: float(np.percentile(v, 99)), "median": lambda v: float(np.median(v))}
 NETS = ("mobilenet", "resnet", "inception", "retinanet")
+# The stressor's geometry: calibration configs, sensitivity family and its directory, file suffix.
+GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffix=""),
+         "4sm": dict(cal="saxpy4-L", exp="exp15", dir="stress-sensitivity-4sm", suffix="-4sm")}
+G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 
 
 def achieved_level(log):
@@ -98,15 +105,15 @@ def invert(y, xs, ys):
 def sensitivity(data, target):
     """S(L) for one target from stress-sensitivity only: x = achieved level per configuration, y =
     the target's p99 and median against its alone row, all medians over the five runs."""
-    alone = A.aggr(data, "exp13", target + "-alone", target, "gpu_ms", "median")
-    alone99 = A.aggr(data, "exp13", target + "-alone", target, "gpu_ms", "p99")
+    alone = A.aggr(data, G["exp"], target + "-alone", target, "gpu_ms", "median")
+    alone99 = A.aggr(data, G["exp"], target + "-alone", target, "gpu_ms", "p99")
     if not alone or not alone99:
         return None
     pts = []
-    for cfg in sorted({c for (e, c, _) in data if e == "exp13" and c.startswith(target + "-saxpy-")}):
-        med = A.aggr(data, "exp13", cfg, target, "gpu_ms", "median")
-        p99 = A.aggr(data, "exp13", cfg, target, "gpu_ms", "p99")
-        logs = sorted(glob.glob(os.path.join(BENCH, "stress-sensitivity", cfg, "r*_itf.log")))
+    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(target + "-saxpy-")}):
+        med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
+        p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
+        logs = sorted(glob.glob(os.path.join(BENCH, G["dir"], cfg, "r*_itf.log")))
         lv = [achieved_level(f) for f in logs]
         lv = [x[0] for x in lv if x]
         if med and p99 and lv:
@@ -119,7 +126,7 @@ def write(name, rows):
     if not rows:
         print("  %s: nothing to write yet" % name)
         return
-    path = os.path.join(OUT, name)
+    path = os.path.join(OUT, name.replace(".csv", G["suffix"] + ".csv"))
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -135,7 +142,7 @@ def predict():
     # 1. calibration: R(L) per coordinate, at the achieved levels
     calib = []
     for name in sorted(os.listdir(REPORTER)) if os.path.isdir(REPORTER) else []:
-        if name.startswith("saxpy-L"):
+        if name.startswith(G["cal"]):
             r = reporter_config(name)
             if r and "level" in r:
                 calib.append(dict(config=name, **{k: fmt(v) for k, v in r.items()}))
@@ -164,7 +171,7 @@ def predict():
     write("stress-corunners.csv", corunners)
 
     # 3. sensitivity curves, from stress-sensitivity ONLY
-    data = {k: v for k, v in A.load(BENCH).items() if k[0] == "exp13"}
+    data = {k: v for k, v in A.load(BENCH).items() if k[0] == G["exp"]}
     curves, sens = {}, []
     for t in NETS:
         pts = sensitivity(data, t)
@@ -191,17 +198,17 @@ def predict():
 
 
 def compare():
-    path = os.path.join(OUT, "stress-predictions.csv")
+    path = os.path.join(OUT, "stress-predictions%s.csv" % G["suffix"])
     if not os.path.exists(path):
         raise SystemExit("stress.py: run `predict` first; the predictions must exist before the pairs are read")
     preds = list(csv.DictReader(open(path)))
-    occ = {r["corunner"]: r for r in csv.DictReader(open(os.path.join(OUT, "stress-corunners.csv")))}
+    occ = {r["corunner"]: r for r in csv.DictReader(open(os.path.join(OUT, "stress-corunners%s.csv" % G["suffix"])))}
     data = A.load(BENCH)
     rows = []
     for p in preds:
         t, net = p["target"], p["corunner"]
-        alone = A.aggr(data, "exp13", t + "-alone", t, "gpu_ms", "median")
-        alone99 = A.aggr(data, "exp13", t + "-alone", t, "gpu_ms", "p99")
+        alone = A.aggr(data, G["exp"], t + "-alone", t, "gpu_ms", "median")
+        alone99 = A.aggr(data, G["exp"], t + "-alone", t, "gpu_ms", "p99")
         med = A.aggr(data, "exp14", t + "+" + net, t, "gpu_ms", "median")
         p99 = A.aggr(data, "exp14", t + "+" + net, t, "gpu_ms", "p99")
         if not (alone and alone99 and med and p99):
