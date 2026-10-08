@@ -547,8 +547,10 @@ for t in $STRESS_TARGETS; do
     done
     # The same time-based SAXPY with its lines scrambled within 2 MB windows: the same bytes, less
     # DRAM-row locality, no extra page misses (scrambling the whole buffer is translation-bound:
-    # 12 against 189 GB/s). Its own alone row; D = 0 moves nothing, so it is tb-D000.
+    # 12 against 189 GB/s). Its own alone row and D = 0 (the resident kernel, as tb-D000).
     add "stress-sensitivity-tbs_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    add "stress-sensitivity-tbs_${tn}-tbs-D000" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level 0|50:50"
     for d in 010 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity-tbs_${tn}-tbs-D$d" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --scramble-kb 2048|50:50"

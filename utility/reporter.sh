@@ -95,6 +95,14 @@ configs() {
             echo "tb-D$d|50|$ITF saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100)))"
         done
         ;;
+    calibration-tbs)
+        # calibration-tb with the SAXPY's lines scrambled within 2 MB windows (stress-sensitivity-tbs).
+        echo "tbs-D000|50|$ITF saxpy --level 0"
+        local d
+        for d in 010 020 030 040 050 060 070 080 090 100; do
+            echo "tbs-D$d|50|$ITF saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --scramble-kb 2048"
+        done
+        ;;
     probes-4sm)
         # Two co-runners whose cost to MobileNet under MPS on 4 SMs is already measured
         # (memory-mps-interferers-4sm): one whose traffic all reaches DRAM, one that hits the L2.
