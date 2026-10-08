@@ -20,6 +20,9 @@
 //                                       the first D x P of every period P on the GPU's global
 //                                       clock, together, and wait for the rest. D is the fraction
 //                                       of TIME on; the achieved bandwidth fraction is printed.
+//   itfproc saxpy ... --scramble        the same bytes, still whole 128-byte lines read by a whole
+//                                       warp, but the lines are visited in a scrambled order
+//                                       across the buffers: only the DRAM locality changes.
 //
 // Prints the same lines the runner's interferer prints, once a second, so the log carries
 // the load over time and not only its total, and prints the total again on SIGTERM, which
@@ -61,10 +64,13 @@ __device__ __forceinline__ void waitNs(unsigned long long ns) {
 // periodNs != 0 is the time-based mode: before each burst a thread checks the global clock and,
 // outside the first onNs of the period, waits for the next period, so every thread is on and off
 // at the same moments.
+// lineMask != 0 scrambles: element i goes to line (i / 32) * odd constant, modulo the number of
+// lines (a power of two, so the map is a bijection), at the same lane. A warp still touches one
+// whole line; consecutive lines land far apart.
 __global__ void saxpyThrottled(const float* __restrict__ x, float* __restrict__ y, size_t n,
                                float a, unsigned burst, unsigned sleepNs,
                                unsigned long long idleNs, unsigned long long periodNs,
-                               unsigned long long onNs) {
+                               unsigned long long onNs, size_t lineMask) {
     if (burst == 0) {
         waitNs(idleNs);
         return;
@@ -76,7 +82,9 @@ __global__ void saxpyThrottled(const float* __restrict__ x, float* __restrict__ 
             const unsigned long long phase = globalTimerNs() % periodNs;
             if (phase >= onNs) waitNs(periodNs - phase);
         }
-        y[i] = a * x[i] + y[i];
+        const size_t j = lineMask ? (i & ~((lineMask << 5) | 31)) |
+                                        ((((i >> 5) * 0x9E3779B1ull) & lineMask) << 5) | (i & 31) : i;
+        y[j] = a * x[j] + y[j];
         if (++k == burst) {
             k = 0;
             if (sleepNs) waitNs(sleepNs);
@@ -126,6 +134,8 @@ int main(int argc, char** argv) {
     int reps = 32;
     double level = 1.0;
     double periodUs = 0.0, duty = 1.0;
+    bool scramble = false;
+    unsigned scrambleKb = 0;
     const int gemmN = 512;
 
     for (int i = 2; i < argc; ++i) {
@@ -139,6 +149,11 @@ int main(int argc, char** argv) {
             periodUs = std::atof(argv[++i]);
         } else if (!std::strcmp(argv[i], "--duty") && i + 1 < argc) {
             duty = std::atof(argv[++i]);
+        } else if (!std::strcmp(argv[i], "--scramble")) {
+            scramble = true;
+        } else if (!std::strcmp(argv[i], "--scramble-kb") && i + 1 < argc) {
+            scramble = true;
+            scrambleKb = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
         } else {
             std::fprintf(stderr, "[itfproc] unknown argument '%s'\n", argv[i]);
             return 2;
@@ -155,6 +170,11 @@ int main(int argc, char** argv) {
     }
     if (periodUs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0)) {
         std::fprintf(stderr, "[itfproc] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
+        return 2;
+    }
+    if (scramble && (kind != "saxpy" || (mb & (mb - 1)) || (scrambleKb & (scrambleKb - 1)) ||
+                     scrambleKb > mb * 1024u || (scrambleKb && scrambleKb < 4))) {
+        std::fprintf(stderr, "[itfproc] --scramble is for saxpy, with --mb and --scramble-kb powers of two, 4 KB to the buffer\n");
         return 2;
     }
     const bool throttled = (kind == "saxpy");
@@ -221,11 +241,12 @@ int main(int argc, char** argv) {
 
         const unsigned long long periodNs = static_cast<unsigned long long>(periodUs * 1e3);
         const unsigned long long onNs = static_cast<unsigned long long>(periodUs * 1e3 * duty);
+        const size_t lineMask = !scramble ? 0 : scrambleKb ? scrambleKb * 1024ull / 128 - 1 : n / 32 - 1;
         // One unit is one kernel over the whole vectors; its duration is the measurement.
         auto unitSeconds = [&](unsigned b, unsigned sleepNs, unsigned long long idleNs,
                                unsigned long long pNs = 0) {
             const auto a = std::chrono::steady_clock::now();
-            saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs, pNs, onNs);
+            saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs, pNs, onNs, lineMask);
             must(cudaGetLastError(), "saxpyThrottled launch");
             must(cudaStreamSynchronize(stream), "synchronize");
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
@@ -265,6 +286,7 @@ int main(int argc, char** argv) {
         if (periodNs)
             std::printf("  time-based:   period %.0f us, on %.0f us (duty %.2f), all threads together\n",
                         periodUs, periodUs * duty, duty);
+        if (scramble) std::printf("  scramble:     %zu lines of 128 B in scrambled order within each window\n", lineMask + 1);
 
         // 3. The measurement. The achieved level of a unit is tFull over its duration (the same
         //    bytes in more time); the line printed every second carries the median of that window.
