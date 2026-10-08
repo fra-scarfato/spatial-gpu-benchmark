@@ -50,6 +50,9 @@
 #                                  the plumbing (writes to a SEPARATE directory:
 #                                  it is not data)
 #   ./utility/sweep.sh --runs 3            fewer repetitions
+#   ./utility/sweep.sh --only REGEX        within the selected families, only the jobs whose
+#                                  full name (family_config) matches the extended
+#                                  regular expression, e.g. '^stress-sensitivity_mobilenet-'
 #   ./utility/sweep.sh --force             re-run configurations whose output exists
 #
 # The sweep is RESUMABLE: a run whose output already exists is skipped, so an
@@ -149,6 +152,7 @@ TMPCSV="${TMPCSV:-/dev/shm/scarfato-csv}"
 # 16-SM Orin has 8.
 STATIC_CHUNKS=0
 
+ONLY=""                        # --only: an extended regex on family_config
 EXPS="isolated,greenctx,mps"    # substrings. The work queue experiment is NOT
                                 # in this list on purpose: it is 60 runs, so it
                                 # is asked for explicitly with --exp wq
@@ -194,6 +198,7 @@ while [ $# -gt 0 ]; do
                 *)        EXPS="$2" ;;
             esac
             shift ;;
+        --only)          ONLY="$2"; shift ;;
         --static-chunks) STATIC_CHUNKS="$2"; shift ;;
         --with-priority) WITH_PRIORITY=1 ;;
         --submit-core)   SUBMIT_CORE="$2"; shift ;;
@@ -320,6 +325,7 @@ job_no=0
 for n in "${JOB_NAME[@]}"; do
     e="${n%%_*}"
     IFS=',' read -ra want <<< "$EXPS"
+    [ -n "$ONLY" ] && ! [[ $n =~ $ONLY ]] && continue
     for w in "${want[@]}"; do
         case "$e" in *"$w"*) SELECTED=$((SELECTED + 1)); break ;; esac
     done
@@ -502,6 +508,7 @@ for r in $(seq 1 "$RUNS"); do
             case "$exp" in *"$w"*) selected=1; break ;; esac
         done
         [ "$selected" = 1 ] || continue
+        [ -n "$ONLY" ] && ! [[ ${JOB_NAME[$i]} =~ $ONLY ]] && continue
       job_no=$((job_no + 1))
 
         # Kind and mps are needed here for the done-check and the dry-run
