@@ -808,6 +808,23 @@ if _pairs:
             float(_r["gb_sum_of_alone"]), float(_r["ratio"])))
     close_table()
 
+# The footprint arms: compute_gemm in the target's process at growing operand sides. The side-64
+# arm is left out: its cost is the shared launch path (Table mem-trace-split), not the cache.
+_fp = [r for r in _derived("footprint") if r["arm"] != "A1-l1"]
+if _fp and all(r.get("dram_mb_per_target_inference") for r in _fp):
+    open_table([r"\texttt{compute\_gemm} footprint & Side & GEMM kernels/s & Median (ms) & "
+                r"$\times$iso & DRAM per inference (MB) \\"], "lrrrrr",
+               "The target, MobileNet on 8\\,SMs, beside \\texttt{compute\\_gemm} inside its own process, with the GEMM's operands growing past the 4\\,MB L2. The side sets the footprint (three matrices of side$^2$ single-precision values) but also the size and the rate of the GEMM kernels, so the rows vary all three. DRAM is the device's traffic over the run per inference of the target, from the SoC counters, and holds the GEMM's own misses as well as the target's. One profiled run of 30\\,s per row.",
+               "tab:mem-footprint")
+    for _r in _fp:
+        _side = int(_r["side"])
+        emit(r"{} & {} & {} & {} & {:.3f} & {:.1f} \\".format(
+            "{:.1f}\\,MB".format(float(_r["footprint_mb"])) if _side else "none (target alone)",
+            _side or "---", int(float(_r["gemm_kernels_per_s"])) if _side else "---",
+            ms(float(_r["target_median_ms"])), 1 + float(_r["vs_idle_pct"]) / 100,
+            float(_r["dram_mb_per_target_inference"])))
+    close_table()
+
 # The division of the penalty: presence is the cost beside spin at 4 SMs, DRAM the co-runner's
 # traffic times the slope of the line through all nine co-runners, and the rest is beyond DRAM.
 if _dem and "all" in _fit:

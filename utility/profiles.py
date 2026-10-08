@@ -413,7 +413,8 @@ def fits(demand):
 def footprint_table():
     """The footprint arms: one profiled run each, read for their medians and the co-runner's rates.
     The GEMM side changes the operand footprint and, with it, the kernel size and the kernels per
-    unit, so the arms are confounded and are reported as such."""
+    unit, so the arms are confounded and are reported as such. DRAM per target inference is the
+    device's total, so it holds the GEMM's own misses as well as the target's."""
     rows, base = [], None
     for log in sorted(glob.glob(os.path.join(PROF, "footprint", "*.log"))):
         arm = os.path.basename(log)[:-4]
@@ -424,15 +425,24 @@ def footprint_table():
         side = re.search(r"GEMM side:\s+(\d+)", txt)
         mb = re.search(r"working set:\s+([0-9.]+) MB", txt)
         units = re.search(r"units:\s+\d+ in [0-9.]+ s \(([0-9.]+) units/s\)", txt)
-        _, co = report(log)
+        nets, co = report(log)
         med = stats_median(st)
         base = base or med
+        # the device's DRAM bytes over the run per target inference (warm-up included, as in
+        # dram_tables): the target's own traffic plus the GEMM's, which this run cannot separate
+        rep = os.path.join(PROF, "footprint", arm + ".nsys-rep")
+        mb_inf = ""
+        if os.path.exists(rep) and nets:
+            extract(rep, ("dram",))
+            gb = dram_gb(rep[:-len(".nsys-rep")])[0]
+            mb_inf = round(gb * 1e3 / sum(v[0] + WARMUP for v in nets.values()), 2)
         side = int(side.group(1)) if side else 0
         reps = max(1, int(4300000000.0 / side ** 3)) if side else 0
         rows.append(dict(arm=arm, side=side, footprint_mb=float(mb.group(1)) if mb else 0.0,
                          gemm_kernels_per_s=round(float(units.group(1)) * reps) if units else 0,
                          tflop_s=co.get("tflop_s", 0.0), target_median_ms=med,
-                         vs_idle_pct=round((med / base - 1) * 100, 1)))
+                         vs_idle_pct=round((med / base - 1) * 100, 1),
+                         dram_mb_per_target_inference=mb_inf))
     return pd.DataFrame(rows)
 
 
