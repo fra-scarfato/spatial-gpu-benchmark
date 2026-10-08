@@ -137,6 +137,14 @@ while IFS='|' read -r name shares cmds; do
             rpart=${#co[@]}; coff=0
         fi
         echo "== $name r$k: ${#co[@]} co-runner(s)"
+        # The guard sees the board only before a run. A co-tenant who starts during one would go
+        # unnoticed, so a watcher polls every 2 s for GPU users other than this run's own processes
+        # (all under f_scarfato), and a run it flags is set aside under rejected/ and not counted.
+        rm -f "$TMP/.intruded"
+        ( while sleep 2; do
+              o=$(other_gpu_users 2>/dev/null | grep -v f_scarfato)
+              [ -n "$o" ] && { echo "$o" > "$TMP/.intruded"; break; }
+          done ) & wpid=$!
         pids=(); stop=()
         for i in "${!co[@]}"; do
             csv=""
@@ -170,6 +178,14 @@ while IFS='|' read -r name shares cmds; do
         done
         rm -f "$TMP"/r"${k}"_c*
         mps_ensure off
+        kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+        if [ -s "$TMP/.intruded" ]; then
+            echo "   REJECTED: another process used the GPU during the run: $(head -1 "$TMP/.intruded" | tr -s " ")"
+            mkdir -p "$OUTROOT/rejected/$name"
+            mv -f "$TMP/latency.txt" "$OUTROOT/rejected/$name/r${k}_latency.txt" 2>/dev/null
+            mv -f "$dest"/r"${k}"_c* "$OUTROOT/rejected/$name/" 2>/dev/null
+            exit 1                      # the caller's retry waits for a free GPU and resumes here
+        fi
         # The latency file is the completion marker, written last and only after a clean run.
         [ "$rc" = 0 ] && mv -f "$TMP/latency.txt" "$dest/r${k}_latency.txt" || { echo "   reporter failed (rc=$rc)"; exit 1; }
         awk '!/^#/{s[$1]+=$4; n[$1]++} END{for (k in s) printf "   %s KB: %.1f ns mean\n", k, s[k]/n[k]}' "$dest/r${k}_latency.txt"
