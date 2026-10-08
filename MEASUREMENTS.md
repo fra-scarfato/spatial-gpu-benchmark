@@ -12,14 +12,16 @@ All data is under `$DATA = /mnt/nvme/f.scarfato`, outside the repository.
 bench/                          THE CAMPAIGN: latencies, five runs per configuration
   <family>/<config>/r<k>_stats.csv        one row per statistic of one run (gpu_ms is the one used)
   <family>/<config>/r<k>.log              the runner's report, including a co-runner's own figures
-  aggregate/                              aggregate.py's reduction and the generated tables
+  aggregate/                              aggregate.py's reduction, stress.py's files, the tables
+  stress-reporter/<config>/                the stress reporter beside SAXPY or a network (reporter.sh)
+  stress-reporter-target/<config>/         the same with LAYOUT=target
 profiles/                       PROFILED RUNS: one run per arm, read for traffic and timelines
   traces/<arm>.*                CUDA kernel traces (no root)
   soc-budget/<arm>.*            DRAM counters, each network alone on 4 budgets, and 3 pairs (root)
   soc-itf/<arm>.*               DRAM counters, the target alone and beside compute_gemm (root)
   footprint/<arm>.*             DRAM counters, compute_gemm with its operand side varied (root)
   calibration/                  DRAM counters during devprobe's device-to-device copies (root)
-  ncu/                          Nsight Compute output, per-kernel only (root)
+  ncu/                          Nsight Compute output, per-kernel only (root); nets-<net>.csv, nets/
   derived/*.csv                 everything profiles.py computes from the above
   archive/                      earlier traces and the outputs of scripts that were replaced
 scratch/                        temporary files; nothing reads from it
@@ -34,7 +36,7 @@ Every arm in `profiles/<set>/` has the same files:
 | `<arm>_stats.csv` (or `<arm>_<net>_stats.csv`) | the runner's latency statistics for that run |
 | `<arm>.kernels.csv.gz` | every kernel: start, end (ns), stream, correlation id, thread blocks, name |
 | `<arm>.launches.csv.gz` | every kernel-launch call on the host: correlation id, start, end, thread |
-| `<arm>.dram.csv.gz` | counter runs only: the DRAM read and write series, one row per sample |
+| `<arm>.dram.csv.gz` | counter runs only: the SoC DRAM and the GPU's own read and write series, one row per sample |
 
 The three `.csv.gz` files are extracted from the report once, by `profiles.py`, and the sqlite
 export (hundreds of MB, minutes to produce) is then deleted. Everything downstream reads the
@@ -114,7 +116,7 @@ position: `(start, end, domain, index, value)`. The index of each counter is loo
 | name | definition | used for |
 |---|---|---|
 | **peak** | the largest sample | not used for any conclusion |
-| **busy mean** | the mean of the samples above 1 %, which drops the idle samples between inferences | Table `tab:mem-pressure` only |
+| **busy mean** | the mean of the samples above 1 %, which drops the idle samples between inferences | `derived/dram.csv` only; no longer in the thesis |
 | **integral** | the sum of all samples; the GPU pair reads 0 when idle, so no floor is subtracted | everything in GB |
 
 The busy mean depends on how much idle time falls inside a 100 µs sample, so it understates the
@@ -235,7 +237,7 @@ those after it. Position 0–54 within an inference is then the same layer in ev
 
 So span = kernels + queued + host-late, inference by inference.
 
-### With and without a co-runner (`derived/trace-overlap.csv`, Table `tab:mem-trace-overlap`)
+### With and without a co-runner (`derived/trace-overlap.csv`; no longer a thesis table, quoted in the text)
 
 All kernels on other streams belong to the co-runner: the interferer's, or the other network's.
 
@@ -263,7 +265,7 @@ number of kernels per unit (4.3 × 10⁹ / side³). So the arms vary footprint, 
 rate together, and cannot attribute an effect to the footprint alone. One profiled run per arm,
 read for the target's median against the idle arm (`derived/footprint.csv`).
 
-## 8. The stress model (MPS static only)
+## 7. The stress model (MPS static only)
 
 The question: how much does a network **stress** the memory system, how **sensitive** is a target
 to that stress, and does the pair of numbers **predict** the target's slowdown beside a co-runner
@@ -288,7 +290,7 @@ scale, and the kernel stays resident at every level.
   second's units (full-speed unit time / unit time). The analysis uses the median of A over the
   run, and reports its spread.
 - L = 0 runs the same kernel with waits only: resident, no memory traffic.
-- The stressor always holds the same 8-SM partition (4 chunks).
+- The stressor holds 8 SMs (4 chunks) beside the target, and 4 SMs in the 4-SM variant below.
 
 ### The reporter: gpu-latency
 
@@ -300,8 +302,8 @@ traffic.
 **Windows.** One long launch of 2000 windows of 512 dereferences (about 0.3 ms each), each closed by a
 `clock64` mark. The mark is read only after the window's last load has completed, because the
 thread first branches on the loaded pointer (verified in the SASS). Cycles are converted to ns with
-the pinned 1300.5 MHz, and the first window of each launch is dropped. A 30 s run gives about 45,000
-windows.
+the pinned 1300.5 MHz, and the first window of each launch is dropped. A 30 s run gives about
+85,000-95,000 windows.
 
 **Why windows.** A network's DRAM traffic comes in bursts. Upstream's samples, each a separate launch
 averaging 0.3 s of accesses, hid them: all four networks read 603–612 ns, within the band between
@@ -347,15 +349,43 @@ point, so they show no tail stress beyond being present. The median curve is mon
 from different numbers of SMs is not equal stress, because a different number of requests is in
 flight. The reporter reads either with the same instrument, in the same partition.
 
-**Domain:** at L = 1 the 8-SM SAXPY moves about 90 GB/s, against peaks of about 195 GB/s read and
-203 GB/s write. Predictions hold for co-runners whose reading falls inside the calibrated range.
+**Domain:** at L = 1 the 8-SM SAXPY moves 137 GB/s (the 4-SM one 91 GB/s), against peaks of about
+203 GB/s read and 208 GB/s write. Predictions hold for co-runners whose reading falls inside the calibrated range.
 
 Output: `$DATA/bench/stress-reporter/<config>/r<k>_latency.txt`, `r<k>_c<i>.log` and
 `r<k>_c<i>_stats.csv`. `stress.py` writes `$DATA/bench/aggregate/stress-calibration.csv`,
 `stress-corunners.csv`, `stress-sensitivity.csv`, `stress-predictions.csv` and
 `stress-comparison.csv`.
 
-## 7. Limits, all of which the text states where they apply
+### The 4-SM stressor (`stress.py ... 4sm`)
+
+The same model with SAXPY on the 4 SMs a real co-runner holds, so that stressor and co-runner share
+one geometry: `reporter.sh calibration-4sm` (configurations `saxpy4-L*`, L relative to full speed on
+4 SMs, 91.1 GB/s) and the `stress-sensitivity-4sm` family (exp15: target 8 SMs {0,1,4,5}, SAXPY 4 SMs
+{2,6}, the co-runner's chunks in `stress-validation`). `stress.py predict 4sm` and `compare 4sm` write
+the same files with the suffix `-4sm`; the 8-SM files are not touched. The 4-SM calibration is flat
+and not monotonic below L 0.2, so `predict 4sm` refuses to invert it.
+
+### Where the reporter sits (`LAYOUT`)
+
+`reporter.sh` puts the reporter on one 2-SM chunk created after the co-runners (`LAYOUT=chunk`, the
+default and the layout of every reading above): co-runner {0,4} or {0,1,4,5}, reporter {1} or {2}.
+`LAYOUT=target` creates the reporter's partition first with 8 SMs, so that it sits where the target
+sits in the sweeps, {0,1,4,5}, and every co-runner on the chunks it holds beside a target ({2,6} for
+4 SMs, {2,3,6,7} for 8). The reporter is one thread, so the size of its partition changes only its
+place. Output: `$DATA/bench/stress-reporter-target/`.
+
+### L2 traffic of each network (`ncu.sh nets`, root)
+
+Each network alone on a 4-SM green context, all kernels of four inferences after the warm-up, with
+the L2 kept warm between kernels (`--cache-control none`): `lts__t_bytes` (L2 traffic), the L2 and
+L1 hit rates and the kernel durations. L2 MB per inference x the network's throughput gives its L2
+traffic in GB/s; L2 bytes x (1 - hit rate) should match the DRAM bytes per inference of the SoC
+counters, which checks the two instruments against each other. Output:
+`$DATA/profiles/ncu/nets-<net>.csv`. The first run (2026-10-07, in `profiles/ncu/nets/`) profiled
+kernels inside the warm-up.
+
+## 8. Limits, all of which the text states where they apply
 
 - A profiled run is perturbed by the profiler. Its latencies (MobileNet alone: 0.69 ms profiled,
   0.675 ms in the campaign) are never reported as results. Only shapes, ratios, traffic and

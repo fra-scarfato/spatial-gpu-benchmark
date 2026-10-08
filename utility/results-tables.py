@@ -576,7 +576,7 @@ for _desc, _mech, _exp, _cfg, _unit, _fam in MX_ROWS:
     _t = must(val(_exp, _cfg, "mobilenet", "p99_minus_median"), _cfg + " tail")
     _thr = must(thr(_exp, _cfg, "mobilenet"), _cfg + " rate") or 0
     _load = itf_load(_fam, _cfg, _unit) if _fam else None
-    _show = _desc + (" ({:.1f} {})".format(_load, _unit) if _load else "")
+    _show = _desc + (" ({:.1f}\\,{})".format(_load, _unit) if _load else "")
     emit(r"{} & {} & {} & {:.3f} & {:.0f} & {} & {:.3f} \\".format(
         _show, _mech, ms(_m), _m / _mx_base[_mech], _thr, ms(_t), _t / _mx_base_tail[_mech]))
 close_table()

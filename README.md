@@ -125,8 +125,11 @@ utility/
   profiles.py               the profiled runs -> profiles/derived/*.csv
   streams.py                per-stream activity and overlap in one trace (run by hand)
   reporter.sh               the stress reporter beside SAXPY levels or networks, under MPS static
+                            (LAYOUT=target: the reporter on the target's 8 SMs)
   stress.py                 the stress model: calibration, equivalent stress, sensitivity, prediction
-  ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures
+                            (predict|compare [4sm]: SAXPY on 8 or on 4 SMs)
+  ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures,
+                            and the L2 traffic of each network (nets)
   lib/                      shared by the scripts above:
     guards.sh                 the checks before every run: clocks locked, GPU quiet, sentinel
     matrix.sh                 the campaign's arms, one line each: what sweep.sh can run
