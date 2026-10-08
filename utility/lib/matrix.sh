@@ -536,6 +536,15 @@ for t in $STRESS_TARGETS; do
         add "stress-sensitivity-4sm_${tn}-saxpy-L$p" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:25"
     done
+    # The baseline: the same target beside time-based SAXPY on 8 SMs (all threads on for D of every
+    # 1 ms), D = 0 ... 1.0, and its own alone row.
+    add "stress-sensitivity-tb_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    add "stress-sensitivity-tb_${tn}-tb-D000" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --level 0|50:50"
+    for d in 010 020 030 040 050 060 070 080 090 100; do
+        add "stress-sensitivity-tb_${tn}-tb-D$d" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100)))|50:50"
+    done
     for c in $STRESS_TARGETS; do
         cn="${c%%:*}"; ce="${c#*:}"
         [ "$cn" = "$tn" ] && continue

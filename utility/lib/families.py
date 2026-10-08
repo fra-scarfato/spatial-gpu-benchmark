@@ -73,6 +73,7 @@ EXP_DIR = {
     "stress-sensitivity":          "exp13",
     "stress-validation":           "exp14",
     "stress-sensitivity-4sm":      "exp15",
+    "stress-sensitivity-tb":       "exp17",
 }
 
 def key_map():

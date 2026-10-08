@@ -85,6 +85,16 @@ configs() {
             echo "saxpy4-L$p|25|$ITF saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))"
         done
         ;;
+    calibration-tb)
+        # The baseline's stressor: time-based SAXPY on 8 SMs, all threads on together for D of every
+        # 1 ms, D = 0.1 ... 1.0; D = 0 is the resident kernel with no traffic. Use with WINDOW=0 (one
+        # mean per run, the unpatched reporter) and LAYOUT=target.
+        echo "tb-D000|50|$ITF saxpy --level 0"
+        local d
+        for d in 010 020 030 040 050 060 070 080 090 100; do
+            echo "tb-D$d|50|$ITF saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100)))"
+        done
+        ;;
     probes-4sm)
         # Two co-runners whose cost to MobileNet under MPS on 4 SMs is already measured
         # (memory-mps-interferers-4sm): one whose traffic all reaches DRAM, one that hits the L2.

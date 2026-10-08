@@ -35,12 +35,18 @@ BENCH = os.path.join(A.DATA_ROOT, "bench")
 REPORTER = os.path.join(BENCH, "stress-reporter")
 OUT = os.path.join(BENCH, "aggregate")
 # The reporter's coordinates, all on the 64 MB (DRAM) chain: a statistic of the run's windows.
-STATS = {"p99": lambda v: float(np.percentile(v, 99)), "median": lambda v: float(np.median(v))}
+STATS = {"p99": lambda v: float(np.percentile(v, 99)), "median": lambda v: float(np.median(v)),
+         "mean": lambda v: float(np.mean(v))}     # mean: the unpatched reporter's one number per run
 NETS = ("mobilenet", "resnet", "inception", "retinanet")
 # The stressor's geometry: calibration configs, sensitivity family and its directory, file suffix.
-GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffix=""),
-         "4sm": dict(cal="saxpy4-L", exp="exp15", dir="stress-sensitivity-4sm", suffix="-4sm")}
+GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffix="", rep="stress-reporter"),
+         "4sm": dict(cal="saxpy4-L", exp="exp15", dir="stress-sensitivity-4sm", suffix="-4sm",
+                     rep="stress-reporter"),
+         # the baseline: time-based SAXPY, the unpatched reporter (WINDOW=0) on the target's SMs
+         "tb": dict(cal="tb-D", exp="exp17", dir="stress-sensitivity-tb", suffix="-tb",
+                    rep="stress-reporter-baseline")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
+REPORTER = os.path.join(BENCH, G["rep"])
 
 
 def achieved_level(log):

@@ -16,6 +16,10 @@
 //                                       ACHIEVED BANDWIDTH as a fraction of the same kernel at
 //                                       full speed on the same partition. L = 0 keeps a kernel
 //                                       resident that moves no data.
+//   itfproc saxpy --period-us P --duty D  TIME-BASED: all threads move data at full speed during
+//                                       the first D x P of every period P on the GPU's global
+//                                       clock, together, and wait for the rest. D is the fraction
+//                                       of TIME on; the achieved bandwidth fraction is printed.
 //
 // Prints the same lines the runner's interferer prints, once a second, so the log carries
 // the load over time and not only its total, and prints the total again on SIGTERM, which
@@ -54,9 +58,13 @@ __device__ __forceinline__ void waitNs(unsigned long long ns) {
 // threads, each out of phase with the others, so the pressure on memory is lowered uniformly at
 // microsecond scale rather than switched on and off. burst == 0 is level 0: the kernel stays
 // resident for `idleNs` and touches no memory.
+// periodNs != 0 is the time-based mode: before each burst a thread checks the global clock and,
+// outside the first onNs of the period, waits for the next period, so every thread is on and off
+// at the same moments.
 __global__ void saxpyThrottled(const float* __restrict__ x, float* __restrict__ y, size_t n,
                                float a, unsigned burst, unsigned sleepNs,
-                               unsigned long long idleNs) {
+                               unsigned long long idleNs, unsigned long long periodNs,
+                               unsigned long long onNs) {
     if (burst == 0) {
         waitNs(idleNs);
         return;
@@ -64,10 +72,14 @@ __global__ void saxpyThrottled(const float* __restrict__ x, float* __restrict__ 
     const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
     unsigned k = 0;
     for (size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x; i < n; i += stride) {
+        if (periodNs && k == 0) {
+            const unsigned long long phase = globalTimerNs() % periodNs;
+            if (phase >= onNs) waitNs(periodNs - phase);
+        }
         y[i] = a * x[i] + y[i];
-        if (sleepNs && ++k == burst) {
+        if (++k == burst) {
             k = 0;
-            waitNs(sleepNs);
+            if (sleepNs) waitNs(sleepNs);
         }
     }
 }
@@ -113,6 +125,7 @@ int main(int argc, char** argv) {
     unsigned mb = 256;
     int reps = 32;
     double level = 1.0;
+    double periodUs = 0.0, duty = 1.0;
     const int gemmN = 512;
 
     for (int i = 2; i < argc; ++i) {
@@ -122,6 +135,10 @@ int main(int argc, char** argv) {
             reps = std::atoi(argv[++i]);
         } else if (!std::strcmp(argv[i], "--level") && i + 1 < argc) {
             level = std::atof(argv[++i]);
+        } else if (!std::strcmp(argv[i], "--period-us") && i + 1 < argc) {
+            periodUs = std::atof(argv[++i]);
+        } else if (!std::strcmp(argv[i], "--duty") && i + 1 < argc) {
+            duty = std::atof(argv[++i]);
         } else {
             std::fprintf(stderr, "[itfproc] unknown argument '%s'\n", argv[i]);
             return 2;
@@ -134,6 +151,10 @@ int main(int argc, char** argv) {
     }
     if (level < 0.0 || level > 1.0) {
         std::fprintf(stderr, "[itfproc] --level must be in [0, 1], got %g\n", level);
+        return 2;
+    }
+    if (periodUs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0)) {
+        std::fprintf(stderr, "[itfproc] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
         return 2;
     }
     const bool throttled = (kind == "saxpy");
@@ -198,10 +219,13 @@ int main(int argc, char** argv) {
         const double perThread = std::ceil(static_cast<double>(n) / (blocks * 256.0));
         const double burstsPerThread = std::ceil(perThread / burst);
 
+        const unsigned long long periodNs = static_cast<unsigned long long>(periodUs * 1e3);
+        const unsigned long long onNs = static_cast<unsigned long long>(periodUs * 1e3 * duty);
         // One unit is one kernel over the whole vectors; its duration is the measurement.
-        auto unitSeconds = [&](unsigned b, unsigned sleepNs, unsigned long long idleNs) {
+        auto unitSeconds = [&](unsigned b, unsigned sleepNs, unsigned long long idleNs,
+                               unsigned long long pNs = 0) {
             const auto a = std::chrono::steady_clock::now();
-            saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs);
+            saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs, pNs, onNs);
             must(cudaGetLastError(), "saxpyThrottled launch");
             must(cudaStreamSynchronize(stream), "synchronize");
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
@@ -238,13 +262,16 @@ int main(int argc, char** argv) {
         }
         std::printf("  throttle:     %u blocks x 256, burst %u, sleep %u ns, full-speed unit %.3f ms\n",
                     blocks, b, sleepNs, tFull * 1e3);
+        if (periodNs)
+            std::printf("  time-based:   period %.0f us, on %.0f us (duty %.2f), all threads together\n",
+                        periodUs, periodUs * duty, duty);
 
         // 3. The measurement. The achieved level of a unit is tFull over its duration (the same
         //    bytes in more time); the line printed every second carries the median of that window.
         std::vector<double> window;
         const auto t0 = std::chrono::steady_clock::now();
         while (!g_stop) {
-            const double t = unitSeconds(b, sleepNs, idleNs);
+            const double t = unitSeconds(b, sleepNs, idleNs, periodNs);
             window.push_back(level == 0.0 ? 0.0 : tFull / t);
             ++units;
             if (level > 0.0) bytes += 3.0 * static_cast<double>(bytesPerBuffer);
