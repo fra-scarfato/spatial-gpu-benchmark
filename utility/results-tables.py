@@ -730,35 +730,35 @@ _SOC_NETS = (("mobilenet", "mobilenetv2-12"), ("resnet", "resnet50-v2-7"),
              ("inception", "inception_v3"), ("retinanet", "retinanet-9"))
 _SOC_SHARES = ((4, 25), (8, 50), (12, 75), (16, 100))
 _dram = {r["arm"].replace("soc-greenctx-", ""): r for r in _derived("dram")}
+_dem = _derived("demand")
+_fit = {r["rows"]: r for r in _derived("demand-fit")}
 
-if _dram:
-    open_table([r"Network & SM share & Read (\% of peak) & Write (\% of peak) \\"], "llrr",
-               "The DRAM demand each network applies while it is the only client running, in the "
-               "units of\nthe counters, read and write separately, on the four SM budgets of "
-               "Table~\\ref{tab:iso-rates}. The\nstatistic is the mean over the samples above one "
-               "per cent, which excludes the idle time between\ninferences, and the same rule is "
-               "applied to every row; the counters cover the whole GPU, so a reading\nbelongs to the "
-               "network only because nothing else is running on it.",
-               "tab:mem-pressure")
-    for _i, (_net, _soc) in enumerate(_SOC_NETS):
-        if _i:
-            emit(r"\midrule")
-        for _j, (_sms, _pct) in enumerate(_SOC_SHARES):
-            _r = _dram["%s-%d" % (_soc, _pct)]
-            emit(r"{} & {}\,SMs & {:.1f} & {:.1f} \\".format(
-                _net if _j == 0 else "", _sms, float(_r["read_busy_pct"]),
-                float(_r["write_busy_pct"])))
+# The causes, in the order of the subsection: where the time goes (traces), the traffic of each
+# network (counters), the penalty against that traffic, the shared L2 (pair traffic), the division
+# of the penalty into its three parts, and the presence test that excludes the partition.
+_split = {r["arm"]: r for r in _derived("trace-split")}
+_ARMS = (("alone", "none"), ("spin4", r"\texttt{spin} at 4\,SMs"),
+         ("compute4", r"\texttt{compute\_gemm} at 4\,SMs"), ("resnet4", r"resnet at 4\,SMs"),
+         ("mem4", r"\texttt{mem\_saxpy} at 4\,SMs"),
+         ("gemm64", r"\texttt{compute\_gemm}, side 64, at 4\,SMs"))
+if _split:
+    open_table([r"Co-runner & \multicolumn{4}{c}{One inference of the target, median ($\mu$s)} \\",
+                r"\cmidrule(lr){2-5}",
+                r" & total & kernels & gaps, device & gaps, host \\"], "lrrrr",
+               "One inference of the target, MobileNet on 8\\,SMs, split from a CUDA kernel trace into the\ntime its 55 kernels execute, the gaps in which the next kernel was submitted but not yet started\n(the device owed it) and the gaps in which the host had not yet submitted it (the host owed it).\nMedians over the inferences of one profiled run of 30\\,s per row. The last row is a co-runner inside\nthe target's own process, discussed with the excluded causes.",
+               "tab:mem-trace-split")
+    for _arm, _desc in _ARMS:
+        _r = _split.get(_arm)
+        if _r:
+            emit(r"{} & {:.1f} & {:.1f} & {:.1f} & {:.1f} \\".format(
+                _desc, float(_r["span_us"]), float(_r["kernels_us"]),
+                float(_r["queued_us"]), float(_r["host_late_us"])))
     close_table()
 
+if _dram:
     open_table([r"Network & SM share & Inferences & DRAM per inference (MB) & Thr.\ (inf/s) & "
                 r"DRAM (GB/s) \\"], "llrrrr",
-               "The DRAM traffic of each network alone, as bytes per inference: the integral of "
-               "the read and write counters over the profiled run, converted with the copy "
-               "calibration, divided by the inferences the run performed, warm-up included. The "
-               "last column is that quantity times the throughput of the same run, which is the "
-               "average rate the network applies to the memory system over time. One profiled run "
-               "of 20\\,s per row; the throughputs are those of the profiled runs and lie below the "
-               "campaign's.",
+               "The DRAM traffic of each network running alone, from the SoC counters: the bytes one inference moves, and that times the network's throughput, which is the rate it applies to the memory. One profiled run of 20\\,s per row; its throughput is slightly below the campaign's because of the profiler.",
                "tab:mem-bytes")
     for _i, (_net, _soc) in enumerate(_SOC_NETS):
         if _i:
@@ -770,68 +770,12 @@ if _dram:
                 float(_r["inf_per_s"]), float(_r["gb_s_run_average"])))
     close_table()
 
-_pairs = _derived("pair-traffic")
-if _pairs:
-    open_table([r"Pair & Measured (GB) & Sum of the two alone (GB) & Ratio \\"], "lrrr",
-               "The DRAM traffic of two networks running together against the traffic the same "
-               "inferences move when each network runs alone: the inferences each network "
-               "performed in the pair run, times its bytes per inference alone at the same SM "
-               "share (Table~\\ref{tab:mem-bytes}), summed. One profiled run of 20\\,s per pair; "
-               "MobileNet holds 8\\,SMs in every pair.",
-               "tab:mem-pair-traffic")
-    _names = {"mobilenetv2-12-50": "mobilenet 8\\,SMs", "resnet50-v2-7-25": "resnet 4\\,SMs",
-              "resnet50-v2-7-50": "resnet 8\\,SMs", "retinanet-9-25": "retinanet 4\\,SMs"}
-    for _r in _pairs:
-        _parts = _r["arm"].replace("soc-greenctx-", "").split("_")
-        emit(r"{} & {:.1f} & {:.1f} & {:.3f} \\".format(
-            " + ".join(_names[p] for p in _parts), float(_r["gb_measured"]),
-            float(_r["gb_sum_of_alone"]), float(_r["ratio"])))
-    close_table()
-
-# Presence: the same two clients, partitions and submitting thread, with the device either free to
-# overlap their kernels or forced by a single work queue to run them in turn.
-_PRES = (("alone", "exp1", "mobilenet_gc50", False),
-         ("one work queue: kernels in turn", "exp4-1t", "devctx_1_50_50", True),
-         ("eight work queues: kernels concurrent", "exp4-1t", "devctx_8_50_50", True))
-open_table([r"Configuration & \multicolumn{2}{c}{MobileNet, 8\,SMs} & "
-            r"\multicolumn{2}{c}{ResNet, 8\,SMs} & Aggregate \\",
-            r"\cmidrule(lr){2-3} \cmidrule(lr){4-5}",
-            r" & Median (ms) & $\times$iso & Median (ms) & $\times$iso & (inf/s) \\"], "lrrrrr",
-           "Whether the penalty needs the two clients' kernels to execute at the same time. The two "
-           "lower rows run MobileNet and ResNet on 8\\,SMs each, in the same process, the same submitting thread and the same two "
-           "disjoint green contexts; they differ only in the work-queue limit of the descriptor, "
-           "which at one queue makes the device execute the two clients' kernels in turn. The "
-           "multipliers are against each network alone on 8\\,SMs, and the aggregate is the sum of "
-           "the two networks' measured rates.",
-           "tab:mem-presence")
-_iso_res = must(val("exp1", "resnet_gc50", "resnet", "median"), "resnet_gc50")
-_iso_mob = must(val("exp1", "mobilenet_gc50", "mobilenet", "median"), "mobilenet_gc50")
-for _desc, _exp, _cfg, _pair in _PRES:
-    _m = must(val(_exp, _cfg, "mobilenet", "median"), _cfg)
-    if _pair:
-        _rn = must(val(_exp, _cfg, "resnet", "median"), _cfg + " resnet")
-        _agg = (thr(_exp, _cfg, "mobilenet") or 0) + (thr(_exp, _cfg, "resnet") or 0)
-        emit(r"{} & {} & {:.3f} & {} & {:.3f} & {:.0f} \\".format(
-            _desc, ms(_m), _m / _iso_mob, ms(_rn), _rn / _iso_res, _agg))
-    else:
-        emit(r"{} & {} & {:.3f} & --- & --- & {:.0f} \\".format(
-            _desc, ms(_m), _m / _iso_mob, thr(_exp, _cfg, "mobilenet") or 0))
-close_table()
-
-_dem = _derived("demand")
 if _dem:
     _tex = {"spin": r"\texttt{spin}", "compute_gemm": r"\texttt{compute\_gemm}",
             "mem_saxpy": r"\texttt{mem\_saxpy}"}
     open_table([r"Co-runner & DRAM demand (GB/s) & Demand from & Median (ms) & "
                 r"Median $\times$iso \\"], "llrrr",
-               "What a co-runner's DRAM demand costs the target that keeps its 8\\,SMs. The median "
-               "is the campaign's, five runs; the multiplier is against the target alone in the "
-               "same family, 0.6752\\,ms for the interferer and budget families and 0.6718\\,ms for "
-               "the additivity family. The demand of a network is its run-average rate alone at "
-               "the co-runner's share (Table~\\ref{tab:mem-bytes}); that of \\texttt{mem\\_saxpy} "
-               "is its own count of the bytes it moves; that of \\texttt{compute\\_gemm} is the "
-               "device's traffic beside the target minus the target's own bytes per inference "
-               "alone, over the co-runner's running time; \\texttt{spin} touches no memory.",
+               "The target's median beside each co-runner whose traffic is known, against the target alone in the same family. The traffic of a network is its rate alone at its SM share (Table~\\ref{tab:mem-bytes}); \\texttt{mem\\_saxpy} counts its own bytes; that of \\texttt{compute\\_gemm} is the device's traffic beside the target less the target's own; \\texttt{spin} touches no memory.",
                "tab:mem-demand")
     _prev = None
     for _r in _dem:
@@ -850,58 +794,63 @@ if _dem:
             float(_r["target_median_ms"]) / float(_r["reference_ms"])))
     close_table()
 
-_split = {r["arm"]: r for r in _derived("trace-split")}
-_ovl = {r["arm"]: r for r in _derived("trace-overlap")}
-_ARMS = (("alone", "none"), ("spin4", r"\texttt{spin} at 4\,SMs"),
-         ("compute4", r"\texttt{compute\_gemm} at 4\,SMs"), ("resnet4", r"resnet at 4\,SMs"),
-         ("mem4", r"\texttt{mem\_saxpy} at 4\,SMs"),
-         ("gemm64", r"\texttt{compute\_gemm}, side 64, at 4\,SMs"))
-if _split:
-    open_table([r"Co-runner & Inferences & \multicolumn{4}{c}{One inference, median ($\mu$s)} \\",
-                r"\cmidrule(lr){3-6}",
-                r" & & span & kernels & queued gaps & host-late gaps \\"], "lrrrrr",
-               "One inference of the target, MobileNet on 8\\,SMs, decomposed from a CUDA kernel "
-               "trace: the span from its first kernel's start to its last kernel's end, the sum "
-               "of its 55 kernels' durations, and the gaps between consecutive kernels, split by "
-               "whether the next kernel's launch call had returned to the host before the previous "
-               "kernel ended (queued: the device owed it) or after (host-late: the host owed it). "
-               "Medians over the inferences of one profiled run of 30\\,s per row, taken in one "
-               "session; the last row is the side-64 arm of the footprint set, profiled with the "
-               "DRAM counters as well.",
-               "tab:mem-trace-split")
-    for _arm, _desc in _ARMS:
-        _r = _split.get(_arm)
-        if _r:
-            emit(r"{} & {} & {:.1f} & {:.1f} & {:.1f} & {:.1f} \\".format(
-                _desc, _r["inferences"], float(_r["span_us"]), float(_r["kernels_us"]),
-                float(_r["queued_us"]), float(_r["host_late_us"])))
+_pairs = _derived("pair-traffic")
+if _pairs:
+    open_table([r"Pair & Measured (GB) & Sum of the two alone (GB) & Ratio \\"], "lrrr",
+               'The DRAM traffic of two networks running together, against the sum of what the same inferences move when each network runs alone (Table~\\ref{tab:mem-bytes}). One profiled run of 20\\,s per pair; MobileNet holds 8\\,SMs in every pair.',
+               "tab:mem-pair-traffic")
+    _names = {"mobilenetv2-12-50": "mobilenet 8\\,SMs", "resnet50-v2-7-25": "resnet 4\\,SMs",
+              "resnet50-v2-7-50": "resnet 8\\,SMs", "retinanet-9-25": "retinanet 4\\,SMs"}
+    for _r in _pairs:
+        _parts = _r["arm"].replace("soc-greenctx-", "").split("_")
+        emit(r"{} & {:.1f} & {:.1f} & {:.3f} \\".format(
+            " + ".join(_names[p] for p in _parts), float(_r["gb_measured"]),
+            float(_r["gb_sum_of_alone"]), float(_r["ratio"])))
     close_table()
-if _ovl:
-    open_table([r"Co-runner & Covers & \multicolumn{2}{c}{Kernels, sum ($\mu$s)} & "
-                r"Fixed & Prop. & \multicolumn{2}{c}{Gap ($\mu$s), co-runner} \\",
-                r"\cmidrule(lr){3-4} \cmidrule(lr){7-8}",
-                r" & & free & overlapped & ($\mu$s) & (\%) & idle & running \\"], "lrrrrrrr",
-               "The same target kernel with and without a co-runner kernel executing at the same "
-               "time, from the traces of Table~\\ref{tab:mem-trace-split}. \\emph{Covers} is the "
-               "fraction of the target's kernel time during which a co-runner kernel was "
-               "executing. For each of the 55 kernel positions the free duration is the median "
-               "over the inferences in which no co-runner kernel overlapped it, in the same run "
-               "where enough such inferences exist and otherwise in the trace of the target alone; "
-               "the overlapped duration is the median over those fully overlapped. The fixed and "
-               "proportional parts are the least-squares line through the 55 differences against "
-               "the free durations: \\emph{fixed} is added to every kernel, \\emph{prop.} is the share of "
-               "its duration added. A gap is classified by whether a co-runner kernel covered it.",
-               "tab:mem-trace-overlap")
-    for _arm, _desc in _ARMS[1:]:
-        _r = _ovl.get(_arm)
-        if _r:
-            emit(r"{} & {:.2f} & {:.1f} & {:.1f} & {:.2f} & {:.1f} & {} & {} \\".format(
-                _desc, float(_r["co_runner_covers"]), float(_r["kernels_free_us"]),
-                float(_r["kernels_overlapped_us"]), float(_r["fixed_us_per_kernel"]),
-                100 * float(_r["proportional"]),
-                "{:.2f}".format(float(_r["gap_us_co_idle"])) if _r["gap_us_co_idle"] else "---",
-                "{:.2f}".format(float(_r["gap_us_co_busy"]))))
+
+# The division of the penalty: presence is the cost beside spin at 4 SMs, DRAM the co-runner's
+# traffic times the slope of the line through all nine co-runners, and the rest is beyond DRAM.
+if _dem and "all" in _fit:
+    _pen = {r["co_runner"]: r for r in _dem}
+    _presence = float(_pen["spin at 4 SMs"]["penalty_pct"])
+    _slope = float(_fit["all"]["pct_per_gb_s"])
+    open_table([r"Co-runner & Traffic (GB/s) & Penalty & Presence & DRAM & Beyond DRAM (L2) \\"],
+               "lrrrrr", "The penalty of the target, MobileNet on 8\\,SMs, divided into its three parts, in points of\nits median. Presence is the cost measured beside \\texttt{spin}; DRAM is the co-runner's traffic times\n0.32 points per GB/s; the last column is the remainder. Presence is measured directly; the remainder\ncarries the uncertainty of the other two, about one to two points.", "tab:mem-split")
+    for _key, _desc in (("inception at 4 SMs", r"inception at 4\,SMs"),
+                        ("resnet at 4 SMs", r"resnet at 4\,SMs"),
+                        ("retinanet at 4 SMs", r"retinanet at 4\,SMs"),
+                        ("resnet at 8 SMs", r"resnet at 8\,SMs"),
+                        ("compute_gemm at 4 SMs", r"\texttt{compute\_gemm} at 4\,SMs")):
+        _r = _pen[_key]
+        _gb, _p = float(_r["demand_gb_s"]), float(_r["penalty_pct"])
+        emit(r"{} & {:.1f} & {:.1f} & {:.1f} & {:.1f} & {:.1f} \\".format(
+            _desc, _gb, _p, _presence, _slope * _gb, _p - _presence - _slope * _gb))
     close_table()
+
+# Presence: the same two clients, partitions and submitting thread, with the device either free to
+# overlap their kernels or forced by a single work queue to run them in turn.
+_PRES = (("alone", "exp1", "mobilenet_gc50", False),
+         ("one work queue: kernels in turn", "exp4-1t", "devctx_1_50_50", True),
+         ("eight work queues: kernels concurrent", "exp4-1t", "devctx_8_50_50", True))
+open_table([r"Configuration & \multicolumn{2}{c}{MobileNet, 8\,SMs} & "
+            r"\multicolumn{2}{c}{ResNet, 8\,SMs} & Aggregate \\",
+            r"\cmidrule(lr){2-3} \cmidrule(lr){4-5}",
+            r" & Median (ms) & $\times$iso & Median (ms) & $\times$iso & (inf/s) \\"], "lrrrrr",
+           'MobileNet and ResNet on 8\\,SMs each, in the same process, the same submitting thread and two disjoint green contexts, differing only in the work-queue limit: with one queue the device executes their kernels in turn. The multipliers are against each network alone on 8\\,SMs.',
+           "tab:mem-presence")
+_iso_res = must(val("exp1", "resnet_gc50", "resnet", "median"), "resnet_gc50")
+_iso_mob = must(val("exp1", "mobilenet_gc50", "mobilenet", "median"), "mobilenet_gc50")
+for _desc, _exp, _cfg, _pair in _PRES:
+    _m = must(val(_exp, _cfg, "mobilenet", "median"), _cfg)
+    if _pair:
+        _rn = must(val(_exp, _cfg, "resnet", "median"), _cfg + " resnet")
+        _agg = (thr(_exp, _cfg, "mobilenet") or 0) + (thr(_exp, _cfg, "resnet") or 0)
+        emit(r"{} & {} & {:.3f} & {} & {:.3f} & {:.0f} \\".format(
+            _desc, ms(_m), _m / _iso_mob, ms(_rn), _rn / _iso_res, _agg))
+    else:
+        emit(r"{} & {} & {:.3f} & --- & --- & {:.0f} \\".format(
+            _desc, ms(_m), _m / _iso_mob, thr(_exp, _cfg, "mobilenet") or 0))
+close_table()
 
 
 sys.stdout.write("\n".join(OUT))
