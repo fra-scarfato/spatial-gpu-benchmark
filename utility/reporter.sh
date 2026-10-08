@@ -18,11 +18,22 @@
 # network co-runner, r<k>_c<i>_stats.csv. A run whose latency file exists is skipped; every run is
 # guarded like the campaign (clocks locked, nobody else on the GPU). MEASUREMENTS.md defines the
 # quantities read from these files.
+#
+# LAYOUT=target puts the reporter where the target sits in the sweeps: its partition (8 SMs, chunks
+# {0,1,4,5}) is created first, so every co-runner gets the chunks it has beside a target (SAXPY on 8
+# SMs {2,3,6,7}, a 4-SM co-runner {2,6}). The reporter is one thread, so the size of its partition
+# changes nothing but its place. Output then goes to $DATA/bench/stress-reporter-target.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="${DATA:-/mnt/nvme/f.scarfato}"
-OUTROOT="${OUTROOT:-$DATA/bench/stress-reporter}"
+LAYOUT="${LAYOUT:-chunk}"             # chunk: the reporter on one 2-SM chunk after the co-runners;
+                                     # target: on the target's 8 SMs, created first
+case "$LAYOUT" in
+    chunk)  OUTROOT="${OUTROOT:-$DATA/bench/stress-reporter}" ;;
+    target) OUTROOT="${OUTROOT:-$DATA/bench/stress-reporter-target}" ;;
+    *) echo "reporter.sh: LAYOUT is chunk or target" >&2; exit 2 ;;
+esac
 RUNS="${RUNS:-5}"
 LEAD=3          # co-runners start this long before the reporter
 DURATION=30     # the reporter's own measurement
@@ -118,14 +129,20 @@ while IFS='|' read -r name shares cmds; do
         # A fresh daemon for every run: removing partitions is only best effort (lib/mps.sh), and
         # a partition left behind makes the next run's set fail to fit.
         mps_ensure static || exit 1
-        mps_create_partitions "${shares}${shares:+:}12" || exit 1
+        if [ "$LAYOUT" = target ]; then
+            mps_create_partitions "50${shares:+:}${shares}" || exit 1
+            rpart=0; coff=1                  # the reporter first, the co-runners after it
+        else
+            mps_create_partitions "${shares}${shares:+:}12" || exit 1
+            rpart=${#co[@]}; coff=0
+        fi
         echo "== $name r$k: ${#co[@]} co-runner(s)"
         pids=(); stop=()
         for i in "${!co[@]}"; do
             csv=""
             case "${co[$i]}" in "$RUNNER"*) csv="--csv $TMP/r${k}_c$i" ;; esac
             # shellcheck disable=SC2086  # a command line, split into words on purpose
-            env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="${PART_LIST[$i]}" \
+            env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="${PART_LIST[$((i + coff))]}" \
                 ${co[$i]} $csv > "$dest/r${k}_c$i.log" 2>&1 </dev/null &
             pids+=($!)
             case "${co[$i]}" in "$ITF"*) stop+=($!) ;; esac
@@ -135,7 +152,7 @@ while IFS='|' read -r name shares cmds; do
         # or alone, for DURATION. Its output is flushed sample by sample, so stopping it loses nothing.
         dur="$DURATION"
         [ "${#stop[@]}" -lt "${#co[@]}" ] && dur=100000
-        env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="${PART_LIST[${#co[@]}]}" \
+        env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="${PART_LIST[$rpart]}" \
             "$REPORTER" --sizes-kb "$SIZES_KB" --duration "$dur" --iters "$ITERS" --window "$WINDOW" \
             > "$TMP/latency.txt" 2>&1 &
         rpid=$!
