@@ -51,7 +51,11 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          # time-based SAXPY scrambled within 2 MB windows, read by the windowed reporter; the
          # networks' reporter runs are tbw's (symlinked), so only the stressor differs from tbw
          "tbsw": dict(cal="tbs-D", exp="exp18", dir="stress-sensitivity-tbs", suffix="-tbsw",
-                      rep="stress-reporter-tbsw")}
+                      rep="stress-reporter-tbsw"),
+         # the bandwidth-based SAXPY (exp13) read by the windowed reporter on the target's SMs
+         # (LAYOUT=target): the symmetric bandwidth-based model
+         "8smt": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffix="-8smt",
+                      rep="stress-reporter-target")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
