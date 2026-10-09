@@ -157,10 +157,11 @@ while IFS='|' read -r name shares cmds; do
         echo "== $name r$k: ${#co[@]} co-runner(s)"
         # The guard sees the board only before a run. A co-tenant who starts during one would go
         # unnoticed, so a watcher polls every 2 s for GPU users other than this run's own processes
-        # (all under f_scarfato), and a run it flags is set aside under rejected/ and not counted.
+        # (all under f_scarfato or, for binaries in the data scratch, f.scarfato), and a run it flags is set
+        # aside under rejected/ and not counted.
         rm -f "$TMP/.intruded"
         ( while sleep 2; do
-              o=$(other_gpu_users 2>/dev/null | grep -v f_scarfato)
+              o=$(other_gpu_users 2>/dev/null | grep -v "f[._]scarfato")
               [ -n "$o" ] && { echo "$o" > "$TMP/.intruded"; break; }
           done ) & wpid=$!
         pids=(); stop=()
