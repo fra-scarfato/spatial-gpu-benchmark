@@ -50,8 +50,8 @@ RES="$M/resnet50-v2-7/engine/resnet50-v2-7.engine"
 INC="$M/inception_v3-onnx-float/engine/inception_v3.engine"
 RET="$M/retinanet-9/engine/retinanet-9.engine"
 RUNNER="$ROOT/runner"
-ITF="$ROOT/utility/probes/itfproc"
-REPORTER="$ROOT/utility/probes/gpu-latency/gpu-latency"
+ITF="${ITF:-$ROOT/utility/probes/itfproc}"             # overridable: e.g. a binary built elsewhere
+REPORTER="${REPORTER:-$ROOT/utility/probes/gpu-latency/gpu-latency}"
 TMP=/dev/shm/fs-reporter
 
 STATIC_CHUNKS=8
