@@ -36,6 +36,12 @@ check_clocks() {
         gmin=$(cat "$GPU_DEVFREQ/min_freq")
         gmax=$(cat "$GPU_DEVFREQ/max_freq")
         printf '[sweep] GPU clocks: min=%s max=%s\n' "$gmin" "$gmax"
+        # The governor cannot move a locked clock, but it is the one GPU power setting found to differ
+        # between the two boards (2026-10-09). Recorded on every check; nvhost_podgov is the Jetson
+        # default and jetson_clocks does not change it. A warning, not an abort.
+        local gov; gov=$(cat "$GPU_DEVFREQ/governor" 2>/dev/null)
+        printf '[sweep] GPU governor: %s\n' "${gov:-unreadable}"
+        [ "$gov" = nvhost_podgov ] || echo "[sweep] WARNING: GPU governor is ${gov:-unreadable}, not the default nvhost_podgov." >&2
         if [ "$gmin" != "$gmax" ]; then
             echo "[sweep] ABORT: the GPU clocks are NOT locked." >&2
             echo "        An idle governor would inflate every latency ~4x." >&2
