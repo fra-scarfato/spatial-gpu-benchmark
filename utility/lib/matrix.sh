@@ -581,10 +581,16 @@ done
 # l2-read: a kernel that re-reads a 1 MB array through the L2 for 100 us at a level of its full read
 # rate, against spin with the same kernel length and launch rate: the difference is the L2 traffic.
 # MobileNet only.
+#
+# l2-vs-dram: two co-runners that use the L2 (compute_gemm, and the 288-cubed SGEMM over 8 sets) each
+# against a Steady SAXPY moving the same DRAM traffic, so the rows differ in L2 pressure only. The
+# match is to the DRAM traffic each adds beside MobileNet (soc-l2 counters, minus the spin arm:
+# 22.3 and 8.0 GB/s), at the level giving that rate on these 4 SMs (91.8 GB/s per unit, 2026-10-10).
 # Checklist: a new family also needs lib/families.py and aggregate.py's target-first list.
-# The period: on 4 SMs beside MobileNet the 288-cubed SGEMM takes 102 us at N = 1 and 104 us at N = 8
-# (sweep --smoke, 2026-10-10), so one launch every 115 us holds every N at the same rate (8700/s).
-# GEMM_PERIOD_US=0 runs them back to back, which is how the rate was measured.
+# The period: on 4 SMs beside MobileNet the 288-cubed SGEMM took 102 us at N = 1 and 104 us at N = 8
+# in a smoke run, but about 151 us in the sweep itself, so the 115 us period ran them back to back.
+# The rate still came out the same for every N (6530 to 6670 launches a second), which is what the
+# family needs. GEMM_PERIOD_US=0 runs them back to back explicitly.
 GEMM_PERIOD_US="${GEMM_PERIOD_US:-115}"
 for t in $STRESS_TARGETS; do
     tn="${t%%:*}"; te="${t#*:}"
@@ -611,4 +617,10 @@ add "l2-read_${tn}-spin-K100" \
 for l in 000 025 050 100; do
     add "l2-read_${tn}-l2read-L$l" \
         "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc l2read --kernel-us 100 --level $((10#$l / 100)).$(printf '%02d' $((10#$l % 100)))|50:25"
+done
+add "l2-vs-dram_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+for c in "spin-K100:spin --kernel-us 100" "computegemm:compute_gemm" "saxpy-L0243:saxpy --level 0.243" \
+         "gemm-N8:gemm --side 288 --sets 8 --period-us $GEMM_PERIOD_US" "saxpy-L0087:saxpy --level 0.087"; do
+    add "l2-vs-dram_${tn}-${c%%:*}" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc ${c#*:}|50:25"
 done

@@ -5,6 +5,7 @@
 #   utility/reporter.sh networks             each network alone as the co-runner, on 4 SMs
 #   utility/reporter.sh calibration-4sm      SAXPY on 4 SMs at levels 0 ... 1: the networks' geometry
 #   utility/reporter.sh probes-4sm           mem_saxpy (all DRAM) and compute_gemm (L2-resident), 4 SMs
+#   utility/reporter.sh l2-vs-dram           the L2 chapter's 1d co-runners and their DRAM-matched SAXPY
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -108,6 +109,15 @@ configs() {
         # (memory-mps-interferers-4sm): one whose traffic all reaches DRAM, one that hits the L2.
         echo "memsaxpy-4sm|25|$ITF mem_saxpy"
         echo "computegemm-4sm|25|$ITF compute_gemm"
+        ;;
+    l2-vs-dram)
+        # The co-runners of the l2-vs-dram sweep family (matrix.sh), on 4 SMs: does the reporter
+        # tell an L2-using co-runner from a SAXPY moving the same DRAM traffic?
+        echo "l2d-spin-K100|25|$ITF spin --kernel-us 100"
+        echo "l2d-computegemm|25|$ITF compute_gemm"
+        echo "l2d-saxpy-L0243|25|$ITF saxpy --level 0.243"
+        echo "l2d-gemm-N8|25|$ITF gemm --side 288 --sets 8 --period-us ${GEMM_PERIOD_US:-115}"
+        echo "l2d-saxpy-L0087|25|$ITF saxpy --level 0.087"
         ;;
     networks)
         echo "mobilenet|25|$(net "$MOB" mobilenet)"
