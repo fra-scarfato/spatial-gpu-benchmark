@@ -14,6 +14,10 @@
 : "${SENTINEL_REF_MS:=0.535}"
 : "${SENTINEL_TOL:=0.15}"
 : "${SENTINEL_INF:=500}"
+# The GPU devfreq governor the campaign expects. It cannot move a locked clock: an A/B on board 1
+# (2026-10-09, 36 reporter runs each) found performance and the Jetson default nvhost_podgov equal
+# within noise. performance is kept because board 1 comes up with it and most campaigns ran under it.
+: "${GPU_GOVERNOR:=performance}"
 
 require_quiet_cpu() {
     local one
@@ -36,12 +40,11 @@ check_clocks() {
         gmin=$(cat "$GPU_DEVFREQ/min_freq")
         gmax=$(cat "$GPU_DEVFREQ/max_freq")
         printf '[sweep] GPU clocks: min=%s max=%s\n' "$gmin" "$gmax"
-        # The governor cannot move a locked clock, but it is the one GPU power setting found to differ
-        # between the two boards (2026-10-09). Recorded on every check; nvhost_podgov is the Jetson
-        # default and jetson_clocks does not change it. A warning, not an abort.
+        # The governor is recorded on every check and compared with GPU_GOVERNOR (above); jetson_clocks
+        # does not change it. A warning, not an abort: the A/B found no effect on the measurements.
         local gov; gov=$(cat "$GPU_DEVFREQ/governor" 2>/dev/null)
         printf '[sweep] GPU governor: %s\n' "${gov:-unreadable}"
-        [ "$gov" = nvhost_podgov ] || echo "[sweep] WARNING: GPU governor is ${gov:-unreadable}, not the default nvhost_podgov." >&2
+        [ "$gov" = "$GPU_GOVERNOR" ] || echo "[sweep] WARNING: GPU governor is ${gov:-unreadable}, not the expected $GPU_GOVERNOR." >&2
         if [ "$gmin" != "$gmax" ]; then
             echo "[sweep] ABORT: the GPU clocks are NOT locked." >&2
             echo "        An idle governor would inflate every latency ~4x." >&2
