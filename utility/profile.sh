@@ -5,6 +5,7 @@
 #   utility/profile.sh kernels          CUDA kernel traces of each network alone: kernels per inference (no root)
 #   sudo utility/profile.sh soc-budget  DRAM counters: each network alone on four budgets, three pairs
 #   sudo utility/profile.sh soc-itf     DRAM counters: the target alone and beside compute_gemm
+#   sudo utility/profile.sh soc-l2      DRAM counters: the L2 chapter's co-runners under MPS static
 #   sudo utility/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
 #   sudo utility/profile.sh calibration DRAM counters during devprobe's device-to-device copies
 #   utility/profile.sh <set> --list     print the arms and their commands, run nothing
@@ -79,6 +80,23 @@ arms() {
         echo "alone|LONG|$T"
         echo "compute4|LONG|$T --interferer compute_gemm:25"
         ;;
+    soc-l2)
+        # The inputs of the L2 chapter's block 1d. Each co-runner runs on 4 SMs under MPS static as
+        # in its campaign family, alone for 20 s and beside MobileNet on 8, to answer: is l2read
+        # L2-resident (DRAM about zero)? Does the GEMM's DRAM traffic grow with its working set?
+        # Which Steady level matches each co-runner's DRAM rate?
+        local I="$ROOT/utility/probes/itfproc" c n
+        local cs=("spin-K100:spin --kernel-us 100" "l2read-L050:l2read --kernel-us 100 --level 0.50"
+                  "l2read-L100:l2read --kernel-us 100 --level 1.00" "compute_gemm:compute_gemm")
+        for n in 1 2 3 4 5 8; do
+            cs+=("gemm-N$n:gemm --side 288 --sets $n --period-us ${GEMM_PERIOD_US:-115}")
+        done
+        echo "mobilenet-alone|ITF|--allocation whole --net $MOB:50:mobilenet|"
+        for c in "${cs[@]}"; do
+            echo "alone-${c%%:*}|ITF||$I ${c#*:}"
+            echo "mobilenet-${c%%:*}|ITF|--allocation whole --net $MOB:50:mobilenet|$I ${c#*:}"
+        done
+        ;;
     calibration)
         echo "devprobe|NONE|"
         ;;
@@ -96,7 +114,7 @@ arms() {
 flags_for() { case "$1" in traces|kernels) echo TRACE ;; *) echo SOC ;; esac; }
 
 arms "$set_name" >/dev/null || {
-    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
@@ -117,6 +135,7 @@ mkdir -p "$OUT"
 export OUT RUNNER MOB DS
 source "$ROOT/utility/lib/guards.sh"
 check_clocks || exit 1
+check_binaries "$OUT/_manifests" "$set_name" || exit 1
 
 wait_quiet() {   # the campaign's guard, retried once a minute for up to WAIT_MIN minutes
     local n=0
@@ -162,6 +181,53 @@ intruders() {
 }
 watch_gpu() { while sleep 2; do intruders >> "$OUT/.intruded" && return; done; }
 
+# A single-network run writes <prefix>_stats.csv, a multi-network one <prefix>_<label>_stats.csv.
+keep_stats() {   # $1 = arm
+    local f
+    for f in /dev/shm/fs-"$1"_*stats.csv; do
+        [ -e "$f" ] && cp -f "$f" "$OUT/$1${f#/dev/shm/fs-$1}"
+    done
+    rm -f /dev/shm/fs-"$1"_*
+    awk -F, '$1=="gpu_ms"{printf "   median %s ms over %s inferences\n", $4, $2}' "$OUT/$1"*_stats.csv 2>/dev/null
+}
+
+# The ITF arms (soc-l2) run as sweep.sh's do_job does: an MPS static daemon on a private pipe, the
+# target in a 50 % partition and the itfproc co-runner in a 25 % one, the co-runner started 3 s
+# ahead and stopped with SIGTERM when the target exits. nsys runs only the target, which is enough
+# because the SoC counters are device-wide. With no target, nsys runs the co-runner alone for 20 s.
+# The daemon lives for one arm only, so the guard and its sentinel always see a board without MPS.
+MPS_PIPE=/tmp/mps-profile MPS_LOG=/tmp/mps-log-profile STATIC_CHUNKS=8 MPS_MODE=off
+source "$ROOT/utility/lib/mps.sh"
+run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be empty
+    local tgt="${2%%|*}" itf="${2#*|}" pid="" rc
+    mps_start static > "$OUT/$1.mps.log" && mps_create_partitions 50:25 >> "$OUT/$1.mps.log" ||
+        { mps_stop; return 1; }
+    # shellcheck disable=SC2086  # tgt and itf are lists of words by construction
+    if [ -z "$tgt" ]; then
+        env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="$PART_B" \
+            "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$1" \
+            timeout -s TERM 20 $itf > "$OUT/$1.log" 2>&1 </dev/null
+        rc=$?
+        [ "$rc" = 124 ] && rc=0       # the 20 s timeout is how this arm ends
+    else
+        if [ -n "$itf" ]; then
+            env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="$PART_B" \
+                $itf > "$OUT/$1_itf.log" 2>&1 </dev/null &
+            pid=$!
+            sleep 3
+        fi
+        env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="$PART_A" \
+            "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$1" \
+            "$RUNNER" --submit-threads 1 --dataset "$DS" --fixed 32 "${SHORT[@]}" $tgt \
+            --csv "/dev/shm/fs-$1" > "$OUT/$1.log" 2>&1 </dev/null
+        rc=$?
+        [ -n "$pid" ] && { kill -TERM "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; }
+        keep_stats "$1"
+    fi
+    mps_stop
+    return "$rc"
+}
+
 declare -n FLAGS="$(flags_for "$set_name")"
 "$NSYS" --version | head -1
 while IFS='|' read -r name proto args; do
@@ -179,6 +245,9 @@ while IFS='|' read -r name proto args; do
         "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$name" \
             "$ROOT/utility/probes/devprobe" > "$OUT/$name.log" 2>&1 </dev/null
         echo "   exit $?"
+    elif [ "$proto" = ITF ]; then
+        run_itf "$name" "$args"
+        echo "   exit $?"
     else
     declare -n P="$proto"
     # shellcheck disable=SC2086  # args is a list of words by construction
@@ -186,12 +255,7 @@ while IFS='|' read -r name proto args; do
         "$RUNNER" --submit-threads 1 --dataset "$DS" --fixed 32 "${P[@]}" $args \
         --csv "/dev/shm/fs-$name" > "$OUT/$name.log" 2>&1 </dev/null
     echo "   exit $?"
-    # A single-network run writes <prefix>_stats.csv, a multi-network one <prefix>_<label>_stats.csv.
-    for f in /dev/shm/fs-"$name"_*stats.csv; do
-        [ -e "$f" ] && cp -f "$f" "$OUT/$name${f#/dev/shm/fs-$name}"
-    done
-    rm -f /dev/shm/fs-"$name"_*
-    awk -F, '$1=="gpu_ms"{printf "   median %s ms over %s inferences\n", $4, $2}' "$OUT/$name"*_stats.csv
+    keep_stats "$name"
     fi
     kill "$WATCH" 2>/dev/null; wait "$WATCH" 2>/dev/null
     [ -s "$OUT/.intruded" ] || break
