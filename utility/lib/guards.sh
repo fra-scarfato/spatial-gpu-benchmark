@@ -195,18 +195,36 @@ check_binaries() {
     echo "[sweep] manifest: $MANIFEST"
 }
 
-# floor_probe <tag>: 10 s of the reporter alone on the whole device, appended to MANIFEST. The light-load
-# memory latency drifts between sessions (771-841 cycles per access, 2026-10-05..10) while loaded
-# readings and network latencies do not; this records which floor a campaign ran on. It needs the MPS
-# daemon stopped (the callers stop it first) and never fails the campaign.
+# floor_probe <tag>: 10 s of the reporter alone on the whole device, appended to MANIFEST, with the median
+# cycles per access left in FLOOR_CYCLES (empty if the probe failed). The light-load memory latency
+# drifts between sessions (771-847 cycles per access, 2026-10-05..10) while loaded readings and network
+# latencies do not; this records which floor a campaign ran on. It needs the MPS daemon stopped (the
+# callers stop it first) and never fails the campaign by itself.
 floor_probe() {
-    local f; f=$(mktemp /dev/shm/fs-floor.XXXXXX)
+    local f line; f=$(mktemp /dev/shm/fs-floor.XXXXXX)
+    FLOOR_CYCLES=""
     if CUDA_MPS_PIPE_DIRECTORY=/nonexistent timeout 40 "$_GUARDS_ROOT/utility/probes/gpu-latency/gpu-latency" \
            --sizes-kb 65536 --duration 10 --window 512 > "$f" 2>&1; then
-        awk '$1 == 65536 && NF == 4 {print $3, $4}' "$f" | sort -n |
-            awk -v t="$1" '{c[NR]=$1; n[NR]=$2} END{printf "floor     %-5s %.1f cycles median per access (%d windows, reporter alone, whole device)\n", t, c[int((NR+1)/2)], NR}'
+        FLOOR_CYCLES=$(awk '$1 == 65536 && NF == 4 {print $3}' "$f" | sort -n | awk '{c[NR]=$1} END{if (NR) printf "%.1f", c[int((NR+1)/2)]}')
+        line="floor     $(printf %-5s "$1") $FLOOR_CYCLES cycles median per access (reporter alone, whole device)"
     else
-        echo "floor     $1 probe failed: $(tail -1 "$f")"
-    fi | tee -a "${MANIFEST:-/dev/null}"
+        line="floor     $1 probe failed: $(tail -1 "$f")"
+    fi
+    echo "$line" | tee -a "${MANIFEST:-/dev/null}"
     rm -f "$f"
+}
+
+# require_floor <tag>: when FLOOR_REF is set, 1 unless the floor is within FLOOR_TOL cycles of it. All the
+# reporter readings one stress model is built from (calibration and co-runners) must share one floor
+# (the user's rule, 2026-10-10): a campaign that finds the floor moved stops instead of mixing floors.
+# Without FLOOR_REF the floor is only recorded.
+require_floor() {
+    floor_probe "$1"
+    [ -z "${FLOOR_REF:-}" ] && return 0
+    if [ -z "$FLOOR_CYCLES" ] || awk -v f="$FLOOR_CYCLES" -v r="$FLOOR_REF" -v t="${FLOOR_TOL:-8}" \
+           'BEGIN{exit !(f < r - t || f > r + t)}'; then
+        echo "[sweep] ABORT: the memory floor is ${FLOOR_CYCLES:-unknown} cycles, not $FLOOR_REF +/- ${FLOOR_TOL:-8}." >&2
+        echo "        The readings of one model must share one floor; this campaign stops here." >&2
+        return 1
+    fi
 }

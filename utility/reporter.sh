@@ -137,12 +137,17 @@ trap 'mps_stop; rm -rf "$TMP"' EXIT
 check_clocks || exit 1
 # The instrument and the board state, recorded before anything runs (lib/guards.sh).
 check_binaries "$OUTROOT/_manifests" "$@" || exit 1
-floor_probe start
+require_floor start || exit 1
 
 while IFS='|' read -r name shares cmds; do
     [ -n "$ONLY" ] && ! [[ $name =~ $ONLY ]] && continue
     dest="$OUTROOT/$name"
     mkdir -p "$dest"
+    # The floor again before each configuration that still has runs to do (FLOOR_REF: lib/guards.sh),
+    # so a campaign never mixes floors; the probe needs the MPS daemon stopped.
+    todo=0
+    for k in $(seq 1 "$RUNS"); do [ -f "$dest/r${k}_latency.txt" ] || todo=1; done
+    [ "$todo" = 1 ] && { mps_stop; require_floor "$name" || exit 1; }
     IFS=';' read -r -a co <<< "$cmds"
     for k in $(seq 1 "$RUNS"); do
         [ -f "$dest/r${k}_latency.txt" ] && { echo "== $name r$k: done, skipped"; continue; }
@@ -214,4 +219,4 @@ while IFS='|' read -r name shares cmds; do
     done
 done < <(configs "$set_name")
 mps_stop
-floor_probe end
+require_floor end || exit 1
