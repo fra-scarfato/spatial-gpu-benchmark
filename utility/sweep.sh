@@ -178,6 +178,7 @@ APPENDIX_FAMILIES="pair-greenctx-2submit pair-greenctx-workqueue-2submit pair-gr
 MEM_FAMILIES="memory-budget-greenctx memory-interferers memory-mps-interferers memory-mps-budget memory-mps-interferers-4sm memory-two-threads"
 ALL_FAMILIES="$SECTION_FAMILIES $APPENDIX_FAMILIES"
 
+SWEEP_ARGS=("$@")   # the command line, for the manifest; the loop below consumes it
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run)       DRY=1 ;;
@@ -474,6 +475,9 @@ if [ "$DRY" = 0 ]; then
     mps_stop
 
     check_clocks || exit 1
+    # The instrument and the board state, recorded before anything runs (lib/guards.sh).
+    check_binaries "$OUT/_manifests" "${SWEEP_ARGS[@]}" || exit 1
+    floor_probe start
     # The clocks are a hard precondition, and so is require_quiet_gpu for real
     # runs. Smoke data is explicitly not a measurement, so there it only warns:
     # validating the plumbing on a busy board is the whole point of smoke mode.
@@ -563,6 +567,7 @@ for r in $(seq 1 "$RUNS"); do
 done
 
 rm -f "$OUT/_sentinel_latencies.csv" "$OUT/_sentinel_stats.csv"
+[ "$DRY" = 0 ] && { mps_stop; floor_probe end; }
 
 echo
 if [ "$DRY" = 1 ]; then

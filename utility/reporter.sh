@@ -135,6 +135,9 @@ source "$ROOT/utility/lib/guards.sh"
 source "$ROOT/utility/lib/mps.sh"
 trap 'mps_stop; rm -rf "$TMP"' EXIT
 check_clocks || exit 1
+# The instrument and the board state, recorded before anything runs (lib/guards.sh).
+check_binaries "$OUTROOT/_manifests" "$@" || exit 1
+floor_probe start
 
 while IFS='|' read -r name shares cmds; do
     [ -n "$ONLY" ] && ! [[ $name =~ $ONLY ]] && continue
@@ -210,3 +213,5 @@ while IFS='|' read -r name shares cmds; do
         awk '!/^#/{s[$1]+=$4; n[$1]++} END{for (k in s) printf "   %s KB: %.1f ns mean\n", k, s[k]/n[k]}' "$dest/r${k}_latency.txt"
     done
 done < <(configs "$set_name")
+mps_stop
+floor_probe end

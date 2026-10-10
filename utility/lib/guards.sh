@@ -52,6 +52,18 @@ check_clocks() {
         echo "[sweep] WARNING: cannot read $GPU_DEVFREQ — clocks unverified." >&2
     fi
 
+    # The memory clock: every result here is a memory-contention result, and a fresh boot leaves the
+    # EMC scaling (2133 instead of 3199 MHz was seen on 2026-10-10) until jetson_clocks pins it.
+    local emin emax
+    if [ -r /sys/class/devfreq/bwmgr/min_freq ]; then
+        emin=$(cat /sys/class/devfreq/bwmgr/min_freq); emax=$(cat /sys/class/devfreq/bwmgr/max_freq)
+        printf '[sweep] EMC clocks: min=%s max=%s\n' "$emin" "$emax"
+        if [ "$emin" != "$emax" ]; then
+            echo "[sweep] ABORT: the memory (EMC) clock is NOT locked.  Fix with: sudo jetson_clocks" >&2
+            ok=0
+        fi
+    fi
+
     # Every core, not just cpu0: cpufreq is per-policy and a partly-locked board
     # is the sort of thing that produces a 5% mystery nobody can explain later.
     for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
@@ -136,4 +148,62 @@ require_quiet_gpu() {
         echo "        is resumable, finished runs are skipped.)" >&2
         return 1
     fi
+}
+
+# ---- Provenance: which binaries ran, on which board state ---------------------------------------
+# A rebuilt binary changes the measurement silently: on 2026-10-09 a rebuild of itfproc made the
+# Steady SAXPY 3.6 % slower and nothing noticed for a day. So every campaign script calls
+# check_binaries once at start-up: it compares the binaries against utility/probes/PINNED-<host>.sha256
+# and refuses to run on a mismatch, and it writes a manifest (commit, binary hashes, governor, clocks)
+# next to the results. Rebuilding on purpose means re-pinning (pin_binaries) and committing the pin
+# file, so a change of instrument is always a visible, dated commit.
+# Checklist: a new probe binary used by a campaign also goes into PINNED_BINARIES.
+_GUARDS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PINNED_BINARIES="runner utility/probes/itfproc utility/probes/gpu-latency/gpu-latency"
+PIN_FILE="$_GUARDS_ROOT/utility/probes/PINNED-$(hostname).sha256"
+
+pin_binaries() {
+    (cd "$_GUARDS_ROOT" && sha256sum $PINNED_BINARIES) > "$PIN_FILE" && cat "$PIN_FILE"
+}
+
+# check_binaries <dir> [script args...]: 1 (and a message) if a pinned binary differs; otherwise writes
+# <dir>/manifest-<time>.txt and leaves its path in MANIFEST. ITF and REPORTER, when a caller
+# overrides them with a binary built elsewhere, are recorded with their hashes but not pinned.
+check_binaries() {
+    local dir=$1; shift
+    [ -r "$PIN_FILE" ] || { echo "[sweep] ABORT: no pin file $PIN_FILE (create it with pin_binaries)" >&2; return 1; }
+    if ! (cd "$_GUARDS_ROOT" && sha256sum --quiet -c "$PIN_FILE") >&2; then
+        echo "[sweep] ABORT: a binary differs from its pin ($PIN_FILE)." >&2
+        echo "        If the rebuild was intended, re-pin: source utility/lib/guards.sh; pin_binaries; and commit." >&2
+        return 1
+    fi
+    mkdir -p "$dir"
+    MANIFEST="$dir/manifest-$(date +%Y%m%d-%H%M%S).txt"
+    {
+        echo "date      $(date '+%F %T')   host $(hostname)   boot $(uptime -s)"
+        echo "commit    $(git -C "$_GUARDS_ROOT" rev-parse --short HEAD)$(git -C "$_GUARDS_ROOT" diff --quiet HEAD -- . ':!*.sha256' 2>/dev/null || echo ' (uncommitted changes)')"
+        echo "command   $0 $*"
+        echo "governor  $(cat "$GPU_DEVFREQ/governor" 2>/dev/null)   gpu $(cat "$GPU_DEVFREQ/min_freq")-$(cat "$GPU_DEVFREQ/max_freq")   emc $(cat /sys/class/devfreq/bwmgr/cur_freq 2>/dev/null)"
+        echo "cuda      $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | tail -1 | grep -o 'V[0-9.]*')   l4t $(head -1 /etc/nv_tegra_release | grep -o 'R[0-9]*.*REVISION: [0-9.]*')"
+        (cd "$_GUARDS_ROOT" && sha256sum $PINNED_BINARIES) | sed 's/^/binary    /'
+        [ -n "${ITF:-}" ] && [ "$ITF" != "$_GUARDS_ROOT/utility/probes/itfproc" ] && echo "binary    $(sha256sum "$ITF")   (ITF override, not pinned)"
+        [ -n "${REPORTER:-}" ] && [ "$REPORTER" != "$_GUARDS_ROOT/utility/probes/gpu-latency/gpu-latency" ] && echo "binary    $(sha256sum "$REPORTER")   (REPORTER override, not pinned)"
+    } > "$MANIFEST"
+    echo "[sweep] manifest: $MANIFEST"
+}
+
+# floor_probe <tag>: 10 s of the reporter alone on the whole device, appended to MANIFEST. The light-load
+# memory latency drifts between sessions (771-841 cycles per access, 2026-10-05..10) while loaded
+# readings and network latencies do not; this records which floor a campaign ran on. It needs the MPS
+# daemon stopped (the callers stop it first) and never fails the campaign.
+floor_probe() {
+    local f; f=$(mktemp /dev/shm/fs-floor.XXXXXX)
+    if CUDA_MPS_PIPE_DIRECTORY=/nonexistent timeout 40 "$_GUARDS_ROOT/utility/probes/gpu-latency/gpu-latency" \
+           --sizes-kb 65536 --duration 10 --window 512 > "$f" 2>&1; then
+        awk '$1 == 65536 && NF == 4 {print $3, $4}' "$f" | sort -n |
+            awk -v t="$1" '{c[NR]=$1; n[NR]=$2} END{printf "floor     %-5s %.1f cycles median per access (%d windows, reporter alone, whole device)\n", t, c[int((NR+1)/2)], NR}'
+    else
+        echo "floor     $1 probe failed: $(tail -1 "$f")"
+    fi | tee -a "${MANIFEST:-/dev/null}"
+    rm -f "$f"
 }

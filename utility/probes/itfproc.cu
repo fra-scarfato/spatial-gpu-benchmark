@@ -67,6 +67,28 @@ __device__ __forceinline__ void waitNs(unsigned long long ns) {
 // lineMask != 0 scrambles: element i goes to line (i / 32) * odd constant, modulo the number of
 // lines (a power of two, so the map is a bijection), at the same lane. A warp still touches one
 // whole line; consecutive lines land far apart.
+// The Steady path (--level, no period, no scramble): exactly the kernel of the first stress campaign
+// (commit e0e5630), kept apart from saxpyThrottled below. Folding the time-based and scrambled modes
+// into one kernel added a counter, a clock check and an index remap to every element, which made the
+// full-speed unit 3.6 % slower (5.87 -> 6.09 ms on 8 SMs, 2026-10-09); a Steady level is a fraction
+// of that full speed, so every level then pressed less on memory than the calibrated one.
+__global__ void saxpyLevel(const float* __restrict__ x, float* __restrict__ y, size_t n, float a,
+                           unsigned burst, unsigned sleepNs, unsigned long long idleNs) {
+    if (burst == 0) {
+        waitNs(idleNs);
+        return;
+    }
+    const size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
+    unsigned k = 0;
+    for (size_t i = blockIdx.x * static_cast<size_t>(blockDim.x) + threadIdx.x; i < n; i += stride) {
+        y[i] = a * x[i] + y[i];
+        if (sleepNs && ++k == burst) {
+            k = 0;
+            waitNs(sleepNs);
+        }
+    }
+}
+
 __global__ void saxpyThrottled(const float* __restrict__ x, float* __restrict__ y, size_t n,
                                float a, unsigned burst, unsigned sleepNs,
                                unsigned long long idleNs, unsigned long long periodNs,
@@ -231,7 +253,9 @@ int main(int argc, char** argv) {
     if (throttled) {
         const size_t n = static_cast<size_t>(elements);
         int perSm = 0, sms = 0;
-        must(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, saxpyThrottled, 256, 0),
+        const bool steady = periodUs == 0.0 && !scramble;   // saxpyLevel; otherwise saxpyThrottled
+        must(steady ? cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, saxpyLevel, 256, 0)
+                    : cudaOccupancyMaxActiveBlocksPerMultiprocessor(&perSm, saxpyThrottled, 256, 0),
              "occupancy");
         must(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0), "SM count");
         const unsigned blocks = static_cast<unsigned>(perSm * sms);
@@ -246,8 +270,11 @@ int main(int argc, char** argv) {
         auto unitSeconds = [&](unsigned b, unsigned sleepNs, unsigned long long idleNs,
                                unsigned long long pNs = 0) {
             const auto a = std::chrono::steady_clock::now();
-            saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs, pNs, onNs, lineMask);
-            must(cudaGetLastError(), "saxpyThrottled launch");
+            if (steady)
+                saxpyLevel<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs);
+            else
+                saxpyThrottled<<<blocks, 256, 0, stream>>>(dx, dy, n, alpha, b, sleepNs, idleNs, pNs, onNs, lineMask);
+            must(cudaGetLastError(), "saxpy launch");
             must(cudaStreamSynchronize(stream), "synchronize");
             return std::chrono::duration<double>(std::chrono::steady_clock::now() - a).count();
         };
@@ -281,8 +308,8 @@ int main(int argc, char** argv) {
             }
             sleepNs = static_cast<unsigned>(s);
         }
-        std::printf("  throttle:     %u blocks x 256, burst %u, sleep %u ns, full-speed unit %.3f ms\n",
-                    blocks, b, sleepNs, tFull * 1e3);
+        std::printf("  throttle:     %u blocks x 256, burst %u, sleep %u ns, full-speed unit %.3f ms (%s kernel)\n",
+                    blocks, b, sleepNs, tFull * 1e3, steady ? "steady" : "time-based/scrambled");
         if (periodNs)
             std::printf("  time-based:   period %.0f us, on %.0f us (duty %.2f), all threads together\n",
                         periodUs, periodUs * duty, duty);
