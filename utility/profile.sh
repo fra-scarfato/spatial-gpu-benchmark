@@ -174,6 +174,7 @@ intruders() {
                 break
             fi
             case "$cmd" in *nvidia-cuda-mps*) break ;; esac
+            is_desktop "$cmd" && break
             echo "$pid $cmd"; return 0
         done
     done

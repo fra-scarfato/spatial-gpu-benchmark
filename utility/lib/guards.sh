@@ -83,6 +83,17 @@ check_clocks() {
     [ "$ok" = 1 ]
 }
 
+# The board's login screen (gdm's Xorg, gnome-shell, mutter) holds the GPU devices but is idle. It
+# runs as the gdm user, so a guard run as nvidia cannot read its file descriptors and never saw it:
+# every campaign so far ran beside it. A guard run under sudo (profile.sh's counter sets) sees it,
+# and ignores it here so that both see the same board.
+is_desktop() {   # $1 = command line
+    case "$1" in
+        /usr/lib/xorg/Xorg\ *|/usr/bin/gnome-shell*|/usr/libexec/mutter-x11-frames*) return 0 ;;
+    esac
+    return 1
+}
+
 other_gpu_users() {
     local p pid f t cmd hit found=0
     for p in /proc/[0-9]*; do
@@ -106,6 +117,7 @@ other_gpu_users() {
         case "$cmd" in
             *sweep.sh*|*nvidia-cuda-mps-control*|*nvidia-cuda-mps-server*) continue ;;
         esac
+        is_desktop "$cmd" && continue
         printf '          pid %-8s %s\n' "$pid" "$cmd"
         found=1
     done
