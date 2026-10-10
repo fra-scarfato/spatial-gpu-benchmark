@@ -79,6 +79,7 @@ EXP_DIR = {
     "l2-gemm-sets":                "exp20",
     "l2-read":                     "exp21",
     "l2-vs-dram":                  "exp22",
+    "stress-onoff":                "exp23",
 }
 
 def key_map():

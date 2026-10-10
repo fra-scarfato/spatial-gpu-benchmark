@@ -6,6 +6,7 @@
 #   sudo utility/profile.sh soc-budget  DRAM counters: each network alone on four budgets, three pairs
 #   sudo utility/profile.sh soc-itf     DRAM counters: the target alone and beside compute_gemm
 #   sudo utility/profile.sh soc-l2      DRAM counters: the L2 chapter's co-runners under MPS static
+#   sudo utility/profile.sh soc-onoff   DRAM counters: ON/OFF and uniform SAXPY, for 10 ms series
 #   sudo utility/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
 #   sudo utility/profile.sh calibration DRAM counters during devprobe's device-to-device copies
 #   utility/profile.sh <set> --list     print the arms and their commands, run nothing
@@ -97,6 +98,28 @@ arms() {
             echo "mobilenet-${c%%:*}|ITF|--allocation whole --net $MOB:50:mobilenet|$I ${c#*:}"
         done
         ;;
+    soc-onoff)
+        # Daniel's 10 ms DRAM series: is the traffic of ON/OFF concentrated in ON, is the uniform
+        # variant uniform, and do the two reach the same mean? Each stressor on 8 SMs (50:50, the
+        # stress-onoff geometry), alone for 20 s; then MobileNet next to the two at 50 %.
+        local I="$ROOT/utility/probes/itfproc" c
+        local cs=(
+            "onoff-D025:saxpy --onoff-ms 400 --duty 0.25"
+            "onoff-D050:saxpy --onoff-ms 400 --duty 0.50"
+            "onoff-D075:saxpy --onoff-ms 400 --duty 0.75"
+            "onoff-D100:saxpy --onoff-ms 400 --duty 1.00"
+            "uniform-D025:saxpy --mb 32 --onoff-ms 3.1 --duty 0.312"
+            "uniform-D050:saxpy --mb 32 --onoff-ms 3.0 --duty 0.537"
+            "uniform-D075:saxpy --mb 32 --onoff-ms 3.03 --duty 0.744"
+        )
+        for c in "${cs[@]}"; do
+            echo "alone-${c%%:*}|ITF|-|$I ${c#*:}"
+        done
+        echo "mobilenet-alone|ITF|--allocation whole --net $MOB:50:mobilenet|-"
+        for c in "${cs[1]}" "${cs[5]}"; do
+            echo "mobilenet-${c%%:*}|ITF|--allocation whole --net $MOB:50:mobilenet|$I ${c#*:}"
+        done
+        ;;
     calibration)
         echo "devprobe|NONE|"
         ;;
@@ -114,7 +137,7 @@ arms() {
 flags_for() { case "$1" in traces|kernels) echo TRACE ;; *) echo SOC ;; esac; }
 
 arms "$set_name" >/dev/null || {
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
@@ -192,8 +215,8 @@ keep_stats() {   # $1 = arm
     awk -F, '$1=="gpu_ms"{printf "   median %s ms over %s inferences\n", $4, $2}' "$OUT/$1"*_stats.csv 2>/dev/null
 }
 
-# The ITF arms (soc-l2) run as sweep.sh's do_job does: an MPS static daemon on a private pipe, the
-# target in a 50 % partition and the itfproc co-runner in a 25 % one, the co-runner started 3 s
+# The ITF arms (soc-l2, soc-onoff) run as sweep.sh's do_job does: an MPS static daemon on a private
+# pipe, the target in a 50 % partition and the itfproc co-runner in a 25 % one (50 % for soc-onoff), the co-runner started 3 s
 # ahead and stopped with SIGTERM when the target exits. nsys runs only the target, which is enough
 # because the SoC counters are device-wide. With no target, nsys runs the co-runner alone for 20 s.
 # The daemon lives for one arm only, so the guard and its sentinel always see a board without MPS.
@@ -201,13 +224,14 @@ keep_stats() {   # $1 = arm
 # server only takes clients of its own user: --run-as=root keeps the daemon, the co-runner and the
 # target under one user (without it the target waits forever for the server).
 MPS_PIPE=/tmp/mps-profile MPS_LOG=/tmp/mps-log-profile STATIC_CHUNKS=8 MPS_MODE=off
+ITF_SHARES=50:25; [ "$set_name" = soc-onoff ] && ITF_SHARES=50:50
 source "$ROOT/utility/lib/mps.sh"
 run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be "-"
     local tgt="${2%%|*}" itf="${2#*|}" pid="" rc
     [ "$tgt" = - ] && tgt=""
     [ "$itf" = - ] && itf=""
     mps_stop                          # a daemon left by an interrupted run would block the start
-    mps_start static > "$OUT/$1.mps.log" && mps_create_partitions 50:25 >> "$OUT/$1.mps.log" ||
+    mps_start static > "$OUT/$1.mps.log" && mps_create_partitions "$ITF_SHARES" >> "$OUT/$1.mps.log" ||
         { mps_stop; return 1; }
     # shellcheck disable=SC2086  # tgt and itf are lists of words by construction
     if [ -z "$tgt" ]; then

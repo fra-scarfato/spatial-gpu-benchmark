@@ -624,3 +624,26 @@ for c in "spin-K100:spin --kernel-us 100" "computegemm:compute_gemm" "saxpy-L024
     add "l2-vs-dram_${tn}-${c%%:*}" \
         "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc ${c#*:}|50:25"
 done
+
+
+# stress-onoff (Daniel, 2026-10-10): does the temporal distribution of the DRAM traffic matter at the
+# same mean bandwidth? Each target on 8 SMs next to SAXPY on 8 (50:50, the symmetric geometry), in two
+# distributions: ON/OFF, whole full-speed units during the first D of every 400 ms period and nothing
+# resident in the rest (D = 25, 50, 75, 100 %), and uniform, the same mode with 32 MB units over ~3 ms
+# periods, set to the same mean GB/s (32.5, 67.1, 99.7 against 32.3, 66.7, 99.5 measured alone).
+# itfproc logs every ON span on CLOCK_MONOTONIC, the clock of the runner's t_start_ns / t_end_ns, so
+# each inference can be placed in ON, OFF or across a transition.
+for t in $STRESS_TARGETS; do
+    tn="${t%%:*}"; te="${t#*:}"
+    add "stress-onoff_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    for c in "onoff-D025:--onoff-ms 400 --duty 0.25" \
+         "onoff-D050:--onoff-ms 400 --duty 0.50" \
+         "onoff-D075:--onoff-ms 400 --duty 0.75" \
+         "onoff-D100:--onoff-ms 400 --duty 1.00" \
+         "uniform-D025:--mb 32 --onoff-ms 3.1 --duty 0.312" \
+         "uniform-D050:--mb 32 --onoff-ms 3.0 --duty 0.537" \
+         "uniform-D075:--mb 32 --onoff-ms 3.03 --duty 0.744"; do
+        add "stress-onoff_${tn}-${c%%:*}" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy ${c#*:}|50:50"
+    done
+done
