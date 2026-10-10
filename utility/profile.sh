@@ -91,9 +91,9 @@ arms() {
         for n in 1 2 3 4 5 8; do
             cs+=("gemm-N$n:gemm --side 288 --sets $n --period-us ${GEMM_PERIOD_US:-115}")
         done
-        echo "mobilenet-alone|ITF|--allocation whole --net $MOB:50:mobilenet|"
+        echo "mobilenet-alone|ITF|--allocation whole --net $MOB:50:mobilenet|-"
         for c in "${cs[@]}"; do
-            echo "alone-${c%%:*}|ITF||$I ${c#*:}"
+            echo "alone-${c%%:*}|ITF|-|$I ${c#*:}"
             echo "mobilenet-${c%%:*}|ITF|--allocation whole --net $MOB:50:mobilenet|$I ${c#*:}"
         done
         ;;
@@ -197,16 +197,22 @@ keep_stats() {   # $1 = arm
 # ahead and stopped with SIGTERM when the target exits. nsys runs only the target, which is enough
 # because the SoC counters are device-wide. With no target, nsys runs the co-runner alone for 20 s.
 # The daemon lives for one arm only, so the guard and its sentinel always see a board without MPS.
+# Under sudo, nsys starts its application as the invoking user unless told otherwise, and an MPS
+# server only takes clients of its own user: --run-as=root keeps the daemon, the co-runner and the
+# target under one user (without it the target waits forever for the server).
 MPS_PIPE=/tmp/mps-profile MPS_LOG=/tmp/mps-log-profile STATIC_CHUNKS=8 MPS_MODE=off
 source "$ROOT/utility/lib/mps.sh"
-run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be empty
+run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be "-"
     local tgt="${2%%|*}" itf="${2#*|}" pid="" rc
+    [ "$tgt" = - ] && tgt=""
+    [ "$itf" = - ] && itf=""
+    mps_stop                          # a daemon left by an interrupted run would block the start
     mps_start static > "$OUT/$1.mps.log" && mps_create_partitions 50:25 >> "$OUT/$1.mps.log" ||
         { mps_stop; return 1; }
     # shellcheck disable=SC2086  # tgt and itf are lists of words by construction
     if [ -z "$tgt" ]; then
         env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="$PART_B" \
-            "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$1" \
+            "$NSYS" profile --force-overwrite=true --run-as=root "${FLAGS[@]}" --output "$OUT/$1" \
             timeout -s TERM 20 $itf > "$OUT/$1.log" 2>&1 </dev/null
         rc=$?
         [ "$rc" = 124 ] && rc=0       # the 20 s timeout is how this arm ends
@@ -218,7 +224,7 @@ run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", ei
             sleep 3
         fi
         env CUDA_MPS_PIPE_DIRECTORY="$MPS_PIPE" CUDA_MPS_SM_PARTITION="$PART_A" \
-            "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$1" \
+            "$NSYS" profile --force-overwrite=true --run-as=root "${FLAGS[@]}" --output "$OUT/$1" \
             "$RUNNER" --submit-threads 1 --dataset "$DS" --fixed 32 "${SHORT[@]}" $tgt \
             --csv "/dev/shm/fs-$1" > "$OUT/$1.log" 2>&1 </dev/null
         rc=$?
