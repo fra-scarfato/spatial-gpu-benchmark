@@ -20,6 +20,12 @@
 //                                       the first D x P of every period P on the GPU's global
 //                                       clock, together, and wait for the rest. D is the fraction
 //                                       of TIME on; the achieved bandwidth fraction is printed.
+//   itfproc saxpy --onoff-ms P --duty D  ON/OFF: whole full-speed units (the Steady kernel at L = 1)
+//                                       back to back during the first D x P ms of every period, then
+//                                       nothing resident until the next one. Each ON span is logged
+//                                       on CLOCK_MONOTONIC, the clock of the runner's per-inference
+//                                       stamps. With a small --mb and a short P the same mode spreads
+//                                       the same mean bandwidth uniformly in time.
 //   itfproc saxpy ... --scramble        the same bytes, still whole 128-byte lines read by a whole
 //                                       warp, but the lines are visited in a scrambled order
 //                                       across the buffers: only the DRAM locality changes.
@@ -54,6 +60,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -371,6 +378,7 @@ int main(int argc, char** argv) {
     int reps = 32;
     double level = 1.0;
     double periodUs = 0.0, duty = 1.0;
+    double onoffMs = 0.0;       // saxpy ON/OFF: the period, in ms
     bool scramble = false;
     unsigned scrambleKb = 0;
     const int gemmN = 512;
@@ -387,6 +395,8 @@ int main(int argc, char** argv) {
             level = std::atof(argv[++i]);
         } else if (!std::strcmp(argv[i], "--period-us") && i + 1 < argc) {
             periodUs = std::atof(argv[++i]);
+        } else if (!std::strcmp(argv[i], "--onoff-ms") && i + 1 < argc) {
+            onoffMs = std::atof(argv[++i]);
         } else if (!std::strcmp(argv[i], "--duty") && i + 1 < argc) {
             duty = std::atof(argv[++i]);
         } else if (!std::strcmp(argv[i], "--kernel-us") && i + 1 < argc) {
@@ -433,6 +443,11 @@ int main(int argc, char** argv) {
     }
     if (periodUs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0)) {
         std::fprintf(stderr, "[itfproc] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
+        return 2;
+    }
+    if (onoffMs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0 ||
+                          periodUs > 0.0 || scramble)) {
+        std::fprintf(stderr, "[itfproc] --onoff-ms is for saxpy, with --duty in (0, 1] and no --level, --period-us or --scramble\n");
         return 2;
     }
     if (scramble && (kind != "saxpy" || (mb & (mb - 1)) || (scrambleKb & (scrambleKb - 1)) ||
@@ -555,6 +570,66 @@ int main(int argc, char** argv) {
             std::printf("  time-based:   period %.0f us, on %.0f us (duty %.2f), all threads together\n",
                         periodUs, periodUs * duty, duty);
         if (scramble) std::printf("  scramble:     %zu lines of 128 B in scrambled order within each window\n", lineMask + 1);
+
+        // 3a. ON/OFF. During ON, whole full-speed units back to back; a unit is started only if it
+        //     ends inside ON, so ON is a whole number of units, at most one unit shorter than
+        //     D x P. During OFF the host sleeps after a synchronize, so no kernel is resident: the
+        //     difference from the in-kernel throttles, which keep a kernel resident all the time.
+        //     If the host wakes late, the schedule restarts from that moment instead of running ON
+        //     phases back to back to catch up.
+        if (onoffMs > 0.0) {
+            using namespace std::chrono;
+            using Tick = steady_clock::duration;
+            const auto period = duration_cast<Tick>(duration<double, std::milli>(onoffMs));
+            const auto on = duration_cast<Tick>(duration<double, std::milli>(onoffMs * duty));
+            const auto unit = duration_cast<Tick>(duration<double>(tFull));
+            if (on < unit) {
+                std::fprintf(stderr, "[itfproc] the ON part (%.2f ms) is shorter than one unit (%.3f ms)\n",
+                             onoffMs * duty, tFull * 1e3);
+                return 2;
+            }
+            auto ns = [](steady_clock::time_point t) {
+                return static_cast<long long>(duration_cast<nanoseconds>(t.time_since_epoch()).count());
+            };
+            std::printf("  on/off:       period %.1f ms, on %.2f ms (duty %.2f), whole units of %.3f ms\n",
+                        onoffMs, onoffMs * duty, duty, tFull * 1e3);
+            const auto t0 = steady_clock::now();
+            auto start = t0;              // the start of the current period
+            double onSeconds = 0.0;
+            long periods = 0;
+            while (!g_stop) {
+                const auto a = steady_clock::now();
+                auto e = a;
+                while (!g_stop && steady_clock::now() + unit <= start + on) {
+                    unitSeconds(burst, 0, 0);
+                    ++units;
+                    bytes += 3.0 * static_cast<double>(bytesPerBuffer);
+                    e = steady_clock::now();
+                }
+                onSeconds += duration<double>(e - a).count();
+                ++periods;
+                std::printf("  phase:        on %lld %lld\n", ns(a), ns(e));
+                start += period;
+                if (start < steady_clock::now()) start = steady_clock::now();
+                std::this_thread::sleep_until(start);
+                const double elapsed = duration<double>(steady_clock::now() - t0).count();
+                if (elapsed - lastReport >= 1.0) {
+                    lastReport = elapsed;
+                    report(kind, mb, units, elapsed, bytes, flops);
+                    std::printf("  on/off:       achieved duty %.3f over %ld periods\n", onSeconds / elapsed, periods);
+                }
+                std::fflush(stdout);
+            }
+            const double elapsed = duration<double>(steady_clock::now() - t0).count();
+            std::printf("\n--- interferer '%s' final ---\n", kind.c_str());
+            report(kind, mb, units, elapsed, bytes, flops);
+            std::printf("  on/off:       achieved duty %.3f over %ld periods\n", onSeconds / elapsed, periods);
+            cudaFree(dx);
+            cudaFree(dy);
+            cublasDestroy(handle);
+            cudaStreamDestroy(stream);
+            return units > 0 ? 0 : 1;
+        }
 
         // 3. The measurement. The achieved level of a unit is tFull over its duration (the same
         //    bytes in more time); the line printed every second carries the median of that window.

@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -113,8 +114,14 @@ public:
     double      timedDurationS() const noexcept { return timedDurationS_; }
 
 private:
-    // One inference: fetch the input, run it, measure the three timings.
-    struct Sample { float prepMs = 0, wallMs = 0, gpuMs = 0; };
+    // One inference: fetch the input, run it, measure the three timings. tStartNs and
+    // tEndNs place it in time on CLOCK_MONOTONIC (host side: before the input fetch, and
+    // when the host sees it complete), so its latency can be matched to what a co-runner
+    // logs on the same clock, e.g. the ON and OFF phases of an itfproc stressor.
+    struct Sample {
+        float prepMs = 0, wallMs = 0, gpuMs = 0;
+        std::int64_t tStartNs = 0, tEndNs = 0;
+    };
     Sample step(std::size_t index);
     void   writeRow(const char* phase, std::size_t index, const Sample& s);
 

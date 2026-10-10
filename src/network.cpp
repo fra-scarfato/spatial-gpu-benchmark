@@ -33,6 +33,12 @@ double secondsSince(Clock::time_point t0) {
     return std::chrono::duration<double>(Clock::now() - t0).count();
 }
 
+// A time point as nanoseconds of CLOCK_MONOTONIC (steady_clock's epoch on Linux), the
+// clock other processes on the board can read too.
+std::int64_t monoNs(Clock::time_point t) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+}
+
 } // namespace
 
 Network::Network(const NetworkOptions& net,
@@ -54,7 +60,7 @@ Network::Network(const NetworkOptions& net,
     // working stream that silently discards every row.
     if (!csv_)
         throw std::runtime_error("cannot open " + spec.csvPrefix + "_latencies.csv");
-    csv_ << "phase,index,image,prep_ms,wall_ms,gpu_ms\n";
+    csv_ << "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns\n";
 }
 
 Network::Sample Network::step(std::size_t index) {
@@ -69,6 +75,7 @@ Network::Sample Network::step(std::size_t index) {
     // H2D + kernel + D2H + sync; returns the pure GPU compute time.
     const double gpuMs  = engine_.infer(input);
     const double wallMs = engine_.wallMs();   // the same step, taken on the stream
+    const auto t2 = Clock::now();
 
     // prep_ms is the host cost of fetching THIS network's input, and is a
     // disjoint slice of the step rather than extra time. wall_ms is deliberately
@@ -79,6 +86,8 @@ Network::Sample Network::step(std::size_t index) {
     s.prepMs = float(std::chrono::duration<double, std::milli>(t1 - t0).count());
     s.wallMs = float(wallMs);
     s.gpuMs  = float(gpuMs);
+    s.tStartNs = monoNs(t0);
+    s.tEndNs   = monoNs(t2);
     return s;
 }
 
@@ -87,7 +96,8 @@ void Network::writeRow(const char* phase, std::size_t index, const Sample& s) {
     // file without contaminating the statistics. "image" is the input's id,
     // which in fixed mode is a set index rather than a file name.
     csv_ << phase << "," << index << "," << inputSet_.idOf(index) << ","
-         << s.prepMs << "," << s.wallMs << "," << s.gpuMs << "\n";
+         << s.prepMs << "," << s.wallMs << "," << s.gpuMs << ","
+         << s.tStartNs << "," << s.tEndNs << "\n";
 }
 
 void Network::warmup() {
@@ -284,7 +294,11 @@ void Network::measureInterleaved(const std::vector<Network*>& nets) {
             if (!inFlight[i] || !nets[i]->engine_.ready())
                 continue;
 
+            // The end stamp is when this loop sees the inference done, so it can be late by
+            // up to one pass over the other networks; the start stamp is exact.
             Sample s;
+            s.tEndNs = monoNs(Clock::now());
+            s.tStartNs = monoNs(t0[i]);
             s.gpuMs  = float(nets[i]->engine_.finish());
             s.wallMs = float(nets[i]->engine_.wallMs());   // per network, not per thread
             s.prepMs = float(std::chrono::duration<double, std::milli>(t1[i] - t0[i]).count());
