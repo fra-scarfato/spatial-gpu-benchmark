@@ -562,3 +562,53 @@ for t in $STRESS_TARGETS; do
             "itf|static|||$(stress_target "$tn" "$te")|$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $ce:100:$cn --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$cn|50:25"
     done
 done
+
+
+# The L2 chapter (Daniel, 2026-10-10): separating a co-runner's presence from its use of the L2.
+# Every co-runner is an itfproc process on 4 SMs beside the target on 8 (shares 50:25, the geometry of
+# stress-validation), so the rows compare directly with the measured pairs.
+#
+# l2-presence: does the presence cost depend on the co-runner's launch rate, or only on a kernel of
+# its executing? spin keeps a register-only kernel resident for K us: back to back at K = 27000, 1000,
+# 100 and 10 us (about 37 to 77 000 launches a second, always resident), and at K = 100 us launched
+# every 200 or 1000 us (resident half and a tenth of the time). All four targets, so the cost can be
+# set against each target's number of kernel boundaries.
+#
+# l2-gemm-sets: one fixed 288-cubed SGEMM cycling over N distinct matrix sets, so the working set grows
+# (0.95 MB per set, past the 4 MB L2 at N = 5) while the work per kernel stays the same; a launch every
+# GEMM_PERIOD_US for every N, so the launch rate is the same too. MobileNet only.
+#
+# l2-read: a kernel that re-reads a 1 MB array through the L2 for 100 us at a level of its full read
+# rate, against spin with the same kernel length and launch rate: the difference is the L2 traffic.
+# MobileNet only.
+# Checklist: a new family also needs lib/families.py and aggregate.py's target-first list.
+# The period: on 4 SMs beside MobileNet the 288-cubed SGEMM takes 102 us at N = 1 and 104 us at N = 8
+# (sweep --smoke, 2026-10-10), so one launch every 115 us holds every N at the same rate (8700/s).
+# GEMM_PERIOD_US=0 runs them back to back, which is how the rate was measured.
+GEMM_PERIOD_US="${GEMM_PERIOD_US:-115}"
+for t in $STRESS_TARGETS; do
+    tn="${t%%:*}"; te="${t#*:}"
+    add "l2-presence_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    for k in 27000 1000 100 10; do
+        add "l2-presence_${tn}-spin-K$k" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc spin --kernel-us $k|50:25"
+    done
+    for p in 200 1000; do
+        add "l2-presence_${tn}-spin-K100-P$p" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc spin --kernel-us 100 --period-us $p|50:25"
+    done
+done
+t="mobilenet:$MOB"; tn="${t%%:*}"; te="${t#*:}"
+add "l2-gemm-sets_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+for n in 1 2 3 4 5 8; do
+    pace=""; [ "$GEMM_PERIOD_US" != 0 ] && pace=" --period-us $GEMM_PERIOD_US"
+    add "l2-gemm-sets_${tn}-gemm-N$n" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc gemm --side 288 --sets $n$pace|50:25"
+done
+add "l2-read_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+add "l2-read_${tn}-spin-K100" \
+    "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc spin --kernel-us 100|50:25"
+for l in 000 025 050 100; do
+    add "l2-read_${tn}-l2read-L$l" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc l2read --kernel-us 100 --level $((10#$l / 100)).$(printf '%02d' $((10#$l % 100)))|50:25"
+done

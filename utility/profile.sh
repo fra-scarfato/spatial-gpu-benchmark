@@ -2,6 +2,7 @@
 # profile.sh - every profiled run of this work, from one place.
 #
 #   utility/profile.sh traces           CUDA kernel traces of the target beside each co-runner (no root)
+#   utility/profile.sh kernels          CUDA kernel traces of each network alone: kernels per inference (no root)
 #   sudo utility/profile.sh soc-budget  DRAM counters: each network alone on four budgets, three pairs
 #   sudo utility/profile.sh soc-itf     DRAM counters: the target alone and beside compute_gemm
 #   sudo utility/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
@@ -55,6 +56,14 @@ arms() {
         echo "spin4|LONG|$T --interferer spin:25"
         echo "resnet4|LONG|$T --net $RES:25:resnet"
         ;;
+    kernels)
+        # Each network alone on 8 SMs: how many kernels one inference launches, which sets how many
+        # kernel boundaries a co-runner's presence can cost it (the L2 chapter's presence experiment).
+        local m
+        for m in "$MOB:mobilenet" "$RES:resnet" "$INC:inception" "$RET:retinanet"; do
+            echo "alone-${m#*:}|LONG|--allocation greenctx --net ${m%%:*}:50:${m#*:}"
+        done
+        ;;
     soc-budget)
         local m p
         for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9"; do
@@ -84,7 +93,7 @@ arms() {
     esac
 }
 
-flags_for() { case "$1" in traces) echo TRACE ;; *) echo SOC ;; esac; }
+flags_for() { case "$1" in traces|kernels) echo TRACE ;; *) echo SOC ;; esac; }
 
 arms "$set_name" >/dev/null || {
     sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
