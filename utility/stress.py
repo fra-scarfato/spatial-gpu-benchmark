@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """stress.py - the stress model: predict a target's slowdown from a co-runner's stress.
 
-    python3 utility/stress.py predict [4sm]   build the model, write the predictions (frozen)
-    python3 utility/stress.py compare [4sm]   the predictions against the measured pairs
+    python3 utility/stress.py predict [geom]  build the model, write the predictions (frozen)
+    python3 utility/stress.py compare [geom]  the predictions against the measured pairs
     python3 utility/stress.py selftest        the interpolation and its inverse
 
 The stressor's geometry: 8sm (the default, SAXPY on 8 SMs, exp13) or 4sm (SAXPY on the 4 SMs the real
@@ -55,14 +55,28 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          # the bandwidth-based SAXPY (exp13) read by the windowed reporter on the target's SMs
          # (LAYOUT=target): the symmetric bandwidth-based model
          "8smt": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffix="-8smt",
-                      rep="stress-reporter-target")}
+                      rep="stress-reporter-target"),
+         # Block 2 (2026-10-11): ON/OFF SAXPY over 400 ms periods, and its uniform counterpart (32 MB
+         # units over ~3 ms periods), at matched mean bandwidth (exp23), read by the windowed reporter
+         # on the target's SMs. The level is the stressor's mean GB/s, one axis for both, and level 0
+         # is the target alone: with nothing resident in OFF, a vanishing duty is no co-runner at all.
+         "onoff": dict(cal="onoff-D", exp="exp23", dir="stress-onoff", suffix="-onoff",
+                       rep="stress-reporter-onoff", gbs=True),
+         "uniform": dict(cal="uniform-D", exp="exp23", dir="stress-onoff", suffix="-uniform",
+                         rep="stress-reporter-onoff", gbs=True)}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
 
 def achieved_level(log):
-    """Median of the achieved levels itfproc printed once a second, or None."""
-    vals = [float(m) for m in re.findall(r"achieved ([0-9.]+)", open(log, errors="replace").read())]
+    """The co-runner's achieved level, or None: the median of the levels itfproc printed once a
+    second; for the gbs geometries, its mean GB/s over the run (the last of the cumulative figures
+    it prints once a second, which span the start-up)."""
+    txt = open(log, errors="replace").read()
+    if G.get("gbs"):
+        vals = [float(m) for m in re.findall(r"bytes moved:.*\(([0-9.]+) GB/s\)", txt)]
+        return (vals[-1], min(vals), max(vals)) if vals else None
+    vals = [float(m) for m in re.findall(r"achieved ([0-9.]+)", txt)]
     return (st.median(vals), min(vals), max(vals)) if vals else None
 
 
@@ -127,7 +141,9 @@ def sensitivity(data, target):
     if not alone or not alone99:
         return None
     pts = []
-    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(target + "-") and c != target + "-alone"}):
+    # exp23 holds both stressors of block 2, so a gbs geometry takes only its own configurations
+    prefix = target + "-" + (G["cal"] if G.get("gbs") else "")
+    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(prefix) and c != target + "-alone"}):
         med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
         p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
         logs = sorted(glob.glob(os.path.join(BENCH, G["dir"], cfg, "r*_itf.log")))
@@ -135,6 +151,8 @@ def sensitivity(data, target):
         lv = [x[0] for x in lv if x]
         if med and p99 and lv:
             pts.append((st.median(lv), p99[0] / alone99[0], med[0] / alone[0]))
+    if G.get("gbs"):
+        pts.append((0.0, 1.0, 1.0))           # level 0 is the target alone
     pts.sort()
     return pts
 
@@ -163,12 +181,14 @@ def predict():
             r = reporter_config(name)
             if r and "level" in r:
                 calib.append(dict(config=name, **{k: fmt(v) for k, v in r.items()}))
+    idle = reporter_config("idle")
+    if G.get("gbs") and idle:                 # level 0 of a gbs geometry: nothing resident
+        calib.append(dict(config="idle", level=0.0, level_spread=0.0, **{k: fmt(v) for k, v in idle.items()}))
     calib.sort(key=lambda r: r["level"])
     if len(calib) < 3:
         raise SystemExit("stress.py: too few calibration levels measured")
-    idle = reporter_config("idle")
     write("stress-calibration.csv", calib + ([dict(config="idle", **{k: fmt(v) for k, v in idle.items()})]
-                                             if idle else []))
+                                             if idle and not G.get("gbs") else []))
     xs = [r["level"] for r in calib]
 
     # 2. equivalent stress of each network as a co-runner, per coordinate

@@ -6,6 +6,7 @@
 #   utility/reporter.sh calibration-4sm      SAXPY on 4 SMs at levels 0 ... 1: the networks' geometry
 #   utility/reporter.sh probes-4sm           mem_saxpy (all DRAM) and compute_gemm (L2-resident), 4 SMs
 #   utility/reporter.sh l2-vs-dram           the L2 chapter's 1d co-runners and their DRAM-matched SAXPY
+#   utility/reporter.sh calibration-onoff    idle, ON/OFF and uniform SAXPY on 8 SMs (stress-onoff's)
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -119,6 +120,19 @@ configs() {
         echo "l2d-gemm-N8|25|$ITF gemm --side 288 --sets 8 --period-us ${GEMM_PERIOD_US:-115}"
         echo "l2d-saxpy-L0087|25|$ITF saxpy --level 0.087"
         ;;
+    calibration-onoff)
+        # The stressors of the stress-onoff sweep family (matrix.sh), the same arguments, on 8 SMs:
+        # the calibrations of stress.py's onoff and uniform geometries. Run with LAYOUT=target and
+        # OUTROOT=$DATA/bench/stress-reporter-onoff, and the networks set into the same directory.
+        echo "idle||"
+        echo "onoff-D025|50|$ITF saxpy --onoff-ms 400 --duty 0.25"
+        echo "onoff-D050|50|$ITF saxpy --onoff-ms 400 --duty 0.50"
+        echo "onoff-D075|50|$ITF saxpy --onoff-ms 400 --duty 0.75"
+        echo "onoff-D100|50|$ITF saxpy --onoff-ms 400 --duty 1.00"
+        echo "uniform-D025|50|$ITF saxpy --mb 32 --onoff-ms 3.1 --duty 0.312"
+        echo "uniform-D050|50|$ITF saxpy --mb 32 --onoff-ms 3.0 --duty 0.537"
+        echo "uniform-D075|50|$ITF saxpy --mb 32 --onoff-ms 3.03 --duty 0.744"
+        ;;
     networks)
         echo "mobilenet|25|$(net "$MOB" mobilenet)"
         echo "resnet|25|$(net "$RES" resnet)"
@@ -130,7 +144,7 @@ configs() {
 }
 
 set_name="${1:-}"
-configs "$set_name" >/dev/null || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+configs "$set_name" >/dev/null || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 if [ "${2:-}" = "--list" ]; then
     configs "$set_name" | while IFS='|' read -r name shares cmds; do
         printf '%-14s shares %-6s %s\n' "$name" "${shares:-none}" "${cmds:-(no co-runner)}"
