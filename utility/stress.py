@@ -69,7 +69,10 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          "onoff88": dict(cal="onoff-D", exp="exp23", dir="stress-onoff", suffix="-onoff88",
                          rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin"),
          "uniform88": dict(cal="uniform-D", exp="exp23", dir="stress-onoff", suffix="-uniform88",
-                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin")}
+                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin"),
+         # The uniform distribution at the reporter's 0.3 ms scale: 100 us periods, pulses of ~3 us.
+         "smooth88": dict(cal="smooth-D", exp="exp23", dir="stress-onoff", suffix="-smooth88",
+                          rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 

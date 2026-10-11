@@ -20,6 +20,12 @@
 //                                       the first D x P of every period P on the GPU's global
 //                                       clock, together, and wait for the rest. D is the fraction
 //                                       of TIME on; the achieved bandwidth fraction is printed.
+//   itfproc saxpy --period-us P --duty D --burst B  the same, each thread checking the clock every B
+//                                       elements instead of 16. At 16 a thread's burst lasts ~23 us
+//                                       on 8 SMs, so an ON part shorter than that overshoots; at B = 1
+//                                       the ON part is followed to ~1.5 us, and a P of ~100 us spreads
+//                                       even a low mean bandwidth evenly over the reporter's 0.3 ms
+//                                       windows (block 2's smooth uniform, 2026-10-11).
 //   itfproc saxpy --onoff-ms P --duty D  ON/OFF: whole full-speed units (the Steady kernel at L = 1)
 //                                       back to back during the first D x P ms of every period, then
 //                                       nothing resident until the next one. Each ON span is logged
@@ -385,6 +391,7 @@ int main(int argc, char** argv) {
     double kernelUs = 0.0;      // spin, l2read: the length of one kernel
     int side = 288, sets = 1;   // gemm
     unsigned kb = 1024;         // l2read: the array re-read through the L2
+    unsigned burstArg = 16;     // saxpy --period-us: elements per thread between clock checks
 
     for (int i = 2; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--mb") && i + 1 < argc) {
@@ -407,6 +414,8 @@ int main(int argc, char** argv) {
             sets = std::atoi(argv[++i]);
         } else if (!std::strcmp(argv[i], "--kb") && i + 1 < argc) {
             kb = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (!std::strcmp(argv[i], "--burst") && i + 1 < argc) {
+            burstArg = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
         } else if (!std::strcmp(argv[i], "--scramble")) {
             scramble = true;
         } else if (!std::strcmp(argv[i], "--scramble-kb") && i + 1 < argc) {
@@ -443,6 +452,10 @@ int main(int argc, char** argv) {
     }
     if (periodUs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0)) {
         std::fprintf(stderr, "[itfproc] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
+        return 2;
+    }
+    if (burstArg != 16 && (periodUs == 0.0 || burstArg < 1)) {
+        std::fprintf(stderr, "[itfproc] --burst is for saxpy --period-us, at least 1\n");
         return 2;
     }
     if (onoffMs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0 ||
@@ -515,7 +528,7 @@ int main(int argc, char** argv) {
              "occupancy");
         must(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, 0), "SM count");
         const unsigned blocks = static_cast<unsigned>(perSm * sms);
-        const unsigned burst = 16;
+        const unsigned burst = burstArg;
         const double perThread = std::ceil(static_cast<double>(n) / (blocks * 256.0));
         const double burstsPerThread = std::ceil(perThread / burst);
 

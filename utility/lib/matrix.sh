@@ -637,6 +637,10 @@ done
 # periods, set to the same mean GB/s (32.5, 67.1, 99.7 against 32.3, 66.7, 99.5 measured alone).
 # itfproc logs every ON span on CLOCK_MONOTONIC, the clock of the runner's t_start_ns / t_end_ns, so
 # each inference can be placed in ON, OFF or across a transition.
+# smooth (2026-10-11): the uniform distribution at the reporter's time scale. The time-based SAXPY with
+# a 100 us period and a clock check every 2 elements per thread: every 0.3 ms reporter window sees the
+# same pulses, at any duty (the 32 MB uniform units still filled whole windows, and the reporter's p99
+# read their intensity, not their rate). Full speed is 115 GB/s here, against 135 for the plain unit.
 # The spin configuration is level 0 of both rulers (2026-10-11): a co-runner resident on the 8 SMs that
 # moves no data, so the zero carries the cost of a co-runner's presence and no DRAM traffic.
 for t in $STRESS_TARGETS; do
@@ -650,7 +654,11 @@ for t in $STRESS_TARGETS; do
          "onoff-D100:--onoff-ms 400 --duty 1.00" \
          "uniform-D025:--mb 32 --onoff-ms 3.1 --duty 0.312" \
          "uniform-D050:--mb 32 --onoff-ms 3.0 --duty 0.537" \
-         "uniform-D075:--mb 32 --onoff-ms 3.03 --duty 0.744"; do
+         "uniform-D075:--mb 32 --onoff-ms 3.03 --duty 0.744" \
+         "smooth-D025:--period-us 100 --duty 0.25 --burst 2" \
+         "smooth-D050:--period-us 100 --duty 0.50 --burst 2" \
+         "smooth-D075:--period-us 100 --duty 0.75 --burst 2" \
+         "smooth-D100:--period-us 100 --duty 1.00 --burst 2"; do
         add "stress-onoff_${tn}-${c%%:*}" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy ${c#*:}|50:50"
     done
