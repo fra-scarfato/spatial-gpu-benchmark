@@ -126,6 +126,7 @@ configs() {
         # the calibrations of stress.py's onoff and uniform geometries. Run with LAYOUT=target and
         # OUTROOT=$DATA/bench/stress-reporter-onoff, and the networks set into the same directory.
         echo "idle||"
+        echo "spin|50|$ITF spin --kernel-us 100"      # level 0: resident, no DRAM traffic
         echo "onoff-D025|50|$ITF saxpy --onoff-ms 400 --duty 0.25"
         echo "onoff-D050|50|$ITF saxpy --onoff-ms 400 --duty 0.50"
         echo "onoff-D075|50|$ITF saxpy --onoff-ms 400 --duty 0.75"

@@ -637,9 +637,13 @@ done
 # periods, set to the same mean GB/s (32.5, 67.1, 99.7 against 32.3, 66.7, 99.5 measured alone).
 # itfproc logs every ON span on CLOCK_MONOTONIC, the clock of the runner's t_start_ns / t_end_ns, so
 # each inference can be placed in ON, OFF or across a transition.
+# The spin configuration is level 0 of both rulers (2026-10-11): a co-runner resident on the 8 SMs that
+# moves no data, so the zero carries the cost of a co-runner's presence and no DRAM traffic.
 for t in $STRESS_TARGETS; do
     tn="${t%%:*}"; te="${t#*:}"
     add "stress-onoff_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    add "stress-onoff_${tn}-spin" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc spin --kernel-us 100|50:50"
     for c in "onoff-D025:--onoff-ms 400 --duty 0.25" \
          "onoff-D050:--onoff-ms 400 --duty 0.50" \
          "onoff-D075:--onoff-ms 400 --duty 0.75" \

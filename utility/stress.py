@@ -67,9 +67,9 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          # The same two models in Daniel's 8 + 8 configuration: the networks read by the reporter on
          # 8 SMs (networks-8sm) and the ground truth the 8 + 8 pairs (stress-validation-8, exp24).
          "onoff88": dict(cal="onoff-D", exp="exp23", dir="stress-onoff", suffix="-onoff88",
-                         rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24"),
+                         rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin"),
          "uniform88": dict(cal="uniform-D", exp="exp23", dir="stress-onoff", suffix="-uniform88",
-                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24")}
+                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
@@ -157,7 +157,16 @@ def sensitivity(data, target):
         lv = [x[0] for x in lv if x]
         if med and p99 and lv:
             pts.append((st.median(lv), p99[0] / alone99[0], med[0] / alone[0]))
-    if G.get("gbs"):
+    if G.get("gbs") and G.get("zero"):
+        # level 0 is the target beside the zero co-runner: resident, no DRAM traffic, so its
+        # slowdown is the cost of presence alone
+        cfg = target + "-" + G["zero"]
+        med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
+        p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
+        if not med or not p99:
+            return None
+        pts.append((0.0, p99[0] / alone99[0], med[0] / alone[0]))
+    elif G.get("gbs"):
         pts.append((0.0, 1.0, 1.0))           # level 0 is the target alone
     pts.sort()
     return pts
@@ -188,8 +197,11 @@ def predict():
             if r and "level" in r:
                 calib.append(dict(config=name, **{k: fmt(v) for k, v in r.items()}))
     idle = reporter_config("idle")
-    if G.get("gbs") and idle:                 # level 0 of a gbs geometry: nothing resident
-        calib.append(dict(config="idle", level=0.0, level_spread=0.0, **{k: fmt(v) for k, v in idle.items()}))
+    zero = reporter_config(G["zero"]) if G.get("zero") else idle
+    if G.get("gbs") and zero:                 # level 0 of a gbs geometry: the zero co-runner, or idle
+        zero = {k: v for k, v in zero.items() if k not in ("level", "level_spread")}
+        calib.append(dict(config=G.get("zero", "idle"), level=0.0, level_spread=0.0,
+                          **{k: fmt(v) for k, v in zero.items()}))
     calib.sort(key=lambda r: r["level"])
     if len(calib) < 3:
         raise SystemExit("stress.py: too few calibration levels measured")
