@@ -560,6 +560,10 @@ for t in $STRESS_TARGETS; do
         [ "$cn" = "$tn" ] && continue
         add "stress-validation_${tn}+${cn}" \
             "itf|static|||$(stress_target "$tn" "$te")|$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $ce:100:$cn --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$cn|50:25"
+        # Daniel's starting configuration (2026-10-10): the co-runner network on 8 SMs too (8 + 8),
+        # the geometry of block 2's stressor, so ruler and co-runner have the same footprint.
+        add "stress-validation-8_${tn}+${cn}" \
+            "itf|static|||$(stress_target "$tn" "$te")|$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $ce:100:$cn --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$cn|50:50"
     done
 done
 

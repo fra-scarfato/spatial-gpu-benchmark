@@ -63,7 +63,13 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          "onoff": dict(cal="onoff-D", exp="exp23", dir="stress-onoff", suffix="-onoff",
                        rep="stress-reporter-onoff", gbs=True),
          "uniform": dict(cal="uniform-D", exp="exp23", dir="stress-onoff", suffix="-uniform",
-                         rep="stress-reporter-onoff", gbs=True)}
+                         rep="stress-reporter-onoff", gbs=True),
+         # The same two models in Daniel's 8 + 8 configuration: the networks read by the reporter on
+         # 8 SMs (networks-8sm) and the ground truth the 8 + 8 pairs (stress-validation-8, exp24).
+         "onoff88": dict(cal="onoff-D", exp="exp23", dir="stress-onoff", suffix="-onoff88",
+                         rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24"),
+         "uniform88": dict(cal="uniform-D", exp="exp23", dir="stress-onoff", suffix="-uniform88",
+                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
@@ -195,7 +201,7 @@ def predict():
     eq = {}
     corunners = []
     for net in NETS:
-        r = reporter_config(net)
+        r = reporter_config(net + G.get("net", ""))
         if not r:
             continue
         row = dict(corunner=net, runs=r["runs"])
@@ -246,8 +252,8 @@ def compare():
         t, net = p["target"], p["corunner"]
         alone = A.aggr(data, G["exp"], t + "-alone", t, "gpu_ms", "median")
         alone99 = A.aggr(data, G["exp"], t + "-alone", t, "gpu_ms", "p99")
-        med = A.aggr(data, "exp14", t + "+" + net, t, "gpu_ms", "median")
-        p99 = A.aggr(data, "exp14", t + "+" + net, t, "gpu_ms", "p99")
+        med = A.aggr(data, G.get("pairs", "exp14"), t + "+" + net, t, "gpu_ms", "median")
+        p99 = A.aggr(data, G.get("pairs", "exp14"), t + "+" + net, t, "gpu_ms", "p99")
         if not (alone and alone99 and med and p99):
             continue
         meas = {"p99": p99[0] / alone99[0], "median": med[0] / alone[0]}

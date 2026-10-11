@@ -80,6 +80,7 @@ EXP_DIR = {
     "l2-read":                     "exp21",
     "l2-vs-dram":                  "exp22",
     "stress-onoff":                "exp23",
+    "stress-validation-8":         "exp24",
 }
 
 def key_map():

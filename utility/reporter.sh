@@ -7,6 +7,7 @@
 #   utility/reporter.sh probes-4sm           mem_saxpy (all DRAM) and compute_gemm (L2-resident), 4 SMs
 #   utility/reporter.sh l2-vs-dram           the L2 chapter's 1d co-runners and their DRAM-matched SAXPY
 #   utility/reporter.sh calibration-onoff    idle, ON/OFF and uniform SAXPY on 8 SMs (stress-onoff's)
+#   utility/reporter.sh networks-8sm         each network alone as the co-runner, on 8 SMs (8 + 8)
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -133,6 +134,13 @@ configs() {
         echo "uniform-D050|50|$ITF saxpy --mb 32 --onoff-ms 3.0 --duty 0.537"
         echo "uniform-D075|50|$ITF saxpy --mb 32 --onoff-ms 3.03 --duty 0.744"
         ;;
+    networks-8sm)
+        # Daniel's 8 + 8 pairs (stress-validation-8): each network on the co-runner's 8 SMs.
+        echo "mobilenet-8sm|50|$(net "$MOB" mobilenet)"
+        echo "resnet-8sm|50|$(net "$RES" resnet)"
+        echo "inception-8sm|50|$(net "$INC" inception)"
+        echo "retinanet-8sm|50|$(net "$RET" retinanet)"
+        ;;
     networks)
         echo "mobilenet|25|$(net "$MOB" mobilenet)"
         echo "resnet|25|$(net "$RES" resnet)"
@@ -144,7 +152,7 @@ configs() {
 }
 
 set_name="${1:-}"
-configs "$set_name" >/dev/null || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+configs "$set_name" >/dev/null || { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 if [ "${2:-}" = "--list" ]; then
     configs "$set_name" | while IFS='|' read -r name shares cmds; do
         printf '%-14s shares %-6s %s\n' "$name" "${shares:-none}" "${cmds:-(no co-runner)}"
