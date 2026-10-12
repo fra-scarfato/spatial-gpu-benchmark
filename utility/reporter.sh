@@ -6,7 +6,7 @@
 #   utility/reporter.sh calibration-4sm      SAXPY on 4 SMs at levels 0 ... 1: the networks' geometry
 #   utility/reporter.sh probes-4sm           mem_saxpy (all DRAM) and compute_gemm (L2-resident), 4 SMs
 #   utility/reporter.sh l2-vs-dram           the L2 chapter's 1d co-runners and their DRAM-matched SAXPY
-#   utility/reporter.sh calibration-onoff    idle, spin, ON/OFF, uniform and smooth SAXPY on 8 SMs (stress-onoff's)
+#   utility/reporter.sh calibration-onoff    idle, spin, ON/OFF, uniform, smooth and peak SAXPY on 8 SMs (stress-onoff's)
 #   utility/reporter.sh networks-8sm         each network alone as the co-runner, on 8 SMs (8 + 8)
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
@@ -138,6 +138,11 @@ configs() {
         echo "smooth-D050|50|$ITF saxpy --period-us 100 --duty 0.50 --burst 2"
         echo "smooth-D075|50|$ITF saxpy --period-us 100 --duty 0.75 --burst 2"
         echo "smooth-D100|50|$ITF saxpy --period-us 100 --duty 1.00 --burst 2"
+        echo "peak-T0010|50|$ITF saxpy --period-us 100 --duty 0.10 --burst 2"
+        echo "peak-T0100|50|$ITF saxpy --period-us 1000 --duty 0.10 --burst 2"
+        echo "peak-T0300|50|$ITF saxpy --period-us 3000 --duty 0.10 --burst 2"
+        echo "peak-T1000|50|$ITF saxpy --period-us 10000 --duty 0.10 --burst 2"
+        echo "peak-T3000|50|$ITF saxpy --period-us 30000 --duty 0.10 --burst 2"
         ;;
     networks-8sm)
         # Daniel's 8 + 8 pairs (stress-validation-8): each network on the co-runner's 8 SMs.

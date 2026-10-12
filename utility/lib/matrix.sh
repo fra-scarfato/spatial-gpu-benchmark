@@ -641,6 +641,10 @@ done
 # a 100 us period and a clock check every 2 elements per thread: every 0.3 ms reporter window sees the
 # same pulses, at any duty (the 32 MB uniform units still filled whole windows, and the reporter's p99
 # read their intensity, not their rate). Full speed is 115 GB/s here, against 135 for the plain unit.
+# peak (2026-10-12): does the length of a peak matter at the same height and mean? The smooth kernel at
+# duty 10 %, its ON part lasting 10, 100, 300, 1000 or 3000 us (T<us>); all move 11.3-11.8 GB/s alone.
+# Hypothesis: a target inference feels the co-runner traffic averaged over its own length, so its p99
+# grows with the peak length until a peak outlasts an inference.
 # The spin configuration is level 0 of both rulers (2026-10-11): a co-runner resident on the 8 SMs that
 # moves no data, so the zero carries the cost of a co-runner's presence and no DRAM traffic.
 for t in $STRESS_TARGETS; do
@@ -658,7 +662,12 @@ for t in $STRESS_TARGETS; do
          "smooth-D025:--period-us 100 --duty 0.25 --burst 2" \
          "smooth-D050:--period-us 100 --duty 0.50 --burst 2" \
          "smooth-D075:--period-us 100 --duty 0.75 --burst 2" \
-         "smooth-D100:--period-us 100 --duty 1.00 --burst 2"; do
+         "smooth-D100:--period-us 100 --duty 1.00 --burst 2" \
+         "peak-T0010:--period-us 100 --duty 0.10 --burst 2" \
+         "peak-T0100:--period-us 1000 --duty 0.10 --burst 2" \
+         "peak-T0300:--period-us 3000 --duty 0.10 --burst 2" \
+         "peak-T1000:--period-us 10000 --duty 0.10 --burst 2" \
+         "peak-T3000:--period-us 30000 --duty 0.10 --burst 2"; do
         add "stress-onoff_${tn}-${c%%:*}" \
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy ${c#*:}|50:50"
     done
