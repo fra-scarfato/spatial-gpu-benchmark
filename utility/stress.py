@@ -72,7 +72,12 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
                            rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin"),
          # The uniform distribution at the reporter's 0.3 ms scale: 100 us periods, pulses of ~3 us.
          "smooth88": dict(cal="smooth-D", exp="exp23", dir="stress-onoff", suffix="-smooth88",
-                          rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin")}
+                          rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin"),
+         # The same, topped by the plain kernel back to back (ON/OFF at 100 %, 135 GB/s): at full duty
+         # there is no pause to spread, so it is the smooth stressor without the clock checks' cost.
+         "smoothx88": dict(cal="smooth-D", exp="exp23", dir="stress-onoff", suffix="-smoothx88",
+                           rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin",
+                           top="onoff-D100")}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
 REPORTER = os.path.join(BENCH, G["rep"])
 
@@ -152,7 +157,9 @@ def sensitivity(data, target):
     pts = []
     # exp23 holds both stressors of block 2, so a gbs geometry takes only its own configurations
     prefix = target + "-" + (G["cal"] if G.get("gbs") else "")
-    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and c.startswith(prefix) and c != target + "-alone"}):
+    top = target + "-" + G["top"] if G.get("top") else None
+    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and (c.startswith(prefix) or c == top)
+                       and c != target + "-alone"}):
         med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
         p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
         logs = sorted(glob.glob(os.path.join(BENCH, G["dir"], cfg, "r*_itf.log")))
@@ -195,7 +202,7 @@ def predict():
     # 1. calibration: R(L) per coordinate, at the achieved levels
     calib = []
     for name in sorted(os.listdir(REPORTER)) if os.path.isdir(REPORTER) else []:
-        if name.startswith(G["cal"]):
+        if name.startswith(G["cal"]) or name == G.get("top"):
             r = reporter_config(name)
             if r and "level" in r:
                 calib.append(dict(config=name, **{k: fmt(v) for k, v in r.items()}))
