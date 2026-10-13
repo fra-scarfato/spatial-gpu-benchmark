@@ -417,15 +417,31 @@ do_job() {  # $1 = spec, $2 = output prefix
     # enough for the co-runner's own allocation and warm-up, short enough not to
     # matter to a 30 s window, and it is before the target starts so it cannot
     # fall inside the measurement.
+    #
+    # Several co-runners: cmdB holds their commands separated by ';'. Under static MPS the i-th one
+    # takes the i-th partition after the target's, and any beyond the last partition share it
+    # (two clients on one partition). The first logs to _itf.log, the next to _itf2.log, ...
     if [ "$kind" = itf ]; then
-        # shellcheck disable=SC2086
-        timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB > "${out}_itf.log" 2>&1 &
-        local pid_b=$!
+        local cos c k=1 pids=() envk log
+        IFS=';' read -ra cos <<< "$cmdB"
+        for c in "${cos[@]}"; do
+            envk="$envB"
+            if [ "$mps" = static ]; then
+                local j=$k
+                [ "$j" -ge "${#PART_LIST[@]}" ] && j=$(( ${#PART_LIST[@]} - 1 ))
+                envk="CUDA_MPS_SM_PARTITION=${PART_LIST[$j]}"
+            fi
+            log="${out}_itf.log"; [ "$k" -gt 1 ] && log="${out}_itf$k.log"
+            # shellcheck disable=SC2086
+            timeout -k 30 "$RUN_TIMEOUT" env $penv $envk $c > "$log" 2>&1 &
+            pids+=($!)
+            k=$((k + 1))
+        done
         sleep 3
         # shellcheck disable=SC2086
         timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
-        kill -TERM "$pid_b" 2>/dev/null || true
-        wait "$pid_b" 2>/dev/null || true
+        kill -TERM "${pids[@]}" 2>/dev/null || true
+        wait "${pids[@]}" 2>/dev/null || true
         move_back "$tmp" "$out"
         return "$rc_a"
     fi

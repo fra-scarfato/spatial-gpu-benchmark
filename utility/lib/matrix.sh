@@ -630,6 +630,19 @@ for c in "spin-K100:spin --kernel-us 100" "computegemm:compute_gemm" "saxpy-L024
 done
 
 
+# dispatch-count (2026-10-13): does the dispatch cost of a resident co-runner grow with the number of
+# co-runners, or is it paid once? MobileNet on 8 SMs next to spin (resident, no memory traffic,
+# 100 us kernels): one spin on 8 or 4 SMs, two spins on 4 + 4 SMs or sharing the same 8. Two spins
+# also double the launch rate, so one spin of 50 us kernels on 8 SMs (the same launch rate as two)
+# separates the count of co-runners from the rate of launches.
+SPIN="$ROOT/utility/probes/itfproc spin --kernel-us"
+add "dispatch-count_mobilenet-alone" "solo|static|||$(stress_target mobilenet "$MOB")||50"
+add "dispatch-count_mobilenet-spin8" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 100|50:50"
+add "dispatch-count_mobilenet-spin4" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 100|50:25"
+add "dispatch-count_mobilenet-spin4x2" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 100;$SPIN 100|50:25:25"
+add "dispatch-count_mobilenet-spin8x2" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 100;$SPIN 100|50:50"
+add "dispatch-count_mobilenet-spin8-K50" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 50|50:50"
+
 # stress-onoff (Daniel, 2026-10-10): does the temporal distribution of the DRAM traffic matter at the
 # same mean bandwidth? Each target on 8 SMs next to SAXPY on 8 (50:50, the symmetric geometry), in two
 # distributions: ON/OFF, whole full-speed units during the first D of every 400 ms period and nothing
