@@ -13,8 +13,10 @@ of the ruler, yet slow the targets differently. Here, per target T:
               of T alone (k = T's median latency over the run's mean window length; sliding). The
               windows hold the same number of accesses, so the plain mean is the latency a reporter
               with a window of one inference would read.
-  coordinate  the median of the aggregated windows, per run, then the median over the five runs.
-  ruler       the same aggregation and median on spin (level 0) and smooth D025-D100, giving R_T(L).
+  coordinate  a statistic of the aggregated windows, per run, then the median over the five runs:
+              the median (Daniel's request), or the p99 (infwin88p: the inferences that meet the
+              most stress, which is what the target's p99 is made of).
+  ruler       the same aggregation and statistic on spin (level 0) and smooth D025-D100: R_T(L).
   predicted   S_T(L_eq), with S_T the smooth88 sensitivity curves (p99 and median slowdown).
 
 The dispatch (presence) cost is also modelled on its own: the "separated" prediction is
@@ -23,8 +25,8 @@ The dispatch (presence) cost is also modelled on its own: the "separated" predic
 the smooth curves already contain the presence, which is the double count this must avoid: their
 smooth points, extended to zero traffic, should land on spin and not on 1.
 
-The predictions are written before the pairs are read (stress-predictions-infwin88.csv), as
-stress.py does; the comparison goes to stress-comparison-infwin88{,d}.csv for models.py.
+The predictions are written before the pairs are read (stress-predictions-infwin88{,p}.csv), as
+stress.py does; the comparison goes to stress-comparison-infwin88{,d,p,pd}.csv for models.py.
 """
 import csv
 import glob
@@ -46,13 +48,16 @@ PRESENCE_US = 0.87
 RULER = ["smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]
 
 
-def aggregated_median(runs, T_ms):
-    """Median over runs of the median of the k-window means, k windows spanning T_ms; and k."""
+STATS = {"": np.median, "p": lambda a: np.percentile(a, 99)}    # file suffix -> statistic
+
+
+def aggregated(runs, T_ms, stat=np.median):
+    """Median over runs of stat() of the k-window means, k windows spanning T_ms; and k."""
     meds, ks = [], []
     for v in runs:
         k = max(1, int(round(T_ms / (512 * v.mean() * 1e-6))))
         c = np.concatenate([[0], np.cumsum(v)])
-        meds.append(float(np.median((c[k:] - c[:-k]) / k)))
+        meds.append(float(stat((c[k:] - c[:-k]) / k)))
         ks.append(k)
     return st.median(meds), st.median(ks)
 
@@ -79,22 +84,23 @@ def dispatch(t, alone):
     return KPI[t] * PRESENCE_US * 1e-3 / alone[t][0]
 
 
-def predict(alone, curves):
+def predict(alone, curves, stat):
     """Per target: the ruler, each co-runner's coordinate and L_eq, both predictions. Reads no pair."""
     W = {n: H.windows(n + "-8sm") for n in NETS}
     R = {c: H.windows(c) for c in ["spin"] + RULER}
     lv = [0.0] + [S.reporter_config(c)["level"] for c in RULER]
     rows = []
-    print("\nruler and co-runners, median of windows spanning one target inference (ns)")
+    print("\nruler and co-runners, %s of windows spanning one target inference (ns)"
+          % ("median" if stat is np.median else "p99"))
     for t in NETS:
         T = alone[t][0]
-        ruler = [aggregated_median(R[c], T)[0] for c in ["spin"] + RULER]
+        ruler = [aggregated(R[c], T, stat)[0] for c in ["spin"] + RULER]
         print("  %-10s T %.2f ms, ruler %s" % (t, T, " ".join("%.1f" % y for y in ruler)))
         L, s99, s50 = [p[0] for p in curves[t]], [p[1] for p in curves[t]], [p[2] for p in curves[t]]
         for c in NETS:
             if c == t:
                 continue
-            y, k = aggregated_median(W[c], T)
+            y, k = aggregated(W[c], T, stat)
             leq, inside = S.invert(y, lv, ruler)
             b99, b50 = float(np.interp(leq, L, s99)), float(np.interp(leq, L, s50))
             d = dispatch(t, alone)
@@ -114,7 +120,7 @@ def write(name, rows):
     print("  wrote", path)
 
 
-def compare(preds, alone):
+def compare(preds, alone, sfx):
     data = A.load(S.BENCH)
     for suffix, key, label in (("", "", "dispatch inside the curve (spin)"), ("d", "_sep", "dispatch separated (d_T model)")):
         rows = []
@@ -127,7 +133,7 @@ def compare(preds, alone):
                              pred_p99_p99=p["pred_p99" + key], err_p99_p99_pts=round((p["pred_p99" + key] - m99) * 100, 2),
                              pred_median_p99=p["pred_median" + key],
                              err_median_p99_pts=round((p["pred_median" + key] - m50) * 100, 2), L_eq=p["L_eq"]))
-        write("stress-comparison-infwin88%s.csv" % suffix, rows)
+        write("stress-comparison-infwin88%s%s.csv" % (sfx, suffix), rows)
         print("  %s" % label)
         for q in ("p99", "median"):
             e = np.array([r["err_%s_p99_pts" % q] for r in rows])
@@ -141,16 +147,18 @@ def main():
                  A.aggr(data, "exp23", t + "-alone", t, "gpu_ms", "p99")[0]) for t in NETS}
     curves = H.curves("smooth88")
     check_dispatch(data, alone, curves)
-    preds = predict(alone, curves)
-    write("stress-predictions-infwin88.csv", preds)
-    compare(preds, alone)
+    for sfx, stat in STATS.items():
+        preds = predict(alone, curves, stat)
+        write("stress-predictions-infwin88%s.csv" % sfx, preds)
+        compare(preds, alone, sfx)
 
 
 def selftest():
     v = np.array([600.0] * 6 + [900.0] * 6)          # windows of 0.3-0.46 ms
-    y, k = aggregated_median([v], 512 * 750e-6 * 3)   # three windows of the mean length
+    y, k = aggregated([v], 512 * 750e-6 * 3)   # three windows of the mean length
     assert k == 3 and y == 750.0                      # 10 sliding means: 600 700 800 900 ...
-    assert aggregated_median([v], 0.0) == (750.0, 1)  # k = 1 is the plain median of the windows
+    assert aggregated([v], 0.0) == (750.0, 1)  # k = 1 is the plain median of the windows
+    assert aggregated([v], 0.0, STATS["p"])[0] == 900.0
     print("  selftest passed")
 
 
