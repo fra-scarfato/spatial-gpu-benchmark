@@ -24,10 +24,11 @@ AGG = os.path.join(S.BENCH, "aggregate")
 NETS = S.NETS
 
 
-def windows(cfg):
-    """The reporter's window latencies (ns), one array per run of one configuration."""
+def windows(cfg, root=None):
+    """The reporter's window latencies (ns), one array per run of one configuration, from root
+    (default: the smooth88 reporter directory)."""
     out = []
-    for p in sorted(glob.glob(os.path.join(S.REPORTER, cfg, "r*_latency.txt"))):
+    for p in sorted(glob.glob(os.path.join(root or S.REPORTER, cfg, "r*_latency.txt"))):
         v = [float(l.split()[3]) for l in open(p)
              if not l.startswith("#") and len(l.split()) == 4 and l.split()[0] == "65536"]
         out.append(np.array(v))

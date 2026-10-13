@@ -16,17 +16,23 @@ of the ruler, yet slow the targets differently. Here, per target T:
   coordinate  a statistic of the aggregated windows, per run, then the median over the five runs:
               the median (Daniel's request), or the p99 (infwin88p: the inferences that meet the
               most stress, which is what the target's p99 is made of).
-  ruler       the same aggregation and statistic on spin (level 0) and smooth D025-D100: R_T(L).
-  predicted   S_T(L_eq), with S_T the smooth88 sensitivity curves (p99 and median slowdown).
+  ruler       the same aggregation and statistic on the stressor's reporter runs, giving R_T(L):
+              smooth (spin as level 0, D025-D100, GB/s; curves smooth88) or Steady, the plain
+              bandwidth-based SAXPY (saxpy-L000-L100 read on the target's SMs, stress-reporter-target,
+              level as a fraction of full speed; curves 8smt, exp13). Steady reaches 871 ns, so the
+              heavy co-runners stay inside it.
+  predicted   S_T(L_eq), with S_T that stressor's sensitivity curves (p99 and median slowdown).
 
 The dispatch (presence) cost is also modelled on its own: the "separated" prediction is
 1 + d_T + (S_T(L_eq) - S_T(0)), with d_T = kernels per inference x 0.87 us over the latency alone
-(tab:l2-presence) in place of the spin point the curve starts from. check_dispatch() verifies that
-the smooth curves already contain the presence, which is the double count this must avoid: their
-smooth points, extended to zero traffic, should land on spin and not on 1.
+(tab:l2-presence) in place of the zero-traffic point the curve starts from (spin; Steady's resident
+L000). check_dispatch() verifies that the curves already contain the presence, which is the double
+count this must avoid: their loaded points, extended to zero traffic, should land on that zero point
+and not on 1.
 
-The predictions are written before the pairs are read (stress-predictions-infwin88{,p}.csv), as
-stress.py does; the comparison goes to stress-comparison-infwin88{,d,p,pd}.csv for models.py.
+The predictions are written before the pairs are read (stress-predictions-<ruler>{,p}.csv), as
+stress.py does; the comparison goes to stress-comparison-<ruler>{,d,p,pd}.csv for models.py, with
+<ruler> infwin88 (smooth) or steadywin88 (Steady).
 """
 import csv
 import glob
@@ -45,7 +51,18 @@ AGG = os.path.join(S.BENCH, "aggregate")
 NETS = S.NETS
 KPI = {"mobilenet": 55, "resnet": 76, "inception": 101, "retinanet": 172}
 PRESENCE_US = 0.87
-RULER = ["smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]
+SMOOTH = ["smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]
+
+
+def rulers():
+    """Each stressor's ruler: reporter directory, configurations and their levels, curves, output name."""
+    steady = [r for r in csv.DictReader(open(os.path.join(AGG, "stress-calibration-8smt.csv")))
+              if r["config"].startswith("saxpy-L")]
+    return {"infwin88": dict(rep=S.REPORTER, cfgs=["spin"] + SMOOTH, curves=H.curves("smooth88"),
+                             levels=[0.0] + [S.reporter_config(c)["level"] for c in SMOOTH]),
+            "steadywin88": dict(rep=os.path.join(S.BENCH, "stress-reporter-target"),
+                                cfgs=[r["config"] for r in steady], curves=H.curves("8smt"),
+                                levels=[float(r["level"]) for r in steady])}
 
 
 STATS = {"": np.median, "p": lambda a: np.percentile(a, 99)}    # file suffix -> statistic
@@ -62,18 +79,19 @@ def aggregated(runs, T_ms, stat=np.median):
     return st.median(meds), st.median(ks)
 
 
-def check_dispatch(data, alone, curves):
-    """Is the presence already in the smooth curves? A line through the smooth points (with
-    peak-T0010, the same kernel at duty 10 %, as the lowest) extended to 0 GB/s, against the spin
-    point and the dispatch model. Prints only: it decides whether d_T may be added."""
-    print("\ndispatch: smooth curves extended to zero traffic (p99 slowdown - 1, %)")
-    print("  %-10s %10s %8s %10s %8s" % ("target", "intercept", "spin", "d_T model", "slope"))
+def check_dispatch(name, data, alone, curves):
+    """Is the presence already in the curves? A line through the loaded points (for smooth with
+    peak-T0010, the same kernel at duty 10 %, as the lowest) extended to zero traffic, against the
+    zero point and the dispatch model. Prints only: it decides whether d_T may be added."""
+    print("\ndispatch, %s: curves extended to zero traffic (p99 slowdown - 1, %%)" % name)
+    print("  %-10s %10s %8s %10s %8s" % ("target", "intercept", "zero pt", "d_T model", "slope"))
     for t in NETS:
         pts = [(l, a) for l, a, _ in curves[t] if l > 0]
-        cfg = t + "-peak-T0010"
-        p99 = A.aggr(data, "exp23", cfg, t, "gpu_ms", "p99")[0] / alone[t][1]
-        lv = [S.achieved_level(f)[0] for f in sorted(glob.glob(os.path.join(S.BENCH, "stress-onoff", cfg, "r*_itf.log")))]
-        pts.append((st.median(lv), p99))
+        if name == "infwin88":
+            cfg = t + "-peak-T0010"
+            p99 = A.aggr(data, "exp23", cfg, t, "gpu_ms", "p99")[0] / alone[t][1]
+            lv = [S.achieved_level(f)[0] for f in sorted(glob.glob(os.path.join(S.BENCH, "stress-onoff", cfg, "r*_itf.log")))]
+            pts.append((st.median(lv), p99))
         slope, icpt = np.polyfit([p[0] for p in pts], [p[1] for p in pts], 1)
         spin = [a for l, a, _ in curves[t] if l == 0][0]
         print("  %-10s %10.1f %8.1f %10.1f %8.3f" % (t, 100 * (icpt - 1), 100 * (spin - 1),
@@ -84,30 +102,31 @@ def dispatch(t, alone):
     return KPI[t] * PRESENCE_US * 1e-3 / alone[t][0]
 
 
-def predict(alone, curves, stat):
-    """Per target: the ruler, each co-runner's coordinate and L_eq, both predictions. Reads no pair."""
+def predict(alone, ruler, stat):
+    """Per target: the ruler, each co-runner's coordinate and L_eq, both predictions. Reads no pair.
+    The networks' reporter runs are networks-8sm (stress-reporter-onoff) for both rulers."""
     W = {n: H.windows(n + "-8sm") for n in NETS}
-    R = {c: H.windows(c) for c in ["spin"] + RULER}
-    lv = [0.0] + [S.reporter_config(c)["level"] for c in RULER]
+    R = {c: H.windows(c, ruler["rep"]) for c in ruler["cfgs"]}
+    lv, curves = ruler["levels"], ruler["curves"]
     rows = []
     print("\nruler and co-runners, %s of windows spanning one target inference (ns)"
           % ("median" if stat is np.median else "p99"))
     for t in NETS:
         T = alone[t][0]
-        ruler = [aggregated(R[c], T, stat)[0] for c in ["spin"] + RULER]
-        print("  %-10s T %.2f ms, ruler %s" % (t, T, " ".join("%.1f" % y for y in ruler)))
+        rv = [aggregated(R[c], T, stat)[0] for c in ruler["cfgs"]]
+        print("  %-10s T %.2f ms, ruler %s" % (t, T, " ".join("%.1f" % y for y in rv)))
         L, s99, s50 = [p[0] for p in curves[t]], [p[1] for p in curves[t]], [p[2] for p in curves[t]]
         for c in NETS:
             if c == t:
                 continue
             y, k = aggregated(W[c], T, stat)
-            leq, inside = S.invert(y, lv, ruler)
+            leq, inside = S.invert(y, lv, rv)
             b99, b50 = float(np.interp(leq, L, s99)), float(np.interp(leq, L, s50))
             d = dispatch(t, alone)
             rows.append(dict(target=t, corunner=c, k=k, coord_ns=round(y, 2), L_eq=round(leq, 3), inside=inside,
                              pred_p99=round(b99, 4), pred_median=round(b50, 4),
                              pred_p99_sep=round(1 + d + b99 - s99[0], 4), pred_median_sep=round(1 + d + b50 - s50[0], 4)))
-            print("    beside %-10s k %3d  %.1f ns  L_eq %6.1f GB/s%s" % (c, k, y, leq, "" if inside else "  OUTSIDE"))
+            print("    beside %-10s k %3d  %.1f ns  L_eq %7.3f%s" % (c, k, y, leq, "" if inside else "  OUTSIDE"))
     return rows
 
 
@@ -122,7 +141,7 @@ def write(name, rows):
 
 def compare(preds, alone, sfx):
     data = A.load(S.BENCH)
-    for suffix, key, label in (("", "", "dispatch inside the curve (spin)"), ("d", "_sep", "dispatch separated (d_T model)")):
+    for suffix, key, label in (("", "", "dispatch inside the curve"), ("d", "_sep", "dispatch separated (d_T model)")):
         rows = []
         for p in preds:
             t, c = p["target"], p["corunner"]
@@ -133,7 +152,7 @@ def compare(preds, alone, sfx):
                              pred_p99_p99=p["pred_p99" + key], err_p99_p99_pts=round((p["pred_p99" + key] - m99) * 100, 2),
                              pred_median_p99=p["pred_median" + key],
                              err_median_p99_pts=round((p["pred_median" + key] - m50) * 100, 2), L_eq=p["L_eq"]))
-        write("stress-comparison-infwin88%s%s.csv" % (sfx, suffix), rows)
+        write("stress-comparison-%s%s.csv" % (sfx, suffix), rows)
         print("  %s" % label)
         for q in ("p99", "median"):
             e = np.array([r["err_%s_p99_pts" % q] for r in rows])
@@ -145,12 +164,13 @@ def main():
     data = {k: v for k, v in A.load(S.BENCH).items() if k[0] == "exp23"}
     alone = {t: (A.aggr(data, "exp23", t + "-alone", t, "gpu_ms", "median")[0],
                  A.aggr(data, "exp23", t + "-alone", t, "gpu_ms", "p99")[0]) for t in NETS}
-    curves = H.curves("smooth88")
-    check_dispatch(data, alone, curves)
-    for sfx, stat in STATS.items():
-        preds = predict(alone, curves, stat)
-        write("stress-predictions-infwin88%s.csv" % sfx, preds)
-        compare(preds, alone, sfx)
+    for name, ruler in rulers().items():
+        print("\n===== %s" % name)
+        check_dispatch(name, data, alone, ruler["curves"])
+        for sfx, stat in STATS.items():
+            preds = predict(alone, ruler, stat)
+            write("stress-predictions-%s%s.csv" % (name, sfx), preds)
+            compare(preds, alone, name + sfx)
 
 
 def selftest():
