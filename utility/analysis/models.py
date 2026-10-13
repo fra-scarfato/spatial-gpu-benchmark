@@ -5,12 +5,13 @@
 
 Reads $DATA/bench/aggregate/stress-comparison-<model>.csv, written by stress.py compare <model>,
 for ON/OFF (onoff88), uniform (uniform88), smooth (smooth88) and smooth topped by full speed
-(smoothx88), and the counter models (counters-dram, -l2, -ref, counter-model.py); missing models are
+(smoothx88), the counter models (counters-dram, -l2, -ref, counter-model.py) and the inference-window
+model (infwin88, infwin88d, infwin-model.py); missing models are
 skipped. The reporter models predict from the reporter p99 for both statistics,
 the thesis model (err_p99_p99, err_median_p99)."""
 import csv, os
 D = os.path.join(os.environ.get("DATA", "/mnt/nvme/f.scarfato"), "bench/aggregate/stress-comparison-%s.csv")
-M = [m for m in ("onoff88", "uniform88", "smooth88", "smoothx88", "counters-dram", "counters-l2", "counters-ref") if os.path.exists(D % m)]
+M = [m for m in ("onoff88", "uniform88", "smooth88", "smoothx88", "counters-dram", "counters-l2", "counters-ref", "infwin88", "infwin88d") if os.path.exists(D % m)]
 for q in ("p99", "median"):
     err = {m: {(r["target"], r["corunner"]): float(r["err_%s_p99_pts" % q]) for r in csv.DictReader(open(D % m))}
            for m in M}
