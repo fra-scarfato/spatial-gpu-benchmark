@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """l2-residual.py - does the temporal stress model leave errors that point to the L2? (prints only)
 
-    python3 utility/analysis/l2-residual.py            tests A and B on both rulers
+    python3 utility/analysis/l2-residual.py            tests A and B on both rulers, then C
     python3 utility/analysis/l2-residual.py selftest   the additive split
 
 The question comes before building a second, L2-resident reporter (model 3 in notes/p99-models.md):
@@ -27,6 +27,12 @@ error = a_target + b_corunner (the b centred on zero), and the co-runner effect 
 L2 traffic that never reaches the DRAM, L*h, which a DRAM-latency reporter cannot see; its DRAM GB/s
 D is the control. The target effect is set against the target's hit rate h. The indicators are model
 1's isolated profiles (counter-model.py). Spearman over 4 points carries no significance.
+
+Test C, the cheapest stand-in for an L2 coordinate: a measured L2 term added to a stress model,
+pred + g * L_corunner (L2 GB/s alone, counters), with g fitted leave-one-network-out on the 8 + 8
+pairs as in counter-model.py (the user's OK, 2026-10-13). If even this does not lower the errors,
+an L2 reporter, an indirect reading of the same pressure, is not expected to. The same term in the
+co-runner's DRAM GB/s is the control. Bases: Smooth (smooth88) and Smooth + window p99 (infwin88p).
 """
 import csv
 import importlib
@@ -103,6 +109,26 @@ def test_b(name, prof):
     print("  (RetinaNet's ncu L2 is suspect: L2 x miss 477 against 819 MB/inf on the DRAM counters)")
 
 
+def test_c(prof):
+    print("\nTest C: base model + g x co-runner load, g fitted leaving one network out (p99, points)")
+    print("  %-11s %-10s %13s %6s %7s %7s %8s" % ("base", "term", "mean/max", "under", "worst", "bias", "g full"))
+    for base in ("smooth88", "infwin88p"):
+        rows = list(csv.DictReader(open(os.path.join(W.AGG, "stress-comparison-%s.csv" % base))))
+        err = np.array([float(r["err_p99_p99_pts"]) for r in rows])
+        for term, key in (("none", None), ("L2 GB/s", "L"), ("DRAM GB/s", "D")):
+            new = err.copy()
+            if key:
+                x = np.array([prof[r["corunner"]][key] for r in rows])
+                for k in C.NETS:
+                    tr = np.array([k not in (r["target"], r["corunner"]) for r in rows])
+                    g = -np.dot(x[tr], err[tr]) / np.dot(x[tr], x[tr])
+                    te = np.array([r["target"] == k for r in rows])
+                    new[te] = err[te] + g * x[te]
+                gfull = -np.dot(x, err) / np.dot(x, x)
+            print("  %-11s %-10s %6.1f / %4.1f %6d %7.1f %+7.1f %8s" % (base, term, np.abs(new).mean(), np.abs(new).max(),
+                  (new < 0).sum(), min(new.min(), 0), new.mean(), "%.4f" % gfull if key else ""))
+
+
 def main():
     data = A.load(S.BENCH)
     T = A.aggr(data, "exp23", "mobilenet-alone", "mobilenet", "gpu_ms", "median")[0]
@@ -111,6 +137,7 @@ def main():
         print("\n===== %s" % name)
         test_a(data, name, ruler, T)
         test_b(name, prof)
+    test_c(prof)
 
 
 def selftest():
