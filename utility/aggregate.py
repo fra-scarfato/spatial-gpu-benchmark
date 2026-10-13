@@ -147,7 +147,7 @@ def load(outdir):
                 net = config[: -len("-alone")]
             elif exp == "exp9" and config.startswith(("mem", "compute", "spin", "mps_", "mps-")):
                 net = "mobilenet"
-            elif exp in ("exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22", "exp23", "exp24", "exp25"):
+            elif exp in ("exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22", "exp23", "exp24", "exp25", "exp26", "exp27"):
                 # The stress model's and the L2 chapter's families: one measured target, named first in the configuration
                 # (mobilenet-saxpy-L030, resnet+inception); the co-runner writes no stats file here.
                 net = re.split(r"[-+]", config)[0]

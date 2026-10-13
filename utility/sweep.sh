@@ -105,6 +105,13 @@ RN="$DATA/models/retinanet-9/engine/retinanet-9.engine"
 RN1="$DATA/models/retinanet-9/engine/retinanet-9-aux1.engine"
 RN8="$DATA/models/retinanet-9/engine/retinanet-9-aux8.engine"
 RN16="$DATA/models/retinanet-9/engine/retinanet-9-aux16.engine"
+# The validation networks (2026-10-13), measured after the p99 models were built on the four above:
+# the four in INT8 (engines.mk int8, calibrated scales), and EfficientNet-B0. The ViT is $VIT.
+MOBQ="$DATA/models/mobilenetv2-12/engine/mobilenetv2-12-int8.engine"
+RESQ="$DATA/models/resnet50-v2-7/engine/resnet50-v2-7-int8.engine"
+INCQ="$DATA/models/inception_v3-onnx-float/engine/inception_v3-int8.engine"
+RNQ="$DATA/models/retinanet-9/engine/retinanet-9-int8.engine"
+EFF="$DATA/models/efficientnet_b0/engine/efficientnet_b0.engine"
 
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set

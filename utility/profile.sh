@@ -9,6 +9,8 @@
 #   sudo utility/profile.sh soc-onoff   DRAM counters: ON/OFF and uniform SAXPY, for 10 ms series
 #   sudo utility/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
 #   sudo utility/profile.sh calibration DRAM counters during devprobe's device-to-device copies
+#   utility/profile.sh kernels-new      kernels: the validation networks (INT8, EfficientNet, ViT) (no root)
+#   sudo utility/profile.sh soc-new     DRAM counters: each validation network alone on 8 SMs
 #   utility/profile.sh <set> --list     print the arms and their commands, run nothing
 #
 # A profiled run is a diagnostic, not a campaign measurement: the profiler perturbs the run, so
@@ -33,6 +35,13 @@ MOB="$M/mobilenetv2-12/engine/mobilenetv2-12.engine"
 RES="$M/resnet50-v2-7/engine/resnet50-v2-7.engine"
 INC="$M/inception_v3-onnx-float/engine/inception_v3.engine"
 RET="$M/retinanet-9/engine/retinanet-9.engine"
+# The validation networks (sweep.sh), as engine:label; the label is the engine's name, as soc-budget's.
+NEW="$M/mobilenetv2-12/engine/mobilenetv2-12-int8.engine:mobilenetv2-12-int8
+$M/resnet50-v2-7/engine/resnet50-v2-7-int8.engine:resnet50-v2-7-int8
+$M/inception_v3-onnx-float/engine/inception_v3-int8.engine:inception_v3-int8
+$M/retinanet-9/engine/retinanet-9-int8.engine:retinanet-9-int8
+$M/efficientnet_b0/engine/efficientnet_b0.engine:efficientnet_b0
+$M/vit-base-patch16-224/engine/vit-base-patch16-224.engine:vit-base-patch16-224"
 RUNNER="$ROOT/runner"
 
 set_name="${1:-}"; shift || true
@@ -64,6 +73,22 @@ arms() {
         local m
         for m in "$MOB:mobilenet" "$RES:resnet" "$INC:inception" "$RET:retinanet"; do
             echo "alone-${m#*:}|LONG|--allocation greenctx --net ${m%%:*}:50:${m#*:}"
+        done
+        ;;
+    kernels-new)
+        # kernels for the validation networks, which counter-model.py's presence term and
+        # ncu.sh nets-new need (kernels per inference).
+        local m
+        for m in $NEW; do
+            echo "alone-${m#*:}|LONG|--allocation greenctx --net ${m%%:*}:50:${m#*:}"
+        done
+        ;;
+    soc-new)
+        # The validation networks' DRAM demand alone on 8 SMs (green context 50 %), soc-budget's
+        # 50 % arm under the same name, so profiles.py's dram.csv gets their rows.
+        local m
+        for m in $NEW; do
+            echo "soc-greenctx-${m#*:}-50|SHORT|--allocation greenctx --net ${m%%:*}:50:${m#*:}"
         done
         ;;
     soc-budget)
@@ -134,10 +159,10 @@ arms() {
     esac
 }
 
-flags_for() { case "$1" in traces|kernels) echo TRACE ;; *) echo SOC ;; esac; }
+flags_for() { case "$1" in traces|kernels|kernels-new) echo TRACE ;; *) echo SOC ;; esac; }
 
 arms "$set_name" >/dev/null || {
-    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 

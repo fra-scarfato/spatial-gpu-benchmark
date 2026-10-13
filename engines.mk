@@ -38,10 +38,11 @@ RS  = $(MODELS)/resnet50-v2-7
 INC = $(MODELS)/inception_v3-onnx-float
 VIT = $(MODELS)/vit-base-patch16-224
 RN  = $(MODELS)/retinanet-9
+EFF = $(MODELS)/efficientnet_b0
 
-.PHONY: all mobile resnet inception vit retinanet census clean
+.PHONY: all mobile resnet inception vit retinanet efficientnet int8 census clean
 
-all: mobile resnet inception vit retinanet
+all: mobile resnet inception vit retinanet efficientnet int8
 
 # MobileNet and ResNet: the two networks of the first campaign. Every cap produces
 # a serial engine for both, which is itself the census result.
@@ -81,14 +82,33 @@ retinanet:
 		$(TRTEXEC) --onnx=$(RN)/retinanet-9.onnx $(FP16) --maxAuxStreams=$$n --saveEngine=$(RN)/engine/retinanet-9-aux$$n.engine > $(RN)/engine/retinanet-9-aux$$n.buildlog 2>&1; \
 	done
 
+# EfficientNet-B0 (2026-10-13): a validation network, a CNN like the four above (the
+# easy test). timm's export from the ONNX model zoo; SOURCE.txt beside it has the commit
+# and the checksum.
+efficientnet:
+	$(TRTEXEC) --onnx=$(EFF)/efficientnet_b0_Opset17.onnx $(FP16) --saveEngine=$(EFF)/engine/efficientnet_b0.engine > $(EFF)/engine/efficientnet_b0.buildlog 2>&1
+
+# INT8 versions of the four networks (2026-10-13): new workloads for the validation, with
+# less memory traffic and other kernels, and the start of the quantization work. INT8 is
+# permission on top of --fp16, as FP16 is above: TensorRT picks per layer. The scales
+# come from a real calibration (utility/int8-calib.py, 500 ImageNet images the runner
+# never feeds); trtexec alone would use placeholder scales and meaningless outputs.
+int8:
+	for m in $(MB)/mobilenetv2-12 $(RS)/resnet50-v2-7 $(INC)/inception_v3 $(RN)/retinanet-9; do \
+		d=$$(dirname $$m); n=$$(basename $$m); \
+		python3 utility/int8-calib.py calib $$m.onnx $$d/engine/$$n-int8.calib > $$d/engine/$$n-int8.caliblog 2>&1 && \
+		$(TRTEXEC) --onnx=$$m.onnx $(FP16) --int8 --calib=$$d/engine/$$n-int8.calib --saveEngine=$$d/engine/$$n-int8.engine > $$d/engine/$$n-int8.buildlog 2>&1 && \
+		python3 utility/int8-calib.py check $$d/engine/$$n.engine $$d/engine/$$n-int8.engine >> $$d/engine/$$n-int8.caliblog 2>&1 || exit 1; \
+	done
+
 # What every built engine says about itself. This is the census, and it is the
 # reason to keep the engines: it reads them, it does not rebuild them.
 census:
-	@for e in $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine; do \
+	@for e in $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine $(EFF)/engine/*.engine; do \
 		[ -e "$$e" ] || continue; \
 		printf '  %-46s %s\n' "$$(basename $$e)" "$$($(AUXPROBE) $$e 2>/dev/null | tail -1)"; \
 	done
 
 # The logs are the census evidence and stay; they are a few tens of kilobytes.
 clean:
-	rm -f $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine
+	rm -f $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine $(EFF)/engine/*.engine

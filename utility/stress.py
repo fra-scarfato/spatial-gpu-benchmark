@@ -77,8 +77,20 @@ GEOMS = {"8sm": dict(cal="saxpy-L", exp="exp13", dir="stress-sensitivity", suffi
          # there is no pause to spread, so it is the smooth stressor without the clock checks' cost.
          "smoothx88": dict(cal="smooth-D", exp="exp23", dir="stress-onoff", suffix="-smoothx88",
                            rep="stress-reporter-onoff", gbs=True, net="-8sm", pairs="exp24", zero="spin",
-                           top="onoff-D100")}
+                           top="onoff-D100"),
+         # The validation set (2026-10-13): smooth88 on networks it never saw, the four in INT8,
+         # EfficientNet-B0 and the ViT. Ruler and every co-runner read in one new session
+         # (stress-reporter-new), the new targets' curves and every alone row in stress-new (exp26),
+         # the 30 pairs in stress-validation-new (exp27). The four FP16 targets keep their frozen
+         # smooth88 curves from exp23, normalised by exp23's alone rows as before; compare takes the
+         # measured slowdown against exp26's alone rows, of the pairs' session.
+         "smoothnew": dict(cal="smooth-D", exp="exp26", dir="stress-new", suffix="-smoothnew",
+                           rep="stress-reporter-new", gbs=True, net="-8sm", pairs="exp27", zero="spin",
+                           nets=NETS + ("mobilenetint8", "resnetint8", "inceptionint8", "retinanetint8",
+                                        "efficientnet", "vit"),
+                           curves={n: ("exp23", "stress-onoff") for n in NETS})}
 G = GEOMS[sys.argv[2] if len(sys.argv) > 2 else "8sm"]
+NETS = G.get("nets", NETS)
 REPORTER = os.path.join(BENCH, G["rep"])
 
 
@@ -149,20 +161,22 @@ def invert(y, xs, ys):
 
 def sensitivity(data, target):
     """S(L) for one target from stress-sensitivity only: x = achieved level per configuration, y =
-    the target's p99 and median against its alone row, all medians over the five runs."""
-    alone = A.aggr(data, G["exp"], target + "-alone", target, "gpu_ms", "median")
-    alone99 = A.aggr(data, G["exp"], target + "-alone", target, "gpu_ms", "p99")
+    the target's p99 and median against its alone row, all medians over the five runs. A target in
+    the geometry's curves map takes its curve, and that curve's alone row, from another family."""
+    exp, cdir = G.get("curves", {}).get(target, (G["exp"], G["dir"]))
+    alone = A.aggr(data, exp, target + "-alone", target, "gpu_ms", "median")
+    alone99 = A.aggr(data, exp, target + "-alone", target, "gpu_ms", "p99")
     if not alone or not alone99:
         return None
     pts = []
     # exp23 holds both stressors of block 2, so a gbs geometry takes only its own configurations
     prefix = target + "-" + (G["cal"] if G.get("gbs") else "")
     top = target + "-" + G["top"] if G.get("top") else None
-    for cfg in sorted({c for (e, c, _) in data if e == G["exp"] and (c.startswith(prefix) or c == top)
+    for cfg in sorted({c for (e, c, _) in data if e == exp and (c.startswith(prefix) or c == top)
                        and c != target + "-alone"}):
-        med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
-        p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
-        logs = sorted(glob.glob(os.path.join(BENCH, G["dir"], cfg, "r*_itf.log")))
+        med = A.aggr(data, exp, cfg, target, "gpu_ms", "median")
+        p99 = A.aggr(data, exp, cfg, target, "gpu_ms", "p99")
+        logs = sorted(glob.glob(os.path.join(BENCH, cdir, cfg, "r*_itf.log")))
         lv = [achieved_level(f) for f in logs]
         lv = [x[0] for x in lv if x]
         if med and p99 and lv:
@@ -171,8 +185,8 @@ def sensitivity(data, target):
         # level 0 is the target beside the zero co-runner: resident, no DRAM traffic, so its
         # slowdown is the cost of presence alone
         cfg = target + "-" + G["zero"]
-        med = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "median")
-        p99 = A.aggr(data, G["exp"], cfg, target, "gpu_ms", "p99")
+        med = A.aggr(data, exp, cfg, target, "gpu_ms", "median")
+        p99 = A.aggr(data, exp, cfg, target, "gpu_ms", "p99")
         if not med or not p99:
             return None
         pts.append((0.0, p99[0] / alone99[0], med[0] / alone[0]))
@@ -236,7 +250,8 @@ def predict():
     write("stress-corunners.csv", corunners)
 
     # 3. sensitivity curves, from stress-sensitivity ONLY
-    data = {k: v for k, v in A.load(BENCH).items() if k[0] == G["exp"]}
+    exps = {G["exp"]} | {e for e, _ in G.get("curves", {}).values()}
+    data = {k: v for k, v in A.load(BENCH).items() if k[0] in exps}
     curves, sens = {}, []
     for t in NETS:
         pts = sensitivity(data, t)

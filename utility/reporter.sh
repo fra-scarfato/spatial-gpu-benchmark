@@ -8,6 +8,8 @@
 #   utility/reporter.sh l2-vs-dram           the L2 chapter's 1d co-runners and their DRAM-matched SAXPY
 #   utility/reporter.sh calibration-onoff    idle, spin, ON/OFF, uniform, smooth and peak SAXPY on 8 SMs (stress-onoff's)
 #   utility/reporter.sh networks-8sm         each network alone as the co-runner, on 8 SMs (8 + 8)
+#   utility/reporter.sh calibration-smooth   idle, spin and smooth SAXPY on 8 SMs: the validation set's ruler
+#   utility/reporter.sh networks-new-8sm     the validation pairs' ten networks as the co-runner, on 8 SMs
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -52,6 +54,12 @@ MOB="$M/mobilenetv2-12/engine/mobilenetv2-12.engine"
 RES="$M/resnet50-v2-7/engine/resnet50-v2-7.engine"
 INC="$M/inception_v3-onnx-float/engine/inception_v3.engine"
 RET="$M/retinanet-9/engine/retinanet-9.engine"
+MOBQ="$M/mobilenetv2-12/engine/mobilenetv2-12-int8.engine"      # the validation networks (sweep.sh)
+RESQ="$M/resnet50-v2-7/engine/resnet50-v2-7-int8.engine"
+INCQ="$M/inception_v3-onnx-float/engine/inception_v3-int8.engine"
+RETQ="$M/retinanet-9/engine/retinanet-9-int8.engine"
+EFF="$M/efficientnet_b0/engine/efficientnet_b0.engine"
+VIT="$M/vit-base-patch16-224/engine/vit-base-patch16-224.engine"
 RUNNER="$ROOT/runner"
 ITF="${ITF:-$ROOT/utility/probes/itfproc}"             # overridable: e.g. a binary built elsewhere
 REPORTER="${REPORTER:-$ROOT/utility/probes/gpu-latency/gpu-latency}"
@@ -151,6 +159,31 @@ configs() {
         echo "inception-8sm|50|$(net "$INC" inception)"
         echo "retinanet-8sm|50|$(net "$RET" retinanet)"
         ;;
+    calibration-smooth)
+        # The validation set's ruler (2026-10-13): calibration-onoff's zero and smooth stressors only,
+        # taken again in the session of the networks it reads (networks-new-8sm), into the same
+        # OUTROOT=$DATA/bench/stress-reporter-new, with LAYOUT=target.
+        echo "idle||"
+        echo "spin|50|$ITF spin --kernel-us 100"
+        local d
+        for d in 025 050 075 100; do
+            echo "smooth-D$d|50|$ITF saxpy --period-us 100 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --burst 2"
+        done
+        ;;
+    networks-new-8sm)
+        # Every network of the validation pairs as the co-runner on 8 SMs: the six new ones and the
+        # four FP16 ones again, so that all readings and the ruler come from one session.
+        echo "mobilenet-8sm|50|$(net "$MOB" mobilenet)"
+        echo "resnet-8sm|50|$(net "$RES" resnet)"
+        echo "inception-8sm|50|$(net "$INC" inception)"
+        echo "retinanet-8sm|50|$(net "$RET" retinanet)"
+        echo "mobilenetint8-8sm|50|$(net "$MOBQ" mobilenetint8)"
+        echo "resnetint8-8sm|50|$(net "$RESQ" resnetint8)"
+        echo "inceptionint8-8sm|50|$(net "$INCQ" inceptionint8)"
+        echo "retinanetint8-8sm|50|$(net "$RETQ" retinanetint8)"
+        echo "efficientnet-8sm|50|$(net "$EFF" efficientnet)"
+        echo "vit-8sm|50|$(net "$VIT" vit)"
+        ;;
     networks)
         echo "mobilenet|25|$(net "$MOB" mobilenet)"
         echo "resnet|25|$(net "$RES" resnet)"
@@ -162,7 +195,7 @@ configs() {
 }
 
 set_name="${1:-}"
-configs "$set_name" >/dev/null || { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+configs "$set_name" >/dev/null || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 if [ "${2:-}" = "--list" ]; then
     configs "$set_name" | while IFS='|' read -r name shares cmds; do
         printf '%-14s shares %-6s %s\n' "$name" "${shares:-none}" "${cmds:-(no co-runner)}"

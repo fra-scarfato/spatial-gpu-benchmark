@@ -678,3 +678,48 @@ for t in $STRESS_TARGETS; do
             "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy ${c#*:}|50:50"
     done
 done
+
+
+# The validation set of the p99 models (Daniel, 2026-10-13). The models were built on the four networks
+# above (exp23, exp24); these runs test them on networks they never saw, and are taken after the models
+# are frozen. The networks: the four in INT8 (other kernels, less memory traffic), EfficientNet-B0 (a
+# CNN like the four, the easy test) and the ViT (another architecture, the hard one). Labels have no
+# hyphen: aggregate.py reads the target as the configuration name up to the first - or +.
+#
+# stress-new: each new network's sensitivity curve, as stress-onoff's for the four (alone, the resident
+# spin as level 0, smooth SAXPY at four duties), and the alone rows of the four FP16 networks, which are
+# targets in the new pairs and need an alone row from the same session.
+# stress-validation-new: 30 pairs of 8 + 8 (agreed with the user): the INT8 networks among themselves
+# (12), EfficientNet and the ViT against each FP16 network in both roles (16), and with each other (2).
+NEW_TARGETS="mobilenetint8:$MOBQ resnetint8:$RESQ inceptionint8:$INCQ retinanetint8:$RNQ efficientnet:$EFF vit:$VIT"
+for t in $NEW_TARGETS; do
+    tn="${t%%:*}"; te="${t#*:}"
+    add "stress-new_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    add "stress-new_${tn}-spin" \
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc spin --kernel-us 100|50:50"
+    for d in 025 050 075 100; do
+        add "stress-new_${tn}-smooth-D$d" \
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/utility/probes/itfproc saxpy --period-us 100 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --burst 2|50:50"
+    done
+done
+for t in $STRESS_TARGETS; do
+    add "stress-new_${t%%:*}-alone" "solo|static|||$(stress_target "${t%%:*}" "${t#*:}")||50"
+done
+new_pair() {   # target name, engine, co-runner name, engine: the co-runner as in stress-validation-8
+    add "stress-validation-new_${1}+${3}" \
+        "itf|static|||$(stress_target "$1" "$2")|$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $4:100:$3 --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$3|50:50"
+}
+INT8_TARGETS="mobilenetint8:$MOBQ resnetint8:$RESQ inceptionint8:$INCQ retinanetint8:$RNQ"
+for t in $INT8_TARGETS; do
+    for c in $INT8_TARGETS; do
+        [ "$t" = "$c" ] || new_pair "${t%%:*}" "${t#*:}" "${c%%:*}" "${c#*:}"
+    done
+done
+for n in "efficientnet:$EFF" "vit:$VIT"; do
+    for f in $STRESS_TARGETS; do
+        new_pair "${n%%:*}" "${n#*:}" "${f%%:*}" "${f#*:}"
+        new_pair "${f%%:*}" "${f#*:}" "${n%%:*}" "${n#*:}"
+    done
+done
+new_pair efficientnet "$EFF" vit "$VIT"
+new_pair vit "$VIT" efficientnet "$EFF"
