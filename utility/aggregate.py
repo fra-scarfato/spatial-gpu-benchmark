@@ -161,7 +161,9 @@ def load(outdir):
             # does not parse must fail loudly rather than be filed under the wrong
             # network, so this list is the place a new network has to be declared.
             known = ("mobilenet", "resnet", "inception", "retinanet", "vit",
-             "retinanet_a", "retinanet_b")
+             "retinanet_a", "retinanet_b",
+             # the validation networks of the p99 models (stress-new, stress-validation-new)
+             "mobilenetint8", "resnetint8", "inceptionint8", "retinanetint8", "efficientnet")
             assert net in known, f"unexpected config {config!r}"
         data.setdefault((exp, config, run), {})[net] = read_stats(path)
     return data

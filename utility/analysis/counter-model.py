@@ -62,7 +62,7 @@ NETS = list(ENG)
 # The validation networks, with the kernels per inference of profile.sh kernels-new.
 ENG_NEW = {"mobilenetint8": ("mobilenetv2-12-int8", 55), "resnetint8": ("resnet50-v2-7-int8", 74),
            "inceptionint8": ("inception_v3-int8", 101), "retinanetint8": ("retinanet-9-int8", 167),
-           "efficientnet": ("efficientnet_b0", None), "vit": ("vit-base-patch16-224", None)}
+           "efficientnet": ("efficientnet_b0", 139), "vit": ("vit-base-patch16-224", 92)}
 PRESENCE_US = 0.87
 SATURATION_GB_S = 135.0      # the highest GPU DRAM rate measured: SAXPY back to back on 8 SMs
 VARIANTS = {"dram": lambda t, c: [c["D"], t["D"] * c["D"]],

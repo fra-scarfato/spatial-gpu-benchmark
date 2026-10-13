@@ -6,6 +6,7 @@
 #   sudo ./utility/ncu.sh pair   [side]   the co-runner's own DRAM demand, filtered to its kernel
 #   sudo ./utility/ncu.sh nets            each network alone on 4 SMs: L2 traffic and hit rate per
 #                                         inference, the L2 counterpart of the DRAM bytes table
+#   sudo ./utility/ncu.sh nets-new        the same for the validation networks (INT8, EfficientNet, ViT)
 #
 # Three scripts had grown around this profiler, differing only in the flags they pass. What they
 # share is worth stating once, because it is a property of the board rather than of the flags:
@@ -115,14 +116,22 @@ pair)
     report "$OUT/pair-$SIZE.csv" "kernel, DRAM read %, write %, L2 hit"
     echo "   at a side of 512 this reads about 4.98 % of peak read and 4.0 % write"
     ;;
-nets)
+nets|nets-new)
     # Each network alone on a 4 SM green context, all kernels of a few inferences after the
     # warm-up, which is 200 inferences: the skip is 205 inferences' worth of kernels and the count
     # four inferences', from each engine's kernels per inference (the period of its kernel sequence). --cache-control none keeps the L2 warm between kernels, as in a real inference,
     # so a layer can hit on what the previous one wrote; the default would flush it before every
     # kernel and measure each kernel cold.
-    for e in mobilenetv2-12/engine/mobilenetv2-12:55 resnet50-v2-7/engine/resnet50-v2-7:76 \
-             inception_v3-onnx-float/engine/inception_v3:101 retinanet-9/engine/retinanet-9:172; do
+    # nets-new: the validation networks, kernels per inference from profile.sh kernels-new.
+    if [ "$MODE" = nets ]; then
+        LIST="mobilenetv2-12/engine/mobilenetv2-12:55 resnet50-v2-7/engine/resnet50-v2-7:76
+              inception_v3-onnx-float/engine/inception_v3:101 retinanet-9/engine/retinanet-9:172"
+    else
+        LIST="mobilenetv2-12/engine/mobilenetv2-12-int8:55 resnet50-v2-7/engine/resnet50-v2-7-int8:74
+              inception_v3-onnx-float/engine/inception_v3-int8:101 retinanet-9/engine/retinanet-9-int8:167
+              efficientnet_b0/engine/efficientnet_b0:139 vit-base-patch16-224/engine/vit-base-patch16-224:92"
+    fi
+    for e in $LIST; do
         eng=${e%:*} kpi=${e##*:} net=${eng##*/}
         echo "== $net, alone on 4 SMs =="
         "$NCU" --metrics "$CACHE,$DRAM,lts__t_sector_op_write_hit_rate.pct,gpu__time_duration.sum" \
@@ -154,7 +163,7 @@ PY
     done
     ;;
 *)
-    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac
