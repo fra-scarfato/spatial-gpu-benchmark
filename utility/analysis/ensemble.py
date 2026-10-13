@@ -2,6 +2,7 @@
 """ensemble.py - the p99 models side by side, their max, and the margin that makes the max a bound.
 
     python3 utility/analysis/ensemble.py            tables, ensembles, margin curve; writes the CSVs
+    python3 utility/analysis/ensemble.py new        the frozen ensembles on the validation pairs
     python3 utility/analysis/ensemble.py selftest   the max, the correction and its folds
 
 The question (notes/p99-models.md, "Comparison and max"): do the models fail on the same pairs, or
@@ -30,6 +31,14 @@ correction is not a margin, so the two are never stacked (agreed with the user, 
 
 Errors are predicted - measured slowdown, in points: negative means under-predicted. The median is
 carried through only so that the written CSVs have models.py's columns; the goal is the p99.
+
+The validation set (new, 2026-10-13): the 30 pairs of stress-validation-new, on networks no model
+saw (the four in INT8, EfficientNet-B0, the ViT). Every member is frozen: its predictions come from
+stress.py smoothnew, infwin-model.py new-predict and counter-model.py new-predict, written before the
+pairs were measured; its correction is minus its mean error on all 12 development pairs (for the
+counters, the mean in-sample residual of the fit on the 12, whose coefficients they use). The margin
+curve is printed again on these pairs, by block, with the margin the development curve gave (the
+smallest that left no development pair under): the test of the margin, which the 12 pairs cannot be.
 
 ponytail: 12 pairs, 4 networks. The margin curve is the development set's, not a coverage
 guarantee; the real check is new networks after freezing (CLAUDE.md).
@@ -195,6 +204,85 @@ def main():
         print("  %4d" % m + "".join("%11d %7.1f %+6.1f" % score(e0[v] + m)[2:5] for v in COUNTERS))
 
 
+NEW_FILES = {"Smooth": "smoothnew", "Temporal": "infwinnewp", "DRAM": "counters-new-dram",
+             "DRAM+L2": "counters-new-ref", "L2": "counters-new-l2"}
+
+
+def block(t, c):
+    """The validation block of a pair: INT8, EfficientNet, ViT, or EfficientNet with the ViT."""
+    s = {t, c}
+    if all(n.endswith("int8") for n in s):
+        return "INT8"
+    return {frozenset(["efficientnet"]): "EfficientNet", frozenset(["vit"]): "ViT"}.get(
+        frozenset(s & {"efficientnet", "vit"}), "EfficientNet+ViT")
+
+
+def frozen_shift(rows, prof):
+    """Each member's correction learnt on all 12 development pairs (p99): minus its mean error."""
+    qi = STAT["p99"]
+    shift = {m: -np.mean([stored(n, "p99")[r[:2]] - r[qi] for r in rows]) for m, n in STORED.items()}
+    for m, v in COUNTERS.items():
+        b = C.fit(rows, prof, C.VARIANTS[v], qi)
+        shift[m] = -np.mean([C.predict(r[0], r[1], prof, C.VARIANTS[v], b) - r[qi] for r in rows])
+    return shift
+
+
+def dev_margin(rows, prof):
+    """Per counter variant, the smallest margin that left no development pair under the corrected max."""
+    cor = {}
+    for m, name in STORED.items():
+        cor[m] = correct(stored(name, "p99"), rows, STAT["p99"])
+    for m, v in COUNTERS.items():
+        cor[m] = counter(rows, prof, C.VARIANTS[v], STAT["p99"])[1]
+    out = {}
+    for v in COUNTERS:
+        e = errors(ensemble(cor, ["Smooth", "Temporal", v])[0], rows, STAT["p99"])
+        out[v] = next(m for m in range(100) if (e + m >= 0).all())
+    return out
+
+
+def new():
+    data = A.load(P.BENCH)
+    prof = C.profile(data)
+    rows = C.measured(data)
+    shift, margin = frozen_shift(rows, prof), dev_margin(rows, prof)
+    meas, raw = {}, {}
+    for m, name in NEW_FILES.items():
+        path = os.path.join(C.AGG, "stress-comparison-%s.csv" % name)
+        if not os.path.exists(path):
+            raise SystemExit("ensemble.py: %s missing; run its new-compare (or stress.py compare smoothnew)" % path)
+        f = {(r["target"], r["corunner"]): r for r in csv.DictReader(open(path))}
+        raw[m] = {k: float(r["pred_p99_p99"]) for k, r in f.items()}
+        for k, r in f.items():
+            meas.setdefault(k, float(r["measured_p99"]))
+            assert abs(meas[k] - float(r["measured_p99"])) < 1e-3, (m, k)
+    keys = sorted(meas, key=lambda k: (block(*k), k))
+    assert all(set(raw[m]) == set(keys) for m in MODELS), "the members cover different pairs"
+    rows_new = [(t, c, meas[(t, c)]) for t, c in keys]
+    cor = {m: {k: p + shift[m] for k, p in raw[m].items()} for m in MODELS}
+
+    print("frozen corrections (points, from the 12 development pairs):",
+          ", ".join("%s %+.1f" % (m, 100 * shift[m]) for m in MODELS))
+    print("development margins (smallest with no development pair under):",
+          ", ".join("max(S, T, %s) %d" % (v, m) for v, m in margin.items()))
+    for title, pred in (("raw", raw), ("corrected", cor)):
+        ens = report("validation pairs, %s predictions (p99)" % title, pred, rows_new)
+        if title == "corrected":
+            print("\nscores by block, corrected max, with the development margin (points)")
+            print("  %-17s %-14s %5s %13s %6s %7s %7s" % ("block", "ensemble", "pairs", "mean/max |e|", "under", "worst", "bias"))
+            for b in ("INT8", "EfficientNet", "ViT", "EfficientNet+ViT", "all"):
+                sel = [i for i, r in enumerate(rows_new) if b == "all" or block(*r[:2]) == b]
+                for v in COUNTERS:
+                    e = errors(ens[v][0], rows_new, 2)[sel] + margin[v]
+                    s = score(e)
+                    print("  %-17s %-14s %5d %6.1f / %4.1f %6d %7.1f %+7.1f" % ((b, "max(S,T,%s)" % v, len(sel)) + s[:5]))
+            print("\nmargin curve on the validation pairs, corrected max (under / worst / bias)")
+            print("  %4s" % "m" + "".join("%26s" % ("max(S, T, %s)" % v) for v in COUNTERS))
+            e0 = {v: errors(ens[v][0], rows_new, 2) for v in COUNTERS}
+            for m in MARGINS:
+                print("  %4d" % m + "".join("%11d %7.1f %+6.1f" % score(e0[v] + m)[2:5] for v in COUNTERS))
+
+
 def selftest():
     nets = ["a", "b", "c", "d"]
     rows = [(t, c, 1.2, 1.1) for t in nets for c in nets if t != c]
@@ -208,8 +296,10 @@ def selftest():
     pred["x"][("a", "b")] = 2.0
     p, who = ensemble(pred, ["x", "y"])
     assert who[("a", "b")] == "x" and p[("a", "b")] == 2.0 and who[("b", "a")] == "y" and p[("b", "a")] == 1.5
+    assert [block(*k) for k in (("resnetint8", "mobilenetint8"), ("vit", "resnet"), ("mobilenet", "efficientnet"),
+                                ("efficientnet", "vit"))] == ["INT8", "ViT", "EfficientNet", "EfficientNet+ViT"]
     print("  selftest passed")
 
 
 if __name__ == "__main__":
-    {"selftest": selftest}.get(sys.argv[1] if len(sys.argv) > 1 else "", main)()
+    {"selftest": selftest, "new": new}.get(sys.argv[1] if len(sys.argv) > 1 else "", main)()

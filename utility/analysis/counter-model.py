@@ -3,6 +3,8 @@
 
     python3 utility/analysis/counter-model.py            profiles, LOO predictions, scores, checks
     python3 utility/analysis/counter-model.py selftest   the fit and the hit-rate aggregation
+    python3 utility/analysis/counter-model.py new-predict  the validation set: freeze the predictions
+    python3 utility/analysis/counter-model.py new-compare  the validation set against its pairs
 
 Each network is characterised once, alone on 8 SMs:
   D    DRAM GB/s, run average of the GPU's own counters (profiles/derived/dram.csv, green context 50 %)
@@ -33,6 +35,14 @@ of their alone runs, which the sum cannot see.
 
 ponytail: the isolated profiles are green-context runs while the pairs are MPS static; the check
 against MobileNet alone under MPS static (soc-l2) bounds the difference for one network.
+
+The validation set (2026-10-13, notes/p99-models.md): the coefficients frozen on the 12 pairs
+(counter-model-coeffs.csv) applied to the networks of stress.py's smoothnew geometry. The new
+networks are profiled exactly as the four: D from profile.sh soc-new, L and h from ncu.sh nets-new,
+kernels per inference from profile.sh kernels-new (kernels over inferences, which gives 55, 76, 101
+and 172 for the four), p against their alone row in stress-new (exp26). new-predict writes
+stress-predictions-counters-new-<variant>.csv and reads no pair; new-compare scores them on the
+pairs of stress-validation-new (exp27) against exp26's alone rows.
 """
 import csv
 import os
@@ -49,6 +59,10 @@ AGG = os.path.join(P.BENCH, "aggregate")
 ENG = {"mobilenet": ("mobilenetv2-12", 55), "resnet": ("resnet50-v2-7", 76),
        "inception": ("inception_v3", 101), "retinanet": ("retinanet-9", 172)}
 NETS = list(ENG)
+# The validation networks, with the kernels per inference of profile.sh kernels-new.
+ENG_NEW = {"mobilenetint8": ("mobilenetv2-12-int8", 55), "resnetint8": ("resnet50-v2-7-int8", 74),
+           "inceptionint8": ("inception_v3-int8", 101), "retinanetint8": ("retinanet-9-int8", 167),
+           "efficientnet": ("efficientnet_b0", None), "vit": ("vit-base-patch16-224", None)}
 PRESENCE_US = 0.87
 SATURATION_GB_S = 135.0      # the highest GPU DRAM rate measured: SAXPY back to back on 8 SMs
 VARIANTS = {"dram": lambda t, c: [c["D"], t["D"] * c["D"]],
@@ -76,14 +90,15 @@ def ncu_l2(eng, kpi):
     return lb / n / 1e6, hit, n
 
 
-def profile(data):
-    """Each network alone on 8 SMs: D, L, h, p, plus the MB per inference behind them."""
+def profile(data, eng_map=ENG, family="exp23"):
+    """Each network alone on 8 SMs: D, L, h, p, plus the MB per inference behind them; the latency
+    alone, for p, from the family's alone row."""
     dram = {r["arm"]: r for r in csv.DictReader(open(os.path.join(P.DERIVED, "dram.csv")))}
     out = {}
-    for net, (eng, kpi) in ENG.items():
+    for net, (eng, kpi) in eng_map.items():
         r = dram["soc-greenctx-%s-50" % eng]
         l2_mb, hit, n = ncu_l2(eng, kpi)
-        alone_ms = A.aggr(data, "exp23", net + "-alone", net, "gpu_ms", "median")[0]
+        alone_ms = A.aggr(data, family, net + "-alone", net, "gpu_ms", "median")[0]
         out[net] = dict(D=float(r["gb_s_run_average"]), dram_mb=float(r["mb_per_inference"]),
                         L=l2_mb * float(r["inf_per_s"]) / 1e3, l2_mb=l2_mb, h=hit, ncu_inf=n,
                         p=kpi * PRESENCE_US * 1e-3 / alone_ms)
@@ -207,6 +222,42 @@ def main():
     checks(prof, rows)
 
 
+def new(cmd):
+    """The validation set: freeze the predictions of the frozen model (new-predict), or score them."""
+    data = A.load(P.BENCH)
+    if cmd == "new-predict":
+        missing = [n for n, (_, k) in ENG_NEW.items() if k is None]
+        if missing:
+            raise SystemExit("counter-model.py: kernels per inference still unknown for %s (profile.sh kernels-new)" % missing)
+        prof = dict(profile(data), **profile(data, ENG_NEW, "exp26"))
+        coef = {(r["variant"], r["statistic"]): np.array([float(r[k]) for k in ("b0", "b1", "b2", "b3") if r[k]])
+                for r in csv.DictReader(open(os.path.join(AGG, "counter-model-coeffs.csv")))}
+        for v, X in VARIANTS.items():
+            write("stress-predictions-counters-new-%s.csv" % v, [dict(
+                target=t, corunner=c, **{"pred_" + q: round(predict(t, c, prof, X, coef[(v, q)]), 4) for q in ("p99", "median")})
+                for t in prof for c in prof if t != c])
+        return
+    for v in VARIANTS:
+        path = os.path.join(AGG, "stress-predictions-counters-new-%s.csv" % v)
+        if not os.path.exists(path):
+            raise SystemExit("counter-model.py: run new-predict first; the predictions must exist before the pairs are read")
+        rows = []
+        for p in csv.DictReader(open(path)):
+            t, c = p["target"], p["corunner"]
+            pair = [A.aggr(data, "exp27", t + "+" + c, t, "gpu_ms", s) for s in ("p99", "median")]
+            if not all(pair):
+                continue
+            m = [pair[i][0] / A.aggr(data, "exp26", t + "-alone", t, "gpu_ms", s)[0] for i, s in enumerate(("p99", "median"))]
+            rows.append(dict(target=t, corunner=c, measured_p99=round(m[0], 4), measured_median=round(m[1], 4),
+                             pred_p99_p99=float(p["pred_p99"]), err_p99_p99_pts=round((float(p["pred_p99"]) - m[0]) * 100, 4),
+                             pred_median_p99=float(p["pred_median"]),
+                             err_median_p99_pts=round((float(p["pred_median"]) - m[1]) * 100, 4)))
+        write("stress-comparison-counters-new-%s.csv" % v, rows)
+        e = np.array([r["err_p99_p99_pts"] for r in rows])
+        print("  %-5s p99: mean |error| %.1f, max %.1f, %d of %d under, largest under %.1f"
+              % (v, np.abs(e).mean(), np.abs(e).max(), (e < 0).sum(), len(e), min(e.min(), 0)))
+
+
 def selftest():
     prof = {n: dict(D=10.0 + 7 * i, L=40.0 + 30 * i * i, h=0.7, p=0.01 * (i + 1)) for i, n in enumerate(NETS)}
     b = np.array([0.003, -2e-5, 0.001, -3e-6])
@@ -220,4 +271,5 @@ def selftest():
 
 
 if __name__ == "__main__":
-    {"selftest": selftest}.get(sys.argv[1] if len(sys.argv) > 1 else "", main)()
+    CMD = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"selftest": selftest, "new-predict": lambda: new(CMD), "new-compare": lambda: new(CMD)}.get(CMD, main)()
