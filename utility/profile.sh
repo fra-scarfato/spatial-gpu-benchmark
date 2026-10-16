@@ -11,6 +11,7 @@
 #   sudo utility/profile.sh calibration DRAM counters during devprobe's device-to-device copies
 #   utility/profile.sh kernels-new      kernels: the validation networks (INT8, EfficientNet, ViT) (no root)
 #   sudo utility/profile.sh soc-new     DRAM counters: each validation network alone on 8 SMs
+#   sudo utility/profile.sh soc-mps     DRAM counters: all ten networks of the p99 models alone, MPS static
 #   utility/profile.sh <set> --list     print the arms and their commands, run nothing
 #
 # A profiled run is a diagnostic, not a campaign measurement: the profiler perturbs the run, so
@@ -91,6 +92,15 @@ arms() {
             echo "soc-greenctx-${m#*:}-50|SHORT|--allocation greenctx --net ${m%%:*}:50:${m#*:}"
         done
         ;;
+    soc-mps)
+        # The counter model's DRAM inputs in the thesis configuration (the user, 2026-10-16): each of
+        # the ten networks alone in a 50 % MPS static partition (8 SMs, the 8 + 8 geometry, the other
+        # 8 SMs' partition empty), instead of soc-budget's and soc-new's green context.
+        local m
+        for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9" $NEW; do
+            echo "soc-mps-${m#*:}-50|ITF|--allocation whole --net ${m%%:*}:50:${m#*:}|-"
+        done
+        ;;
     soc-budget)
         local m p
         for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9"; do
@@ -162,7 +172,7 @@ arms() {
 flags_for() { case "$1" in traces|kernels|kernels-new) echo TRACE ;; *) echo SOC ;; esac; }
 
 arms "$set_name" >/dev/null || {
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
@@ -240,7 +250,7 @@ keep_stats() {   # $1 = arm
     awk -F, '$1=="gpu_ms"{printf "   median %s ms over %s inferences\n", $4, $2}' "$OUT/$1"*_stats.csv 2>/dev/null
 }
 
-# The ITF arms (soc-l2, soc-onoff) run as sweep.sh's do_job does: an MPS static daemon on a private
+# The ITF arms (soc-l2, soc-onoff, soc-mps) run as sweep.sh's do_job does: an MPS static daemon on a private
 # pipe, the target in a 50 % partition and the itfproc co-runner in a 25 % one (50 % for soc-onoff), the co-runner started 3 s
 # ahead and stopped with SIGTERM when the target exits. nsys runs only the target, which is enough
 # because the SoC counters are device-wide. With no target, nsys runs the co-runner alone for 20 s.
@@ -249,7 +259,7 @@ keep_stats() {   # $1 = arm
 # server only takes clients of its own user: --run-as=root keeps the daemon, the co-runner and the
 # target under one user (without it the target waits forever for the server).
 MPS_PIPE=/tmp/mps-profile MPS_LOG=/tmp/mps-log-profile STATIC_CHUNKS=8 MPS_MODE=off
-ITF_SHARES=50:25; [ "$set_name" = soc-onoff ] && ITF_SHARES=50:50
+ITF_SHARES=50:25; case "$set_name" in soc-onoff|soc-mps) ITF_SHARES=50:50 ;; esac
 source "$ROOT/utility/lib/mps.sh"
 run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be "-"
     local tgt="${2%%|*}" itf="${2#*|}" pid="" rc

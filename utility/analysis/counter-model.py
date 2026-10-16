@@ -7,9 +7,9 @@
     python3 utility/analysis/counter-model.py new-compare  the validation set against its pairs
 
 Each network is characterised once, alone on 8 SMs:
-  D    DRAM GB/s, run average of the GPU's own counters (profiles/derived/dram.csv, green context 50 %)
+  D    DRAM GB/s, run average of the GPU's own counters (profiles/derived/dram.csv, MPS static 50 %)
   L    L2 GB/s: ncu L2 bytes per inference (profiles/ncu/nets, 4 SMs; bytes per inference don't
-       depend on the SM budget, MEASUREMENTS.md) times the inferences per second at 8 SMs
+       depend on the SM budget, MEASUREMENTS.md) times the inferences per second at 8 SMs (MPS static)
   h    L2 hit rate, weighted by L2 bytes
   p    presence: kernels per inference x 0.87 us per kernel boundary over the latency alone (exp23),
        the dispatch cost no memory counter sees (tab:l2-presence: 0.83-0.91 us per boundary)
@@ -33,12 +33,13 @@ an average of rates. Presence is not summed: two co-runners cost less than twice
 notes/p99-models.md). The checks print the measured traffic of two networks together against the sum
 of their alone runs, which the sum cannot see.
 
-ponytail: the isolated profiles are green-context runs while the pairs are MPS static; the check
-against MobileNet alone under MPS static (soc-l2) bounds the difference for one network.
+ponytail: L2 bytes per inference come from ncu on a green context while the pairs are MPS static;
+D and the inference rate are MPS static (soc-mps). The checks print, per network, the MPS static
+profile against the green-context one it replaced (soc-budget).
 
 The validation set (2026-10-13, notes/p99-models.md): the coefficients frozen on the 12 pairs
 (counter-model-coeffs.csv) applied to the networks of stress.py's smoothnew geometry. The new
-networks are profiled exactly as the four: D from profile.sh soc-new, L and h from ncu.sh nets-new,
+networks are profiled exactly as the four: D from profile.sh soc-mps, L and h from ncu.sh nets-new,
 kernels per inference from profile.sh kernels-new (kernels over inferences, which gives 55, 76, 101
 and 172 for the four), p against their alone row in stress-new (exp26). new-predict writes
 stress-predictions-counters-new-<variant>.csv and reads no pair; new-compare scores them on the
@@ -64,6 +65,12 @@ ENG_NEW = {"mobilenetint8": ("mobilenetv2-12-int8", 55), "resnetint8": ("resnet5
            "inceptionint8": ("inception_v3-int8", 101), "retinanetint8": ("retinanet-9-int8", 167),
            "efficientnet": ("efficientnet_b0", 139), "vit": ("vit-base-patch16-224", 92)}
 PRESENCE_US = 0.87
+# D and the inference rate behind L come from each network alone in an 8-SM MPS static partition
+# (profile.sh soc-mps), the configuration of the pairs (the user, 2026-10-16; until then the green
+# context of soc-budget, "soc-greenctx-%s-50"). The ncu L2 bytes stay a green-context profile: ncu
+# replays one kernel per MPS client (Nsight Compute profiling guide, "Multi-Process Service"), and
+# bytes per inference are a property of the kernels, not of the partition (MEASUREMENTS.md).
+DRAM_ARM = "soc-mps-%s-50"
 SATURATION_GB_S = 135.0      # the highest GPU DRAM rate measured: SAXPY back to back on 8 SMs
 VARIANTS = {"dram": lambda t, c: [c["D"], t["D"] * c["D"]],
             "l2": lambda t, c: [c["L"], t["L"] * c["L"]],
@@ -96,7 +103,7 @@ def profile(data, eng_map=ENG, family="exp23"):
     dram = {r["arm"]: r for r in csv.DictReader(open(os.path.join(P.DERIVED, "dram.csv")))}
     out = {}
     for net, (eng, kpi) in eng_map.items():
-        r = dram["soc-greenctx-%s-50" % eng]
+        r = dram[DRAM_ARM % eng]
         l2_mb, hit, n = ncu_l2(eng, kpi)
         alone_ms = A.aggr(data, family, net + "-alone", net, "gpu_ms", "median")[0]
         out[net] = dict(D=float(r["gb_s_run_average"]), dram_mb=float(r["mb_per_inference"]),
@@ -155,17 +162,12 @@ def checks(prof, rows):
     for r in csv.DictReader(open(os.path.join(P.DERIVED, "pair-traffic.csv"))):
         print("  two networks together (green context) %-40s measured / sum of alone %s"
               % (r["arm"].replace("soc-greenctx-", ""), r["ratio"]))
-    # MobileNet alone under MPS static (soc-l2, 50 % partition) against the green-context profile.
-    # The GB/s scale is profiles.py's calibration, taken from its derived file.
-    cal = next(csv.DictReader(open(os.path.join(P.DERIVED, "calibration.csv"))))
-    P.COPY_GB_S, P.COPY_READ_PCT, P.COPY_WRITE_PCT = (float(cal[k]) for k in ("copy_gb_s", "read_pct", "write_pct"))
-    stem = os.path.join(P.PROF, "soc-l2", "mobilenet-alone")
-    nets, _ = P.report(stem + ".log")
-    n, rate = nets["mobilenet"]
-    mb = P.dram_gb(stem)[0] * 1e3 / (n + P.WARMUP)
-    m = prof["mobilenet"]
-    print("  MobileNet alone, MPS static: %.2f MB/inf, %.1f GB/s, %.0f inf/s; green context: %.2f MB/inf, %.1f GB/s"
-          % (mb, mb * rate / 1e3, rate, m["dram_mb"], m["D"]))
+    # Each network alone in MPS static (the profile) against the green context it replaced.
+    dram = {r["arm"]: r for r in csv.DictReader(open(os.path.join(P.DERIVED, "dram.csv")))}
+    for net, (eng, _) in ENG.items():
+        g, m = dram["soc-greenctx-%s-50" % eng], prof[net]
+        print("  %-10s alone, MPS static: %.2f MB/inf, %.1f GB/s; green context: %.2f MB/inf, %.1f GB/s"
+              % (net, m["dram_mb"], m["D"], float(g["mb_per_inference"]), float(g["gb_s_run_average"])))
 
 
 def write(name, rows):
