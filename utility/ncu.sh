@@ -117,6 +117,7 @@ pair)
     echo "   at a side of 512 this reads about 4.98 % of peak read and 4.0 % write"
     ;;
 nets|nets-new)
+    OUT=$OUT/nets; mkdir -p "$OUT"       # where counter-model.py reads them
     # Each network alone on a 4 SM green context, all kernels of a few inferences after the
     # warm-up, which is 200 inferences: the skip is 205 inferences' worth of kernels and the count
     # four inferences', from each engine's kernels per inference (the period of its kernel sequence). --cache-control none keeps the L2 warm between kernels, as in a real inference,
