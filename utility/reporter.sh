@@ -10,6 +10,7 @@
 #   utility/reporter.sh networks-8sm         each network alone as the co-runner, on 8 SMs (8 + 8)
 #   utility/reporter.sh calibration-smooth   idle, spin and smooth SAXPY on 8 SMs: the validation set's ruler
 #   utility/reporter.sh networks-new-8sm     the validation pairs' ten networks as the co-runner, on 8 SMs
+#   utility/reporter.sh compose-4sm          two smooth SAXPY on 4 SMs each, four levels each, and each alone
 #   utility/reporter.sh <set> --list         print the configurations, run nothing
 #
 # The reporter is RRZE-HPC's gpu-latency (utility/probes/gpu-latency): one thread chasing pointers
@@ -73,6 +74,8 @@ MPS_MODE=off
 # A network as a co-runner: its own process, the whole of its partition, and the campaign's protocol
 # (at least 5000 inferences and 30 s). The reporter runs for as long as it does, and the network then
 # exits by itself and writes its statistics.
+# The smooth SAXPY at duty $1 (025 ... 100): 100 us periods, so the reporter's windows see it uniform.
+smooth() { echo "$ITF saxpy --period-us 100 --duty $((10#$1 / 100)).$(printf '%02d' $((10#$1 % 100))) --burst 2"; }
 net() { echo "$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $1:100:$2 --min-inferences 5000 --min-duration $DURATION"; }
 
 # The configurations of each set, one per line: name|co-runner shares|co-runner commands (;-separated).
@@ -167,7 +170,28 @@ configs() {
         echo "spin|50|$ITF spin --kernel-us 100"
         local d
         for d in 025 050 075 100; do
-            echo "smooth-D$d|50|$ITF saxpy --period-us 100 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --burst 2"
+            echo "smooth-D$d|50|$(smooth $d)"
+        done
+        ;;
+    compose-4sm)
+        # Daniel's composition test (2026-10-22): does the stress of two co-runners add up? Two smooth
+        # SAXPY on 4 SMs each beside the reporter on 8, four duties each, every combination, and each
+        # duty alone on the first 4-SM partition (chunks {2,6}). The second, the remaining 4 SMs, has no
+        # alone runs: the combinations hold every pair in both orders, which tests the two partitions
+        # against each other. The spins are the zero, one resident co-runner and two. Run with
+        # LAYOUT=target, after calibration-smooth into the same OUTROOT: the 8-SM ruler turns each
+        # reading into an equivalent stress (utility/analysis/compose.py). top8, the plain kernel back
+        # to back on 8 SMs (ON/OFF at 100 %, ~135 GB/s), extends that ruler above smooth-D100 (~111):
+        # two 4-SM stressors at high duty can read heavier than the smooth ruler's top.
+        echo "top8|50|$ITF saxpy --onoff-ms 400 --duty 1.00"
+        echo "spin4|25|$ITF spin --kernel-us 100"
+        echo "spin4+spin4|25:25|$ITF spin --kernel-us 100;$ITF spin --kernel-us 100"
+        local a b
+        for a in 025 050 075 100; do
+            echo "s4-D$a|25|$(smooth $a)"
+            for b in 025 050 075 100; do
+                echo "s4-D$a+s4-D$b|25:25|$(smooth $a);$(smooth $b)"
+            done
         done
         ;;
     networks-new-8sm)
@@ -195,7 +219,7 @@ configs() {
 }
 
 set_name="${1:-}"
-configs "$set_name" >/dev/null || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+configs "$set_name" >/dev/null || { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 if [ "${2:-}" = "--list" ]; then
     configs "$set_name" | while IFS='|' read -r name shares cmds; do
         printf '%-14s shares %-6s %s\n' "$name" "${shares:-none}" "${cmds:-(no co-runner)}"
