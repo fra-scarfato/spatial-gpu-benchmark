@@ -178,6 +178,12 @@ void Network::measure(StartGate& gate) {
     timedCount_     = n;
     timedDurationS_ = secondsSince(t0);
     csv_.close();
+
+    // A co-runner stopped by the sweep writes no results, but its throughput is still wanted (the
+    // inferences everyone completed, for the energy per inference), so the count goes to the log.
+    if (g_stop)
+        std::cerr << std::format("[info] {} timed inferences in {:.2f} s before the stop\n",
+                                 timedCount_, timedDurationS_);
 }
 
 void Network::report() const {

@@ -179,10 +179,12 @@ def dram_gb(stem):
 
 def dram_tables():
     rows = []
-    # soc-new and soc-mps: single networks alone at 50 % (green context, MPS static)
+    # soc-new and soc-mps: single networks alone at 50 % (green context, MPS static); soc-mps-sizes:
+    # the same under MPS static at 25, 37, 63 and 75 % (the geometry test)
     for rep in sorted(glob.glob(os.path.join(PROF, "soc-budget", "*.nsys-rep")) +
                       glob.glob(os.path.join(PROF, "soc-new", "*.nsys-rep")) +
-                      glob.glob(os.path.join(PROF, "soc-mps", "*.nsys-rep"))):
+                      glob.glob(os.path.join(PROF, "soc-mps", "*.nsys-rep")) +
+                      glob.glob(os.path.join(PROF, "soc-mps-sizes", "*.nsys-rep"))):
         stem = rep[:-len(".nsys-rep")]
         extract(rep, ("dram",))
         nets, _ = report(stem + ".log")

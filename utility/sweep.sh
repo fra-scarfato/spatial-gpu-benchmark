@@ -383,6 +383,42 @@ move_back() {  # $1 = tmpfs prefix, $2 = results prefix
 # stress-validation), spinning for hours instead of failing.
 RUN_TIMEOUT="${RUN_TIMEOUT:-600}"
 
+# POWER=1: each run also writes <out>_power.log, the board's three INA3221 rails sampled every 200 ms
+# from the start of the first process to the end of the target. hwmon and not tegrastats, because
+# tegrastats stamps its lines to the second; here each line starts with /proc/uptime (10 ms, the
+# boot clock, which equals the runner's CLOCK_MONOTONIC stamps on a board that never suspends), so
+# the analysis can cut exactly the target's timed window. The loop forks only sleep: read is a
+# builtin, so the sampler costs the CPU next to nothing.
+POWER="${POWER:-0}"
+POWER_HW=""
+for h in /sys/class/hwmon/hwmon*; do
+    [ "$(cat "$h/in1_label" 2>/dev/null)" = VDD_GPU_SOC ] && POWER_HW="$h"
+done
+power_start() {  # $1 = output prefix; sets POWER_PID
+    POWER_PID=""
+    [ "$POWER" = 1 ] || return 0
+    [ -n "$POWER_HW" ] || { echo "[sweep] ABORT: POWER=1 but no INA3221 with VDD_GPU_SOC" >&2; exit 1; }
+    (
+        local h="$POWER_HW" up _ v1 c1 v2 c2 v3 c3
+        echo "uptime_s gpu_soc_mV gpu_soc_mA cpu_cv_mV cpu_cv_mA sys5v_mV sys5v_mA"
+        while :; do
+            read -r up _ < /proc/uptime
+            read -r v1 < "$h/in1_input"; read -r c1 < "$h/curr1_input"
+            read -r v2 < "$h/in2_input"; read -r c2 < "$h/curr2_input"
+            read -r v3 < "$h/in3_input"; read -r c3 < "$h/curr3_input"
+            echo "$up $v1 $c1 $v2 $c2 $v3 $c3"
+            sleep 0.2
+        done
+    ) > "$1_power.log" 2>&1 &
+    POWER_PID=$!
+}
+power_stop() {
+    [ -n "${POWER_PID:-}" ] || return 0
+    kill "$POWER_PID" 2>/dev/null || true
+    wait "$POWER_PID" 2>/dev/null || true
+    POWER_PID=""
+}
+
 do_job() {  # $1 = spec, $2 = output prefix
     local spec="$1" out="$2"
     local kind mps envA envB cmdA cmdB ratio rc_a=0 rc_b=0
@@ -407,8 +443,11 @@ do_job() {  # $1 = spec, $2 = output prefix
     # an empty unquoted expansion simply disappears. (That is also why the
     # shellcheck warnings here are disabled rather than "fixed".)
     if [ "$kind" = solo ]; then
+        power_start "$out"
         # shellcheck disable=SC2086
-        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || return 1
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 ||
+            { power_stop; return 1; }
+        power_stop
         move_back "$tmp" "$out"
         return 0
     fi
@@ -431,6 +470,7 @@ do_job() {  # $1 = spec, $2 = output prefix
     if [ "$kind" = itf ]; then
         local cos c k=1 pids=() envk log
         IFS=';' read -ra cos <<< "$cmdB"
+        power_start "$out"
         for c in "${cos[@]}"; do
             envk="$envB"
             if [ "$mps" = static ]; then
@@ -447,6 +487,7 @@ do_job() {  # $1 = spec, $2 = output prefix
         sleep 3
         # shellcheck disable=SC2086
         timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
+        power_stop
         kill -TERM "${pids[@]}" 2>/dev/null || true
         wait "${pids[@]}" 2>/dev/null || true
         move_back "$tmp" "$out"

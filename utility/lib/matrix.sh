@@ -723,3 +723,70 @@ for n in "efficientnet:$EFF" "vit:$VIT"; do
 done
 new_pair efficientnet "$EFF" vit "$VIT"
 new_pair vit "$VIT" efficientnet "$EFF"
+
+
+# Geometry (the user, 2026-10-28): the L2 counter model, frozen on the 8 + 8 pairs, tested unchanged on
+# other splits and with two co-runners. The four development networks plus EfficientNet and the ViT
+# (option C), so the test covers a new geometry and new networks at once.
+#
+# stress-split-412 / -610 / -124: the target on 4, 6 or 12 SMs (shares 25, 37, 75; 2-SM chunks round
+# 37 to 3 chunks) and the co-runner on the rest. Each target alone (the rest empty), beside spin (the
+# dispatch cost with no traffic, against the model's p_t on that partition) and beside every other
+# network: all 30 ordered pairs of the six.
+# stress-sizes: each network alone on 8 and 10 SMs. With the alone rows of the splits (4, 6, 12 SMs)
+# they give the inference rate at every size, which scales the frozen 8-SM L to the other sizes.
+# stress-triple: 8 + 4 + 4. Each target alone, beside one spin on 4 SMs and two spins on 4 + 4 (the
+# growth of the dispatch cost, checked per target against the 1.59 measured on MobileNet), beside each
+# single network on 4 SMs (all 30 ordered pairs at 8 + 4), and beside two different networks: every
+# development target with each pair of the other three and with EfficientNet + ViT, and EfficientNet
+# (ViT) as target with ViT (EfficientNet) and each development network. 24 triples.
+# power-check-off / -on: MobileNet alone on 8 SMs, run once with POWER=0 and once with POWER=1, to see
+# that the hwmon sampler does not move the p99.
+GEO_NETS="$STRESS_TARGETS efficientnet:$EFF vit:$VIT"
+geo_co() { echo "$RUNNER --submit-threads 1 --dataset $DS --fixed 32 --allocation whole --net $2:100:$1 --min-inferences 100 --min-duration 600 --csv /dev/shm/fs-stress-co-$1"; }
+eng_of() { local n; for n in $GEO_NETS; do [ "${n%%:*}" = "$1" ] && echo "${n#*:}"; done; }
+for sp in 412:25 610:37 124:75; do
+    for t in $GEO_NETS; do
+        tn="${t%%:*}"; te="${t#*:}"
+        add "stress-split-${sp%%:*}_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||${sp#*:}"
+        add "stress-split-${sp%%:*}_${tn}-spin" "itf|static|||$(stress_target "$tn" "$te")|$SPIN 100|${sp#*:}"
+        for c in $GEO_NETS; do
+            [ "$c" = "$t" ] && continue
+            add "stress-split-${sp%%:*}_${tn}+${c%%:*}" \
+                "itf|static|||$(stress_target "$tn" "$te")|$(geo_co "${c%%:*}" "${c#*:}")|${sp#*:}"
+        done
+    done
+done
+for t in $GEO_NETS; do
+    add "stress-sizes_${t%%:*}-alone08" "solo|static|||$(stress_target "${t%%:*}" "${t#*:}")||50"
+    add "stress-sizes_${t%%:*}-alone10" "solo|static|||$(stress_target "${t%%:*}" "${t#*:}")||63"
+done
+for t in $GEO_NETS; do
+    tn="${t%%:*}"; te="${t#*:}"
+    add "stress-triple_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
+    add "stress-triple_${tn}-spin4" "itf|static|||$(stress_target "$tn" "$te")|$SPIN 100|50:25"
+    add "stress-triple_${tn}-spin4x2" "itf|static|||$(stress_target "$tn" "$te")|$SPIN 100;$SPIN 100|50:25:25"
+    for c in $GEO_NETS; do
+        [ "$c" = "$t" ] && continue
+        add "stress-triple_${tn}+${c%%:*}" \
+            "itf|static|||$(stress_target "$tn" "$te")|$(geo_co "${c%%:*}" "${c#*:}")|50:25"
+    done
+done
+geo_triple() {  # target, co-runner a, co-runner b
+    add "stress-triple_${1}+${2}+${3}" \
+        "itf|static|||$(stress_target "$1" "$(eng_of "$1")")|$(geo_co "$2" "$(eng_of "$2")");$(geo_co "$3" "$(eng_of "$3")")|50:25:25"
+}
+DEV="mobilenet resnet inception retinanet"
+for t in $DEV; do
+    others=(); for c in $DEV; do [ "$c" = "$t" ] || others+=("$c"); done
+    geo_triple "$t" "${others[0]}" "${others[1]}"
+    geo_triple "$t" "${others[0]}" "${others[2]}"
+    geo_triple "$t" "${others[1]}" "${others[2]}"
+    geo_triple "$t" efficientnet vit
+done
+for c in $DEV; do
+    geo_triple efficientnet vit "$c"
+    geo_triple vit efficientnet "$c"
+done
+add "power-check-off_mobilenet-alone" "solo|static|||$(stress_target mobilenet "$MOB")||50"
+add "power-check-on_mobilenet-alone" "solo|static|||$(stress_target mobilenet "$MOB")||50"

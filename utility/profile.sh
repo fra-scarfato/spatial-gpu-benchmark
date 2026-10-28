@@ -101,6 +101,20 @@ arms() {
             echo "soc-mps-${m#*:}-50|ITF|--allocation whole --net ${m%%:*}:50:${m#*:}|-"
         done
         ;;
+    soc-mps-sizes)
+        # The geometry test (the user, 2026-10-28): the four development networks, EfficientNet and the
+        # ViT alone in an MPS static partition of 4, 6, 10 and 12 SMs (shares 25, 37, 63, 75; the rest of
+        # the device is a second, empty partition), the inference rate and DRAM traffic at each size
+        # from the same tool as soc-mps's 8 SMs. The share is the arm's last field; run_itf reads it.
+        local m p
+        for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9" \
+                 "$M/efficientnet_b0/engine/efficientnet_b0.engine:efficientnet_b0" \
+                 "$M/vit-base-patch16-224/engine/vit-base-patch16-224.engine:vit-base-patch16-224"; do
+            for p in 25 37 63 75; do
+                echo "soc-mps-${m#*:}-$p|ITF|--allocation whole --net ${m%%:*}:50:${m#*:}|-"
+            done
+        done
+        ;;
     soc-budget)
         local m p
         for m in "$MOB:mobilenetv2-12" "$RES:resnet50-v2-7" "$INC:inception_v3" "$RET:retinanet-9"; do
@@ -266,7 +280,9 @@ run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", ei
     [ "$tgt" = - ] && tgt=""
     [ "$itf" = - ] && itf=""
     mps_stop                          # a daemon left by an interrupted run would block the start
-    mps_start static > "$OUT/$1.mps.log" && mps_create_partitions "$ITF_SHARES" >> "$OUT/$1.mps.log" ||
+    local shares="$ITF_SHARES"
+    [ "$set_name" = soc-mps-sizes ] && shares="${1##*-}"   # one share: the arm's partition and the rest
+    mps_start static > "$OUT/$1.mps.log" && mps_create_partitions "$shares" >> "$OUT/$1.mps.log" ||
         { mps_stop; return 1; }
     # shellcheck disable=SC2086  # tgt and itf are lists of words by construction
     if [ -z "$tgt" ]; then

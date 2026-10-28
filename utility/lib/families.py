@@ -84,6 +84,13 @@ EXP_DIR = {
     "dispatch-count":              "exp25",
     "stress-new":                  "exp26",
     "stress-validation-new":       "exp27",
+    "stress-split-412":            "exp28",
+    "stress-split-610":            "exp29",
+    "stress-split-124":            "exp30",
+    "stress-sizes":                "exp31",
+    "stress-triple":               "exp32",
+    "power-check-off":             "exp33",
+    "power-check-on":              "exp34",
 }
 
 def key_map():
