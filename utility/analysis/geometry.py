@@ -32,11 +32,22 @@ frozen side by side (the user, 2026-10-28):
 and the presence of two co-runners is g p_t, with g the growth from one spin to two on MobileNet
 (exp25 against exp19: +13.7 % against +8.6 % at the p99, g = 1.60), recomputed here from the data.
 
+Every tenant is a victim (the user, 2026-10-28: admission checks each admitted network's p99, not only
+the newcomer's). The target is measured as always; each runner co-runner's per-inference rows are kept
+by sweep.sh as r<k>_co<i>.csv, cut to the target's timed window, and its p99 is set against its own
+network's alone row at its size. Its prediction is the same model with the roles swapped: its own p
+and L at its size, the others' loads at theirs. So 6+10 also tests a victim on 10 SMs, 8+4 a victim on
+4 next to 8, and 8+4+4 two victims on 4 next to 8 + 4. All of them are frozen with the targets'.
+
 Sacrifices, chosen knowingly:
 - rho was measured on SAXPY streams and is applied to networks by their DRAM GB/s alone. Networks on
   4 SMs sit at the light end of the table, where rho is within the noise of its zero. This is why the
   three versions are frozen together instead of one being picked before the triples are seen.
 - g is MobileNet's; the spin rows of stress-triple check it per target, they do not feed it.
+- A co-runner victim in 8+4+4 has its two co-runners on 8 and 4 SMs, while rho was measured with two
+  on 4. It is read by their DRAM GB/s all the same (clamped); its error is reported apart.
+- A co-runner's p99 comes from fewer rows than the target's when it is the slower network (it runs only
+  inside the target's ~30 s window); runs with fewer than 100 rows there are dropped.
 - The power is the three INA3221 rails of the module (GPU+SoC, CPU, 5 V system input) over the
   target's timed window, not the wall plug.
 """
@@ -68,6 +79,7 @@ SPLITS = {"exp28": ("412", 4, 12), "exp29": ("610", 6, 10), "exp30": ("124", 12,
 ALONE = {4: ("exp28", "-alone"), 6: ("exp29", "-alone"), 12: ("exp30", "-alone"),
          8: ("exp31", "-alone08"), 10: ("exp31", "-alone10")}
 TRIPLE = "exp32"
+FAMILY_DIR = {e: f for f, e in A.EXP_DIR.items() if e in ("exp28", "exp29", "exp30", "exp31", "exp32")}
 FROZEN = os.path.join(C.AGG, "geometry-triple-predictions.csv")
 
 
@@ -173,21 +185,97 @@ def slowdown(data, exp, cfg, net, alone_cfg):
     return m[0] / a[0] if m and a else None
 
 
+def alone_p99(data, net, n):
+    """The p99 of a network alone on n SMs (median over runs), from this campaign's alone rows."""
+    exp, suf = ALONE[n]
+    a = A.aggr(data, exp, net + suf, net, "gpu_ms", "p99")
+    return a[0] if a else None
+
+
+def corunner_p99(d, k):
+    """Median over the runs in folder d of the k-th co-runner's p99, over the target's timed window only.
+
+    The co-runner starts 3 s before the target and is stopped after it, so its rows outside the window
+    were taken next to a target that was loading or gone. Runs without the target's stats file (not
+    done) or with fewer than 100 rows in the window are skipped. np.percentile's linear rule is the
+    runner's own (stats.cpp)."""
+    v = []
+    for lat in sorted(glob.glob(os.path.join(d, "r*_latencies.csv"))):
+        run = os.path.basename(lat)[:-len("_latencies.csv")]
+        co = os.path.join(d, "%s_co%d.csv" % (run, k))
+        if not (os.path.exists(co) and os.path.exists(os.path.join(d, run + "_stats.csv"))):
+            continue
+        lo, hi = timed_window(lat)
+        x = [float(r["gpu_ms"]) for r in csv.DictReader(open(co))
+             if r["phase"] == "bench" and lo <= int(r["t_start_ns"]) / 1e9 and int(r["t_end_ns"]) / 1e9 <= hi]
+        if len(x) >= 100:
+            v.append(float(np.percentile(x, 99)))
+    return st.median(v) if v else None
+
+
+def victims(cfg, n_target, n_co):
+    """The tenants of a configuration "t+a[+b]" as (victim, its SMs, position, [(other, its SMs)])."""
+    t, cos = cfg.split("+")[0], cfg.split("+")[1:]
+    out = [(t, n_target, "target", [(c, n_co) for c in cos])]
+    for k, c in enumerate(cos, 1):
+        out.append((c, n_co, "co%d" % k, [(t, n_target)] + [(o, n_co) for o in cos if o != c]))
+    return out
+
+
+def measured(data, exp, cfg, victim, n, pos):
+    """p99 slowdown of one tenant: the target's from its stats, a co-runner's from its kept rows."""
+    if pos == "target":
+        return slowdown(data, exp, cfg, victim, victim + "-alone")
+    m, a = corunner_p99(os.path.join(P.BENCH, FAMILY_DIR[exp], cfg), int(pos[2:])), alone_p99(data, victim, n)
+    return m / a if m and a else None
+
+
+def victim_preds(b, inp, victim, n, others, rho_xr=None, g=1.0):
+    """The frozen model's p99 slowdown of one victim on n SMs beside others [(net, SMs)], per input
+    source. One other: {"scaled": s, "sudo": s}. Two others: the three composition versions
+    {"sum_scaled": ..., "rho_scaled": ..., "rho_max1_scaled": ...}, plus the rho used ("rhoval_*")."""
+    out = {}
+    for src in ("scaled", "sudo"):
+        Lv = inp[victim][n]["L_" + src]
+        Ls = [inp[o][m]["L_" + src] for o, m in others]
+        Ds = [inp[o][m]["D_" + src] for o, m in others]
+        if Lv is None or None in Ls:
+            continue
+        p = inp[victim][n]["p"]
+        if len(others) == 1:
+            out[src] = predict(b, p, Lv, Ls[0])
+            continue
+        r = rho(rho_xr[0], rho_xr[1], Ds[0], Ds[1])
+        out["rhoval_" + src] = r
+        for v, f in (("sum", 1.0), ("rho", r), ("rho_max1", max(1.0, r))):
+            out["%s_%s" % (v, src)] = predict(b, p, Lv, sum(Ls), g, f)
+    return out
+
+
 def summary(label, errs):
     e = np.array(errs)
     if not len(e):
-        return "  %-28s (no rows)" % label
-    return "  %-28s n %2d  mean |e| %4.1f  max |e| %4.1f  under %2d  worst %+5.1f  bias %+5.1f" % (
+        return "  %-44s (no rows)" % label
+    return "  %-44s n %2d  mean |e| %4.1f  max |e| %4.1f  under %2d  worst %+5.1f  bias %+5.1f" % (
         label, len(e), np.abs(e).mean(), np.abs(e).max(), (e < 0).sum(), min(e.min(), 0), e.mean())
 
 
-def block(t, *cs):
-    return "development" if all(n in DEV for n in (t,) + cs) else "with EfficientNet/ViT"
+def block(*nets):
+    return "development" if all(n in DEV for n in nets) else "with EfficientNet/ViT"
 
 
 def write(name, rows):
-    if rows:
-        C.write(name, rows)
+    """rows to bench/aggregate/<name>; the columns are the union over rows (spin and pair rows, 8+4 and
+    8+4+4 rows carry different predictions), in first-seen order, empty where a row has none."""
+    if not rows:
+        return
+    keys = list(dict.fromkeys(k for r in rows for k in r))
+    path = os.path.join(C.AGG, name)
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=keys, restval="")
+        w.writeheader()
+        w.writerows(rows)
+    print("  wrote", path)
 
 
 # ------------------------------------------------------------------ commands
@@ -208,78 +296,47 @@ def cmd_inputs():
 
 
 def cmd_splits():
+    """Every tenant of every split pair against the frozen model; the spin rows against p_t."""
     data = A.load(P.BENCH)
     inp, b = inputs(data), coefficients()
     rows, err = [], {}
     for exp, (name, nt, nc) in SPLITS.items():
-        print("\nsplit %d + %d (target on %d SMs): p99 slowdown, measured and frozen model (error, points)"
-              % (nt, nc, nt))
+        print("\nsplit %d + %d: p99 slowdown of each tenant, measured and frozen model (error, points)" % (nt, nc))
         for t in NETS:
             if nt not in inp[t]:
                 continue
-            x = inp[t][nt]
             s = slowdown(data, exp, t + "-spin", t, t + "-alone")
             if s:
-                e = (1 + x["p"] - s) * 100
-                err.setdefault(("dispatch", name), []).append(e)
-                print("  %-12s %-12s meas %6.3f  p_t %6.3f (%+5.1f)" % (t, "spin", s, 1 + x["p"], e))
-                rows.append(dict(split=name, target=t, corunner="spin", measured=round(s, 4),
-                                 pred_scaled=round(1 + x["p"], 4), err_scaled=round(e, 2), pred_sudo="", err_sudo=""))
+                e = (1 + inp[t][nt]["p"] - s) * 100
+                err.setdefault(("dispatch", name, "victim on %d SMs" % nt), []).append(e)
+                print("  %-12s %2d SMs  beside spin       meas %6.3f  p_t %6.3f (%+5.1f)" % (
+                    t, nt, s, 1 + inp[t][nt]["p"], e))
+                rows.append(dict(split=name, config=t + "-spin", victim=t, victim_sms=nt, position="target",
+                                 measured=round(s, 4), pred_scaled=round(1 + inp[t][nt]["p"], 4), err_scaled=round(e, 2)))
             for c in NETS:
-                if c == t or nc not in inp[c]:
+                if c == t:
                     continue
-                s = slowdown(data, exp, t + "+" + c, t, t + "-alone")
-                if not s:
-                    continue
-                y = inp[c][nc]
-                ps = predict(b, x["p"], x["L_scaled"], y["L_scaled"])
-                pr = (predict(b, x["p"], x["L_sudo"], y["L_sudo"])
-                      if x["L_sudo"] is not None and y["L_sudo"] is not None else None)
-                es = (ps - s) * 100
-                er = (pr - s) * 100 if pr is not None else None
-                err.setdefault(("scaled", name, block(t, c)), []).append(es)
-                if er is not None:
-                    err.setdefault(("sudo", name, block(t, c)), []).append(er)
-                print("  %-12s %-12s meas %6.3f  scaled %6.3f (%+5.1f)  sudo %s" % (
-                    t, c, s, ps, es, "%6.3f (%+5.1f)" % (pr, er) if pr is not None else "-"))
-                rows.append(dict(split=name, target=t, corunner=c, measured=round(s, 4),
-                                 pred_scaled=round(ps, 4), err_scaled=round(es, 2),
-                                 pred_sudo=round(pr, 4) if pr is not None else "",
-                                 err_sudo=round(er, 2) if er is not None else ""))
+                cfg = t + "+" + c
+                for v, n, pos, others in victims(cfg, nt, nc):
+                    if n not in inp[v] or any(m not in inp[o] for o, m in others):
+                        continue
+                    s = measured(data, exp, cfg, v, n, pos)
+                    if not s:
+                        continue
+                    pr = victim_preds(b, inp, v, n, others)
+                    row = dict(split=name, config=cfg, victim=v, victim_sms=n, position=pos, measured=round(s, 4))
+                    line = "  %-12s %2d SMs  beside %-10s meas %6.3f" % (v, n, others[0][0], s)
+                    for src, val in pr.items():
+                        e = (val - s) * 100
+                        row["pred_" + src], row["err_" + src] = round(val, 4), round(e, 2)
+                        err.setdefault((src, name, "victim on %d SMs" % n, block(t, c)), []).append(e)
+                        line += "  %s %6.3f (%+5.1f)" % (src, val, e)
+                    print(line)
+                    rows.append(row)
     print("\nsummary (points; dispatch = spin row against p_t)")
     for k in sorted(err):
         print(summary(" / ".join(k), err[k]))
     write("geometry-splits.csv", rows)
-
-
-def triple_rows(data):
-    """Every 8+4 pair and 8+4+4 triple of stress-triple, with its frozen predictions; reads no pair."""
-    inp, b = inputs(data), coefficients()
-    x, R = rho_table()
-    g = dispatch_growth(data)
-    cfgs = sorted({k[1] for k in data if k[0] == TRIPLE} | set(planned_triples()))
-    rows = []
-    for cfg in cfgs:
-        parts = cfg.split("+")
-        if len(parts) < 2 or "-" in cfg:
-            continue
-        t, cos = parts[0], parts[1:]
-        tx = inp[t][8]
-        row = dict(target=t, corunners="+".join(cos), g=round(g, 4))
-        for src in ("scaled", "sudo"):
-            Ls = [inp[c][4]["L_" + src] for c in cos]
-            Ds = [inp[c][4]["D_" + src] for c in cos]
-            if tx["L_" + src] is None or None in Ls:
-                continue
-            if len(cos) == 1:
-                row["pred_%s" % src] = round(predict(b, tx["p"], tx["L_" + src], Ls[0]), 4)
-                continue
-            r = rho(x, R, Ds[0], Ds[1])
-            row["rho_" + src] = round(r, 4)
-            for v, f in (("sum", 1.0), ("rho", r), ("rho_max1", max(1.0, r))):
-                row["pred_%s_%s" % (v, src)] = round(predict(b, tx["p"], tx["L_" + src], sum(Ls), g, f), 4)
-        rows.append(row)
-    return rows
 
 
 def planned_triples():
@@ -295,6 +352,24 @@ def planned_triples():
     return out
 
 
+def triple_rows(data):
+    """Every tenant of every planned 8+4 pair and 8+4+4 triple, with its frozen predictions; reads no
+    pair. The target is on 8 SMs, each co-runner on 4."""
+    inp, b = inputs(data), coefficients()
+    xr, g = rho_table(), dispatch_growth(data)
+    rows = []
+    for cfg in planned_triples():
+        for v, n, pos, others in victims(cfg, 8, 4):
+            if n not in inp[v] or any(m not in inp[o] for o, m in others):
+                print("  WARNING: %s, victim %s: an alone row is missing, no prediction frozen" % (cfg, v))
+                continue
+            row = dict(config=cfg, victim=v, victim_sms=n, position=pos, g=round(g, 4))
+            row.update({("pred_" + k if not k.startswith("rhoval_") else k): round(val, 4)
+                        for k, val in victim_preds(b, inp, v, n, others, xr, g).items()})
+            rows.append(row)
+    return rows
+
+
 def sha256(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
@@ -304,7 +379,8 @@ def cmd_triple_predict():
     if any(k[0] == TRIPLE and "+" in k[1] for k in data):
         raise SystemExit("geometry.py: stress-triple pairs exist already; the predictions must be frozen before them")
     rows = triple_rows(data)
-    keys = sorted({k for r in rows for k in r}, key=lambda k: (k not in ("target", "corunners"), k))
+    head = ["config", "victim", "victim_sms", "position", "g"]
+    keys = head + sorted({k for r in rows for k in r} - set(head))
     with open(FROZEN, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=keys)
         w.writeheader()
@@ -320,21 +396,20 @@ def cmd_triple_compare():
         raise SystemExit("geometry.py: %s changed after it was frozen" % FROZEN)
     print("  frozen predictions intact (sha256 %s...)" % want[:12])
     err, out = {}, []
-    print("\n8 + 4 and 8 + 4 + 4: p99 slowdown, measured and frozen predictions (error, points)")
+    print("\n8 + 4 and 8 + 4 + 4: p99 slowdown of each tenant, measured and frozen predictions (error, points)")
     for p in csv.DictReader(open(FROZEN)):
-        t, cos = p["target"], p["corunners"].split("+")
-        s = slowdown(data, TRIPLE, t + "+" + p["corunners"], t, t + "-alone")
+        cfg, v, n, pos = p["config"], p["victim"], int(p["victim_sms"]), p["position"]
+        s = measured(data, TRIPLE, cfg, v, n, pos)
         if not s:
             continue
-        geo = "8+4" if len(cos) == 1 else "8+4+4"
-        line = "  %-5s %-12s %-26s meas %6.3f" % (geo, t, p["corunners"], s)
-        row = dict(geometry=geo, target=t, corunners=p["corunners"], measured=round(s, 4))
-        for k, v in p.items():
-            if k.startswith("pred_") and v:
-                e = (float(v) - s) * 100
-                row[k] = float(v)
-                row["err" + k[4:]] = round(e, 2)
-                err.setdefault((geo, k[5:], block(t, *cos)), []).append(e)
+        geo = "8+4" if cfg.count("+") == 1 else "8+4+4"
+        line = "  %-5s %-28s %-12s %2d SMs  meas %6.3f" % (geo, cfg, v, n, s)
+        row = dict(geometry=geo, config=cfg, victim=v, victim_sms=n, position=pos, measured=round(s, 4))
+        for k, val in p.items():
+            if k.startswith("pred_") and val:
+                e = (float(val) - s) * 100
+                row[k], row["err" + k[4:]] = float(val), round(e, 2)
+                err.setdefault((geo, k[5:], "victim on %d SMs" % n, block(*cfg.split("+"))), []).append(e)
                 line += "  %s %+5.1f" % (k[5:], e)
         print(line)
         out.append(row)
@@ -351,15 +426,16 @@ def cmd_triple_compare():
             print("  %-12s p_t %+5.1f %%  one %+5.1f %%  two %+5.1f %%  growth %.2f" % (
                 t, 100 * inp[t][8]["p"], 100 * (one - 1), 100 * (two - 1), (two - 1) / (one - 1)))
 
-    print("\ncomposition on networks: (s(t, a+b) - 1) / ((s(t, a) - 1) + (s(t, b) - 1))")
+    print("\ncomposition on networks, target on 8 SMs: (s(t, a+b) - 1) / ((s(t, a) - 1) + (s(t, b) - 1))")
     for r in out:
-        cos = r["corunners"].split("+")
-        if len(cos) != 2:
+        cos = r["config"].split("+")[1:]
+        if r["position"] != "target" or len(cos) != 2:
             continue
-        sa = slowdown(data, TRIPLE, r["target"] + "+" + cos[0], r["target"], r["target"] + "-alone")
-        sb = slowdown(data, TRIPLE, r["target"] + "+" + cos[1], r["target"], r["target"] + "-alone")
+        t = r["victim"]
+        sa = slowdown(data, TRIPLE, t + "+" + cos[0], t, t + "-alone")
+        sb = slowdown(data, TRIPLE, t + "+" + cos[1], t, t + "-alone")
         if sa and sb:
-            print("  %-12s %-26s %.2f" % (r["target"], r["corunners"], (r["measured"] - 1) / (sa + sb - 2)))
+            print("  %-28s %.2f" % (r["config"], (r["measured"] - 1) / (sa + sb - 2)))
     write("geometry-triple-compare.csv", out)
 
 
@@ -441,6 +517,10 @@ def selftest():
     assert predict(b, 0.05, 100, 0) == 1.05                                                 # no load: presence
     assert abs(predict(b, 0.05, 100, 50, g=2, f=1.5) - (1 + 0.1 + (0.002 - 0.001) * 75)) < 1e-12
     assert len(planned_triples()) == 30 + 24 and len(set(planned_triples())) == 54
+    assert victims("t+a+b", 8, 4) == [("t", 8, "target", [("a", 4), ("b", 4)]),
+                                      ("a", 4, "co1", [("t", 8), ("b", 4)]),
+                                      ("b", 4, "co2", [("t", 8), ("a", 4)])]
+    assert victims("t+a", 6, 10) == [("t", 6, "target", [("a", 10)]), ("a", 10, "co1", [("t", 6)])]
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "r1_power.log")
@@ -449,6 +529,18 @@ def selftest():
         q = os.path.join(d, "r1_itf.log")
         open(q, "w").write("  ...2000 inferences, 3.8 s\n[info] 1500 timed inferences in 30.00 s before the stop\n")
         assert corunner_rate(q) == 50.0
+        # the co-runner's p99 counts only rows inside the target's timed window [10 s, 20 s]
+        hdr = "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns\n"
+        open(os.path.join(d, "r1_latencies.csv"), "w").write(
+            hdr + "warmup,0,x,0,1,1,1000000000,2000000000\nbench,0,x,0,1,1,10000000000,10500000000\n"
+            "bench,1,x,0,1,1,19500000000,20000000000\n")
+        open(os.path.join(d, "r1_stats.csv"), "w").write("metric\n")
+        rows = ["bench,%d,x,0,1,%g,%d,%d" % (i, 1.0 + i / 1000, 10_000_000_000 + i * 10_000_000,
+                                             10_000_000_000 + i * 10_000_000 + 5_000_000) for i in range(500)]
+        rows += ["bench,900,x,0,1,99,5000000000,5100000000", "bench,901,x,0,1,99,21000000000,21100000000"]
+        open(os.path.join(d, "r1_co1.csv"), "w").write(hdr + "\n".join(rows) + "\n")
+        inside = [1.0 + i / 1000 for i in range(500) if 10 + i * 0.01 + 0.005 <= 20]
+        assert abs(corunner_p99(d, 1) - np.percentile(inside, 99)) < 1e-12
     print("  selftest passed")
 
 

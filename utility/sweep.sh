@@ -467,11 +467,20 @@ do_job() {  # $1 = spec, $2 = output prefix
     # Several co-runners: cmdB holds their commands separated by ';'. Under static MPS the i-th one
     # takes the i-th partition after the target's, and any beyond the last partition share it
     # (two clients on one partition). The first logs to _itf.log, the next to _itf2.log, ...
+    #
+    # A runner co-runner (one with --csv) is a victim too: its per-inference rows are kept as
+    # <out>_co<k>.csv, the k-th co-runner, so the analysis can cut them to the target's timed window
+    # (the co-runner starts 3 s earlier and is stopped after the target). Not *_latencies.csv, so no
+    # script that reads targets picks them up. A stale file is removed first: a co-runner that fails to
+    # start must leave nothing behind to be mistaken for its rows.
     if [ "$kind" = itf ]; then
-        local cos c k=1 pids=() envk log
+        local cos c k=1 pids=() envk log csvs=() cp
         IFS=';' read -ra cos <<< "$cmdB"
         power_start "$out"
         for c in "${cos[@]}"; do
+            cp=$(sed -n 's/.*--csv \([^ ]*\).*/\1/p' <<< "$c")
+            csvs+=("$cp")
+            [ -n "$cp" ] && rm -f "${cp}_latencies.csv"
             envk="$envB"
             if [ "$mps" = static ]; then
                 local j=$k
@@ -491,6 +500,10 @@ do_job() {  # $1 = spec, $2 = output prefix
         kill -TERM "${pids[@]}" 2>/dev/null || true
         wait "${pids[@]}" 2>/dev/null || true
         move_back "$tmp" "$out"
+        for k in "${!csvs[@]}"; do
+            cp="${csvs[$k]}"
+            [ -n "$cp" ] && [ -f "${cp}_latencies.csv" ] && mv -f "${cp}_latencies.csv" "${out}_co$((k + 1)).csv"
+        done
         return "$rc_a"
     fi
 
