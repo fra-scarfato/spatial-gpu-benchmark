@@ -5,6 +5,7 @@
     python3 utility/analysis/geometry.py splits          4+12, 6+10, 12+4: the frozen model against the pairs
     python3 utility/analysis/geometry.py triple-predict  8+4+4 and 8+4: freeze the predictions (no pair read)
     python3 utility/analysis/geometry.py triple-compare  score the frozen predictions on the measured runs
+    python3 utility/analysis/geometry.py triple-current  the same scoring, with the current model's predictions
     python3 utility/analysis/geometry.py power           power, completed inferences, energy per inference
     python3 utility/analysis/geometry.py selftest
 
@@ -20,7 +21,8 @@ network actually has:
                this campaign (stress-split-*, stress-sizes), so nsys's 1-4 % slowdown cancels;
        sudo    profile.sh soc-mps-sizes: the inference rate under nsys at that size, as soc-mps at 8.
   D  DRAM GB/s at that size, by the same two routes; used only to place a co-runner in the SAXPY table.
-  p  presence: kernels per inference x 0.87 us / the target's median latency alone at its size.
+  p  presence: kernels per inference x counter-model's PRESENCE_US / the target's median latency alone
+     at its size.
 
 Two co-runners (8 + 4 + 4): the load is L_a + L_b (counter-model's aggregate), and three versions are
 frozen side by side (the user, 2026-10-28):
@@ -389,15 +391,23 @@ def cmd_triple_predict():
     print("  frozen %d rows: %s, sha256 %s" % (len(rows), FROZEN, sha256(FROZEN)))
 
 
-def cmd_triple_compare():
+def cmd_triple_compare(current=False):
+    """Score 8+4 and 8+4+4. By default the frozen predictions (the test as it was run); with current,
+    the predictions of the model as it is now, e.g. after the presence constant changed (2026-10-29):
+    a re-scoring after the fact, written to its own file so the frozen record stays."""
     data = A.load(P.BENCH)
-    want = open(FROZEN + ".sha256").read().split()[0]
-    if sha256(FROZEN) != want:
-        raise SystemExit("geometry.py: %s changed after it was frozen" % FROZEN)
-    print("  frozen predictions intact (sha256 %s...)" % want[:12])
+    if current:
+        preds = triple_rows(data)
+        print("  current model's predictions (not frozen: presence %.2f us)" % C.PRESENCE_US)
+    else:
+        want = open(FROZEN + ".sha256").read().split()[0]
+        if sha256(FROZEN) != want:
+            raise SystemExit("geometry.py: %s changed after it was frozen" % FROZEN)
+        print("  frozen predictions intact (sha256 %s...)" % want[:12])
+        preds = list(csv.DictReader(open(FROZEN)))
     err, out = {}, []
     print("\n8 + 4 and 8 + 4 + 4: p99 slowdown of each tenant, measured and frozen predictions (error, points)")
-    for p in csv.DictReader(open(FROZEN)):
+    for p in preds:
         cfg, v, n, pos = p["config"], p["victim"], int(p["victim_sms"]), p["position"]
         s = measured(data, TRIPLE, cfg, v, n, pos)
         if not s:
@@ -436,7 +446,7 @@ def cmd_triple_compare():
         sb = slowdown(data, TRIPLE, t + "+" + cos[1], t, t + "-alone")
         if sa and sb:
             print("  %-28s %.2f" % (r["config"], (r["measured"] - 1) / (sa + sb - 2)))
-    write("geometry-triple-compare.csv", out)
+    write("geometry-triple-compare-current.csv" if current else "geometry-triple-compare.csv", out)
 
 
 # ------------------------------------------------------------------ power
@@ -546,5 +556,6 @@ def selftest():
 
 if __name__ == "__main__":
     {"inputs": cmd_inputs, "splits": cmd_splits, "triple-predict": cmd_triple_predict,
-     "triple-compare": cmd_triple_compare, "power": cmd_power, "selftest": selftest}.get(
+     "triple-compare": cmd_triple_compare,
+     "triple-current": lambda: cmd_triple_compare(True), "power": cmd_power, "selftest": selftest}.get(
         CMD, lambda: sys.exit(__doc__))()

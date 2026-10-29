@@ -26,7 +26,7 @@ of the ruler, yet slow the targets differently. Here, per target T:
   predicted   S_T(L_eq), with S_T that stressor's sensitivity curves (p99 and median slowdown).
 
 The dispatch (presence) cost is also modelled on its own: the "separated" prediction is
-1 + d_T + (S_T(L_eq) - S_T(0)), with d_T = kernels per inference x 0.87 us over the latency alone
+1 + d_T + (S_T(L_eq) - S_T(0)), with d_T = kernels per inference x 1.05 us over the latency alone
 (tab:l2-presence) in place of the zero-traffic point the curve starts from (spin; Steady's resident
 L000). check_dispatch() verifies that the curves already contain the presence, which is the double
 count this must avoid: their loaded points, extended to zero traffic, should land on that zero point
@@ -61,7 +61,7 @@ S, A = H.S, H.A
 AGG = os.path.join(S.BENCH, "aggregate")
 NETS = S.NETS
 KPI = {"mobilenet": 55, "resnet": 76, "inception": 101, "retinanet": 172}
-PRESENCE_US = 0.87
+PRESENCE_US = 1.05                     # the same as counter-model.py's, see there
 SMOOTH = ["smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]
 
 

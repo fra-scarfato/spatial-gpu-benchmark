@@ -11,8 +11,8 @@ Each network is characterised once, alone on 8 SMs:
   L    L2 GB/s: ncu L2 bytes per inference (profiles/ncu/nets, 4 SMs; bytes per inference don't
        depend on the SM budget, MEASUREMENTS.md) times the inferences per second at 8 SMs (MPS static)
   h    L2 hit rate, weighted by L2 bytes
-  p    presence: kernels per inference x 0.87 us per kernel boundary over the latency alone (exp23),
-       the dispatch cost no memory counter sees (tab:l2-presence: 0.83-0.91 us per boundary)
+  p    presence: kernels per inference x 1.05 us per kernel boundary over the latency alone (exp23),
+       the dispatch cost no memory counter sees (tab:l2-presence, the 100 us spin's p99: 0.99-1.09 us)
 
 The model, with s = slowdown - 1 (p99 and median fitted separately) and target t, co-runner c:
   dram   s - p_t = (b0 + b1 D_t) D_c
@@ -64,7 +64,11 @@ NETS = list(ENG)
 ENG_NEW = {"mobilenetint8": ("mobilenetv2-12-int8", 55), "resnetint8": ("resnet50-v2-7-int8", 74),
            "inceptionint8": ("inception_v3-int8", 101), "retinanetint8": ("retinanet-9-int8", 167),
            "efficientnet": ("efficientnet_b0", 139), "vit": ("vit-base-patch16-224", 92)}
-PRESENCE_US = 0.87
+# The p99 cost per kernel boundary beside the 100 us spin (exp19 spin-K100, mean of the four), the
+# same spin as every dispatch check and as g. Until 2026-10-29 it was 0.87, the median beside the
+# 27 ms spin: a calibration on one probe checked on another (notes/p99-models.md). infwin-model.py
+# keeps its own copy of this constant.
+PRESENCE_US = 1.05
 # D and the inference rate behind L come from each network alone in an 8-SM MPS static partition
 # (profile.sh soc-mps), the configuration of the pairs (the user, 2026-10-16; until then the green
 # context of soc-budget, "soc-greenctx-%s-50"). The ncu L2 bytes stay a green-context profile: ncu
