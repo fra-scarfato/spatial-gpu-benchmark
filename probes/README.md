@@ -36,7 +36,7 @@ belongs inside another client's timed window.
 ## The co-runner's name
 
 `corunner` was called `itfproc` until 2026-11-02. The pinned binary was built on 2026-10-11 from
-commit `352e0cc`; since then only the names in its comments and messages changed, so the binary was
+commit `76828db`; since then only the names in its comments and messages changed, so the binary was
 moved, not rebuilt, and its hash is the same. The next `make -C probes` rebuilds it from the renamed
 source, and the runs then stop until it is re-pinned (`source measure/lib/guards.sh; pin_binaries`):
 nvcc builds are not byte-identical, so a rebuild is always a new pin. Logs and data written before

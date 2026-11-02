@@ -5,7 +5,7 @@
 # the twelve stress-validation pairs. Not in the thesis.
 # As run on 2026-10-09 it first copied a scratch build (itfproc.tb) over probes/corunner; the
 # time-based mode has been in the pinned probes/corunner since, so that step is gone, and the pin
-# check would refuse a swapped binary anyway. The original is in commit 111269e.
+# check would refuse a swapped binary anyway. The original is in commit bd0f7b6.
 R=/home/nvidia/f_scarfato/runner
 S=/mnt/nvme/f.scarfato/scratch
 B=/mnt/nvme/f.scarfato/bench

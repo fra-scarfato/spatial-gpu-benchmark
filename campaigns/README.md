@@ -5,7 +5,7 @@ Each script here is the queue that was run on board 1, copied unchanged from
 of what was run, in what order and with which guards; most follow the queue template of the
 board-campaign skill (every step guarded and retried, any other failure logs FAILED). Their paths were
 updated to the current layout on 2026-11-02 (`utility/` split into `measure/`, `analysis/`,
-`probes/`); the as-run originals are in commit `111269e` and in `$DATA/scratch/`. Since `sweep.sh` and `reporter.sh` skip runs already on disk, measuring
+`probes/`); the as-run originals are in commit `bd0f7b6` and in `$DATA/scratch/`. Since `sweep.sh` and `reporter.sh` skip runs already on disk, measuring
 again needs a fresh output directory (`--out`, `OUTROOT`). To run one again, copy it to `$DATA/scratch/` and start it with
 `nohup bash <name>.sh > <name>.log 2>&1 &`.
 
@@ -31,7 +31,7 @@ names the other's original log.
 | 10-08 | `rerun-disturbed-calibration-run.sh` | `fs-rerun-l004` | Re-run of one calibration run (saxpy4-L004 run 2) disturbed by a co-tenant |
 | 10-08 | `rerun-disturbed-calibration-run-b.sh` | `fs-queue` | The same re-run, with the binary the rest of that calibration used |
 | 10-09 | `burst-stressor-windowed-probe.sh` | `fs-tbw1` | Burst stressor (time-based SAXPY) read by the windowed probe: calibration-tb, networks; stress-sensitivity-tb (exp17); `stress.py tbw`. Not in the thesis |
-| 10-09 | (removed) | `fs-b1`, `fs-b1b` | Burst-scrambled stressor: calibration-tbs; stress-sensitivity-tbs (exp18); `stress.py tbsw`; the cross-board diagnostic. Not in the thesis; removed on 2026-11-02, the queues stay in `$DATA/scratch/` and commit `111269e` |
+| 10-09 | (removed) | `fs-b1`, `fs-b1b` | Burst-scrambled stressor: calibration-tbs; stress-sensitivity-tbs (exp18); `stress.py tbsw`; the cross-board diagnostic. Not in the thesis; removed on 2026-11-02, the queues stay in `$DATA/scratch/` and commit `bd0f7b6` |
 | 10-09 | `gpu-governor-ab.sh` | `fs-gov` | GPU governor A/B (nvhost_podgov against performance) on a probe set |
 | 10-09 | `gpu-governor-ab-gate.sh` | `fs-gate` | Stopped the Burst-scrambled queue after its diagnostic, to run the governor A/B |
 | 10-10 | `probe-floor-after-boot.sh` | `fs-boot` | The probe's floor right after a boot |
