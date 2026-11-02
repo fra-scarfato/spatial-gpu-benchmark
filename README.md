@@ -97,9 +97,9 @@ These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 
 The stress chapter (the stress, counter and composition models, other partition sizes, two
 co-runners, energy) is measured by the campaign queues in `utility/campaigns/`, whose README is the
-ordered log of what was run and gives the analysis chain that regenerates its numbers. Its tables
-are printed as LaTeX rows by `utility/analysis/ensemble-tables.py` and
-`utility/analysis/geometry-tables.py`.
+ordered log of what was run. `make tables` regenerates its numbers from the raw runs, re-running
+only what is out of date, and writes its tables as LaTeX rows (`stress-tables.py`,
+`ensemble-tables.py`, `geometry-tables.py` in `utility/analysis/`).
 
 ## Measurement protocol
 
@@ -136,7 +136,7 @@ utility/
                             (predict|compare [geom], one geometry per stressor, reporter and layout)
   analysis/                 the stress chapter's models and their scoring: counter-model.py,
                             infwin-model.py, ensemble.py, compose.py, geometry.py, ...; and the two
-                            table generators, ensemble-tables.py and geometry-tables.py
+                            table generators, stress-tables.py, ensemble-tables.py and geometry-tables.py
   campaigns/                every campaign queue of the stress chapter, as run, with the ordered log
   ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures,
                             and the L2 traffic of each network (nets)

@@ -43,21 +43,15 @@ Families are `$DATA/bench/<family>/`, reporter sets `$DATA/bench/stress-reporter
 
 ## Regenerating the numbers
 
-From the data, in this order (each step reads what the previous ones wrote in `bench/aggregate/`):
-
 ```sh
-python3 utility/aggregate.py
-python3 utility/stress.py compare smooth88 && python3 utility/stress.py compare smoothnew
-python3 utility/analysis/infwin-model.py && python3 utility/analysis/infwin-model.py new-compare
-python3 utility/analysis/counter-model.py && python3 utility/analysis/counter-model.py new-compare
-python3 utility/analysis/ensemble.py && python3 utility/analysis/ensemble.py new
-python3 utility/analysis/compose.py
-python3 utility/analysis/geometry.py splits && python3 utility/analysis/geometry.py triple-current
-python3 utility/analysis/geometry.py power
-python3 utility/analysis/ensemble-tables.py      # tab:models-*, tab:bound-*, tab:stress-margin, -pessimism
-python3 utility/analysis/geometry-tables.py      # tab:stress-sizes*, -triple*, -energy*
+make tables        # every derived CSV that is out of date, then the tables
+make -n tables     # what is out of date, without running it
 ```
 
+The rules are at the end of the repository's `Makefile`, one per analysis step, each naming what it
+reads. The tables land in `$DATA/bench/aggregate/tables-{stress,ensemble,geometry}.tex`, one block
+per `stress-model.tex` label, ready to paste; the prose numbers follow each block as comments.
+
 The validation predictions are frozen by `stress.py predict smoothnew`, `infwin-model.py new-predict`
-and `counter-model.py new-predict`, before the pairs were read. Re-running them after a
-change of model overwrites the frozen files, which is a decision to record, not a routine step.
+and `counter-model.py new-predict`, before the pairs were read. They are inputs of
+`make`, never targets: re-running them after a change of model overwrites the frozen files, which is a decision to record, not a routine step.

@@ -54,7 +54,7 @@ LIBS     := -L/usr/local/cuda/targets/sbsa-linux/lib \
             -lnvinfer -lcudart -lcublas \
             -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
 
-.PHONY: all clean check
+.PHONY: all clean check tables
 
 all: $(TARGET)
 
@@ -75,3 +75,82 @@ SELFTESTS = utility/stress.py utility/analysis/compose.py utility/analysis/count
 
 check:
 	@set -e; for t in $(SELFTESTS); do echo "== $$t"; python3 $$t selftest; done
+
+# ------------------------------------------------------------------ the stress chapter's numbers
+#
+# `make tables` brings every derived CSV of the stress chapter up to date, in dependency order, and
+# writes the thesis tables to $(AGG)/tables-{stress,ensemble,geometry}.tex; `make -n tables` lists
+# what is stale without running it. Each rule names what its script reads: the raw runs, the
+# profiles, the CSVs of earlier steps and the scripts, so a new run or a changed script re-runs
+# exactly what depends on it.
+#
+# The frozen files are inputs, never targets: the predictions of stress.py predict and of the
+# new-predict steps (stress-predictions-*.csv), the calibrations, curves and readings written with
+# them (stress-calibration-*, stress-sensitivity-*, stress-corunners-*), and
+# geometry-triple-predictions.csv. Re-freezing is a decision taken by hand
+# (utility/campaigns/README.md); a missing frozen file stops make with "No rule to make target".
+#
+# ponytail: every rule depends on all raw runs, not on its own families, so a run of any family
+# re-runs the chain (about 4 minutes). Per-family prerequisites if that becomes slow.
+
+DATA ?= /mnt/nvme/f.scarfato
+export DATA
+AGG := $(DATA)/bench/aggregate
+RUNS := $(wildcard $(DATA)/bench/*/*/r*)
+PROFILES := $(wildcard $(DATA)/profiles/derived/*.csv $(DATA)/profiles/ncu/*.csv)
+AN := utility/analysis
+LOAD := utility/aggregate.py utility/lib/families.py utility/stress.py $(RUNS)
+COUNTER := $(AN)/counter-model.py $(LOAD) $(PROFILES)
+GEOMS := onoff88 uniform88 smooth88 smoothx88 smoothnew
+cmp = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
+
+tables: $(AGG)/tables-stress.tex $(AGG)/tables-ensemble.tex $(AGG)/tables-geometry.tex $(AGG)/summary.csv
+
+$(AGG)/summary.csv: $(LOAD)
+	python3 utility/aggregate.py
+
+$(call cmp,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(AGG)/stress-predictions-%.csv $(LOAD)
+	python3 utility/stress.py compare $*
+
+$(call cmp,infwin88 infwin88p infwin88d infwin88pd) &: $(AN)/infwin-model.py $(AN)/avg-model.py $(call cmp,smooth88) $(LOAD)
+	python3 $(AN)/infwin-model.py
+
+$(call cmp,infwinnewp): $(AGG)/stress-predictions-infwinnewp.csv $(AN)/infwin-model.py $(AN)/avg-model.py $(LOAD)
+	python3 $(AN)/infwin-model.py new-compare
+
+$(AGG)/counter-model-coeffs.csv $(call cmp,counters-dram counters-ref counters-l2) &: $(COUNTER)
+	python3 $(AN)/counter-model.py
+
+$(call cmp,counters-new-dram counters-new-ref counters-new-l2) &: \
+		$(foreach v,dram ref l2,$(AGG)/stress-predictions-counters-new-$(v).csv) $(COUNTER)
+	python3 $(AN)/counter-model.py new-compare
+
+$(call cmp,max-dram max-ref max-l2 maxc-dram maxc-ref maxc-l2) &: $(AN)/ensemble.py $(call cmp,smooth88 infwin88p) $(COUNTER)
+	python3 $(AN)/ensemble.py
+
+$(AGG)/compose-4sm.csv: $(AN)/compose.py $(LOAD)
+	python3 $(AN)/compose.py
+
+GEOMETRY := $(AN)/geometry.py $(AGG)/counter-model-coeffs.csv $(AGG)/compose-4sm.csv $(COUNTER)
+
+$(AGG)/geometry-splits.csv: $(GEOMETRY)
+	python3 $(AN)/geometry.py splits
+
+$(AGG)/geometry-triple-compare-current.csv: $(AGG)/geometry-triple-predictions.csv $(GEOMETRY)
+	python3 $(AN)/geometry.py triple-current
+
+$(AGG)/geometry-power.csv: $(AN)/geometry.py $(LOAD)
+	python3 $(AN)/geometry.py power
+
+$(AGG)/tables-stress.tex: $(AN)/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
+		$(call cmp,onoff88 uniform88 smooth88 smoothx88 infwin88 infwin88p) \
+		$(call cmp,counters-dram counters-ref counters-l2 counters-new-dram counters-new-ref counters-new-l2)
+	python3 $(AN)/stress-tables.py > $@.tmp && mv $@.tmp $@
+
+$(AGG)/tables-ensemble.tex: $(AN)/ensemble-tables.py $(AN)/ensemble.py \
+		$(call cmp,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
+	python3 $(AN)/ensemble-tables.py > $@.tmp && mv $@.tmp $@
+
+$(AGG)/tables-geometry.tex: $(AN)/geometry-tables.py $(AGG)/geometry-splits.csv \
+		$(AGG)/geometry-triple-compare-current.csv $(AGG)/geometry-power.csv $(GEOMETRY)
+	python3 $(AN)/geometry-tables.py > $@.tmp && mv $@.tmp $@
