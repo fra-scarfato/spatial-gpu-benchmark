@@ -7,7 +7,7 @@ R=/home/nvidia/f_scarfato/runner            # board 2: ~/f_scarfato/runner
 B=/mnt/nvme/f.scarfato/bench
 S=$(dirname "$(readlink -f "$0")")
 NAME=$(basename "$0" .sh)
-source $R/utility/lib/guards.sh              # for other_gpu_users
+source $R/measure/lib/guards.sh              # for other_gpu_users
 log()  { echo "[$(date '+%F %T')] $*"; }
 fail() { log "FAILED: $*"; exit 1; }
 step() {   # guarded experiment step: retry on busy GPU / unlocked clocks, at most 6 times
@@ -27,7 +27,7 @@ until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 # ---- Block 2 (Daniel, 2026-10-10): the temporal distribution of the stress at the same mean bandwidth.
 #   stress-onoff  4 targets x {alone, ON/OFF 400 ms at D = 25/50/75/100 %, uniform 32 MB ~3 ms at the
 #                 same GB/s for 25/50/75 %}, SAXPY on 8 SMs next to the target on 8 (50:50), 5 runs
-step $R/utility/sweep.sh --exp stress-onoff --only "^stress-onoff_" --static-chunks 8 --runs 5
-run python3 $R/utility/aggregate.py --out $B
+step $R/measure/sweep.sh --exp stress-onoff --only "^stress-onoff_" --static-chunks 8 --runs 5
+run python3 $R/analysis/aggregate.py --out $B
 run python3 $S/onoff.py $B/stress-onoff
 log "${NAME^^}-END"

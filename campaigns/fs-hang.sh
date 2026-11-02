@@ -11,7 +11,7 @@ export OUT=$E RUNNER=$R/runner DS=$D/dataset/imagenet-1k MOB=$D/models/mobilenet
 INC=$D/models/inception_v3-onnx-float/engine/inception_v3.engine
 RET=$D/models/retinanet-9/engine/retinanet-9.engine
 STATIC_CHUNKS=8; MPS_PIPE=/tmp/mps-fshang; MPS_LOG=$E/mpslog-live; MPS_MODE=off
-source $R/utility/lib/guards.sh; source $R/utility/lib/mps.sh
+source $R/measure/lib/guards.sh; source $R/measure/lib/mps.sh
 save_logs() { mkdir -p "$E/$1"; cp -f $MPS_LOG/*.log "$E/$1/" 2>/dev/null; }
 stop_daemon() { save_logs "daemon-$(date +%H%M%S)"; mps_stop; }
 trap 'stop_daemon' EXIT

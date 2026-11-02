@@ -7,7 +7,7 @@ R=/home/nvidia/f_scarfato/runner            # board 2: ~/f_scarfato/runner
 B=/mnt/nvme/f.scarfato/bench                 # board 2: ~/f_scarfato/data/bench (export DATA=~/f_scarfato/data)
 S=$(dirname "$(readlink -f "$0")")
 NAME=$(basename "$0" .sh)
-source $R/utility/lib/guards.sh              # for other_gpu_users
+source $R/measure/lib/guards.sh              # for other_gpu_users
 log()  { echo "[$(date '+%F %T')] $*"; }
 fail() { log "FAILED: $*"; exit 1; }
 step() {   # guarded experiment step: retry on busy GPU / unlocked clocks, at most 6 times
@@ -30,18 +30,18 @@ until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 n=$(grep -c '^soc-mps-.*-\(25\|37\|63\|75\),' /mnt/nvme/f.scarfato/profiles/derived/dram.csv)
 [ "$n" -eq 24 ] || fail "dram.csv has $n of the 24 soc-mps-sizes rows: run the sudo step and profiles.py first"
 
-sweep() { env POWER=1 $R/utility/sweep.sh --exp "$1" --only "^$1_" --static-chunks 8 --runs 5; }
+sweep() { env POWER=1 $R/measure/sweep.sh --exp "$1" --only "^$1_" --static-chunks 8 --runs 5; }
 step sweep stress-sizes
 step sweep stress-split-412
 step sweep stress-split-610
 step sweep stress-split-124
-run  python3 $R/utility/analysis/geometry.py inputs
-run  python3 $R/utility/analysis/geometry.py splits
+run  python3 $R/analysis/geometry.py inputs
+run  python3 $R/analysis/geometry.py splits
 # The 8+4 and 8+4+4 predictions are frozen here, from the individual profiles only, before any of
 # those runs exists (triple-predict refuses otherwise).
-run  python3 $R/utility/analysis/geometry.py triple-predict
+run  python3 $R/analysis/geometry.py triple-predict
 step sweep stress-triple
-run  python3 $R/utility/analysis/geometry.py triple-compare
-run  python3 $R/utility/analysis/geometry.py power
+run  python3 $R/analysis/geometry.py triple-compare
+run  python3 $R/analysis/geometry.py power
 
 log "${NAME^^}-END"

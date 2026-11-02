@@ -4,7 +4,7 @@
 R=/home/nvidia/f_scarfato/runner
 # OUT is only for the guard, and must not be exported: sweep.sh and ncu.sh take OUT as their output root
 OUT=/dev/shm/fs-wait; export MOB=/mnt/nvme/f.scarfato/models/mobilenetv2-12/engine/mobilenetv2-12.engine
-mkdir -p $OUT; source $R/utility/lib/guards.sh
+mkdir -p $OUT; source $R/measure/lib/guards.sh
 log() { echo "[$(date '+%F %T')] $*"; }
 step() {
     until "$@"; do
@@ -16,5 +16,5 @@ step() {
 log "waiting for a free GPU"
 until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 log "GPU free, starting"
-step $R/utility/sweep.sh --exp stress-sensitivity-4sm --static-chunks 8 --runs 5
+step $R/measure/sweep.sh --exp stress-sensitivity-4sm --static-chunks 8 --runs 5
 log "CAMPAIGN-4SM-END"

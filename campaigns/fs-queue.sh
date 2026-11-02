@@ -4,7 +4,7 @@
 # (The stressor variants - new itfproc, reporter.sh patterns, stress-pattern - were taken out.)
 R=/home/nvidia/f_scarfato/runner
 S=/mnt/nvme/f.scarfato/scratch
-source $R/utility/lib/guards.sh          # only for other_gpu_users; OUT is NOT exported
+source $R/measure/lib/guards.sh          # only for other_gpu_users; OUT is NOT exported
 log() { echo "[$(date "+%F %T")] $*"; }
 free() { until other_gpu_users >/dev/null 2>&1; do sleep 300; done; }
 retry() {
@@ -13,5 +13,5 @@ retry() {
 }
 log "waiting for REPORTER-TARGET-END"
 until grep -q REPORTER-TARGET-END $S/fs-reporter-target.log; do sleep 120; done
-retry env ONLY="^saxpy4-L004$" $R/utility/reporter.sh calibration-4sm
+retry env ONLY="^saxpy4-L004$" $R/measure/reporter.sh calibration-4sm
 log "QUEUE-END"

@@ -8,8 +8,8 @@
 set -eu
 R=/home/nvidia/f_scarfato/runner
 cd "$R"
-utility/profile.sh soc-mps
-utility/ncu.sh nets-new
+measure/profile.sh soc-mps
+measure/ncu.sh nets-new
 # the files are root's after this; give them back so the analysis can rewrite its derived CSVs
 chown -R nvidia:nvidia /mnt/nvme/f.scarfato/profiles/soc-mps /mnt/nvme/f.scarfato/profiles/soc-new /mnt/nvme/f.scarfato/profiles/ncu/nets
 echo VALNETS-ROOT-END

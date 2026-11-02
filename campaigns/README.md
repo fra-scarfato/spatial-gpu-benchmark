@@ -3,8 +3,12 @@
 Each script here is the queue that was run on board 1, copied unchanged from
 `$DATA/scratch/` (2026-11-02), where its log still is (`<name>.log`, same name). They are the record
 of what was run, in what order and with which guards; most follow the queue template of the
-board-campaign skill (every step guarded and retried, any other failure logs FAILED). Paths inside
-are those of the day. To run one again, copy it to `$DATA/scratch/` and start it with
+board-campaign skill (every step guarded and retried, any other failure logs FAILED). Their paths were
+updated to the current layout on 2026-11-02 (`utility/` split into `measure/`, `analysis/`,
+`probes/`); the as-run originals are in commit `111269e` and in `$DATA/scratch/`. A few
+diagnostic queues use binaries that exist only in scratch (`itfproc.b2`, `gpu-latency.b2`)
+and stay records. Since `sweep.sh` and `reporter.sh` skip runs already on disk, measuring
+again needs a fresh output directory (`--out`, `OUTROOT`). To run one again, copy it to `$DATA/scratch/` and start it with
 `nohup bash <name>.sh > <name>.log 2>&1 &`.
 
 Families are `$DATA/bench/<family>/`, reporter sets `$DATA/bench/stress-reporter*/`, profile sets

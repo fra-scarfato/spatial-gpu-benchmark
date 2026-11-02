@@ -4,8 +4,8 @@
 R=/home/nvidia/f_scarfato/runner
 ITF=/mnt/nvme/f.scarfato/scratch/smooth/itfproc
 MPS_PIPE=/tmp/mps-smoke MPS_LOG=/tmp/mps-log-smoke STATIC_CHUNKS=8 MPS_MODE=off
-source $R/utility/lib/mps.sh
-source $R/utility/lib/guards.sh
+source $R/measure/lib/mps.sh
+source $R/measure/lib/guards.sh
 check_clocks || exit 1
 other_gpu_users >/dev/null 2>&1 || { echo "GPU busy"; exit 1; }
 mps_stop; mps_start static >/dev/null && mps_create_partitions 50:50 >/dev/null || exit 1

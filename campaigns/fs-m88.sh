@@ -7,7 +7,7 @@ R=/home/nvidia/f_scarfato/runner            # board 2: ~/f_scarfato/runner
 B=/mnt/nvme/f.scarfato/bench
 S=$(dirname "$(readlink -f "$0")")
 NAME=$(basename "$0" .sh)
-source $R/utility/lib/guards.sh              # for other_gpu_users
+source $R/measure/lib/guards.sh              # for other_gpu_users
 log()  { echo "[$(date '+%F %T')] $*"; }
 fail() { log "FAILED: $*"; exit 1; }
 step() {   # guarded experiment step: retry on busy GPU / unlocked clocks, at most 6 times
@@ -28,11 +28,11 @@ until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 # 8 SMs next to the reporter, into the same directory as the calibration-onoff run, then the 12 pairs at
 # 8 + 8 as ground truth, then the onoff88 and uniform88 models.
 O=/mnt/nvme/f.scarfato/bench/stress-reporter-onoff
-step env LAYOUT=target WINDOW=512 FLOOR_REF=847 OUTROOT=$O $R/utility/reporter.sh networks-8sm
-step $R/utility/sweep.sh --exp stress-validation-8 --only "^stress-validation-8_" --static-chunks 8 --runs 5
-run python3 $R/utility/aggregate.py --out $B
+step env LAYOUT=target WINDOW=512 FLOOR_REF=847 OUTROOT=$O $R/measure/reporter.sh networks-8sm
+step $R/measure/sweep.sh --exp stress-validation-8 --only "^stress-validation-8_" --static-chunks 8 --runs 5
+run python3 $R/analysis/aggregate.py --out $B
 for g in onoff88 uniform88; do
-    if python3 $R/utility/stress.py predict $g && python3 $R/utility/stress.py compare $g; then
+    if python3 $R/analysis/stress.py predict $g && python3 $R/analysis/stress.py compare $g; then
         log "model $g: done"
     else
         log "model $g: REFUSED or failed (see above)"

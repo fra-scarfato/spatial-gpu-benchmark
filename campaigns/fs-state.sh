@@ -15,7 +15,7 @@ R=/home/nvidia/f_scarfato/runner
 S=/mnt/nvme/f.scarfato/scratch
 D=$S/state-$(date +%Y%m%d-%H%M)
 mkdir -p $D
-source $R/utility/lib/guards.sh
+source $R/measure/lib/guards.sh
 log() { echo "[$(date '+%F %T')] $*"; }
 n=0
 probe() {
@@ -23,7 +23,7 @@ probe() {
     n=$((n + 1))
     local f=$D/p$(printf %02d $n)-$1.txt
     local vdd=$(timeout 2 tegrastats --interval 500 | head -1 | grep -o "VDD_GPU_SOC [0-9]*mW" | cut -d" " -f2)
-    $R/utility/probes/gpu-latency/gpu-latency --sizes-kb 65536 --duration 10 --window 512 > $f 2>&1
+    $R/probes/gpu-latency/gpu-latency --sizes-kb 65536 --duration 10 --window 512 > $f 2>&1
     python3 - $f $1 $n "$vdd" <<'PY'
 import sys, statistics as st
 f, tag, n, vdd = sys.argv[1:]
@@ -36,7 +36,7 @@ PY
 stim() {   # stim <tag> <itfproc args...>
     local tag=$1; shift
     until other_gpu_users >/dev/null 2>&1; do log "GPU busy, waiting"; sleep 30; done
-    timeout -s TERM 10 $R/utility/probes/itfproc "$@" > $D/stim-$tag.log 2>&1
+    timeout -s TERM 10 $R/probes/itfproc "$@" > $D/stim-$tag.log 2>&1
     log "STIM $tag: itfproc $* for 10 s, $(grep -o "achieved [0-9.]*" $D/stim-$tag.log | tail -1) $(grep -o "([0-9.]* GB/s)" $D/stim-$tag.log | tail -1)"
 }
 rootgate() {

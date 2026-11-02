@@ -7,7 +7,7 @@ R=/home/nvidia/f_scarfato/runner            # board 2: ~/f_scarfato/runner
 B=/mnt/nvme/f.scarfato/bench
 S=$(dirname "$(readlink -f "$0")")
 NAME=$(basename "$0" .sh)
-source $R/utility/lib/guards.sh              # for other_gpu_users
+source $R/measure/lib/guards.sh              # for other_gpu_users
 log()  { echo "[$(date '+%F %T')] $*"; }
 fail() { log "FAILED: $*"; exit 1; }
 step() {   # guarded experiment step: retry on busy GPU / unlocked clocks, at most 6 times
@@ -28,10 +28,10 @@ until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 # the reporter (calibration-onoff, the measured configurations are skipped) and beside the 4 targets
 # (stress-onoff), then the smooth88 model, with spin as level 0.
 O=/mnt/nvme/f.scarfato/bench/stress-reporter-onoff
-step env LAYOUT=target WINDOW=512 FLOOR_REF=847 OUTROOT=$O ONLY='^smooth-D' $R/utility/reporter.sh calibration-onoff
-step $R/utility/sweep.sh --exp stress-onoff --only "^stress-onoff_.*-smooth-D" --static-chunks 8 --runs 5
-run python3 $R/utility/aggregate.py --out $B
-if python3 $R/utility/stress.py predict smooth88 && python3 $R/utility/stress.py compare smooth88; then
+step env LAYOUT=target WINDOW=512 FLOOR_REF=847 OUTROOT=$O ONLY='^smooth-D' $R/measure/reporter.sh calibration-onoff
+step $R/measure/sweep.sh --exp stress-onoff --only "^stress-onoff_.*-smooth-D" --static-chunks 8 --runs 5
+run python3 $R/analysis/aggregate.py --out $B
+if python3 $R/analysis/stress.py predict smooth88 && python3 $R/analysis/stress.py compare smooth88; then
     log "model smooth88: done"
 else
     log "model smooth88: REFUSED or failed (see above)"
