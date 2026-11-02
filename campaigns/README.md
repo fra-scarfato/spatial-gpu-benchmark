@@ -5,9 +5,9 @@ Each script here is the queue that was run on board 1, copied unchanged from
 of what was run, in what order and with which guards; most follow the queue template of the
 board-campaign skill (every step guarded and retried, any other failure logs FAILED). Their paths were
 updated to the current layout on 2026-11-02 (`utility/` split into `measure/`, `analysis/`,
-`probes/`); the as-run originals are in commit `111269e` and in `$DATA/scratch/`. A few
-diagnostic queues use binaries that exist only in scratch (`itfproc.b2`, `gpu-latency.b2`)
-and stay records. Since `sweep.sh` and `reporter.sh` skip runs already on disk, measuring
+`probes/`); the as-run originals are in commit `111269e` and in `$DATA/scratch/`. `fs-tbw1.sh`
+copies a scratch build over `probes/itfproc`, the practice before the pins: the pin check now stops it,
+so it stays a record. Since `sweep.sh` and `reporter.sh` skip runs already on disk, measuring
 again needs a fresh output directory (`--out`, `OUTROOT`). To run one again, copy it to `$DATA/scratch/` and start it with
 `nohup bash <name>.sh > <name>.log 2>&1 &`.
 
@@ -25,7 +25,7 @@ Families are `$DATA/bench/<family>/`, reporter sets `$DATA/bench/stress-reporter
 | 10-08 | `fs-reporter-target.sh` | The reporter on the target's partition (LAYOUT=target): stress-reporter-target |
 | 10-08 | `fs-rerun-l004.sh`, `fs-queue.sh` | Re-run of saxpy4-L004 run 2, disturbed by a co-tenant |
 | 10-09 | `fs-tbw1.sh` | Burst stressor, windowed reporter: calibration-tb, networks; stress-sensitivity-tb (exp17); `stress.py predict/compare tbw` |
-| 10-09 | `fs-b1.sh`, `fs-b1b.sh` | Burst-scrambled: calibration-tbs; stress-sensitivity-tbs (exp18); `stress.py tbsw` (b1b adds the resident no-traffic diagnostic) |
+| 10-09 | `fs-b1.sh`, `fs-b1b.sh` (removed) | Burst-scrambled: calibration-tbs; stress-sensitivity-tbs (exp18); `stress.py tbsw`; the cross-board diagnostic. Not in the thesis; removed from the repository on 2026-11-02, the queues and logs stay in `$DATA/scratch/` and commit `111269e` |
 | 10-09 | `fs-gov.sh`, `fs-gate.sh` | GPU governor A/B (nvhost_podgov against performance) on a reporter set |
 | 10-10 | `fs-boot.sh`, `fs-state.sh`, `fs-rootdump.sh` | The reporter floor's two states after a boot; a read-only debugfs snapshot |
 | 10-10 | `fs-l2a.sh` | `profile.sh kernels`; l2-presence, l2-gemm-sets, l2-read (exp19-21) |
