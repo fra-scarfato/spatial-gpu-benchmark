@@ -93,6 +93,15 @@ EXP_DIR = {
     "power-check-on":              "exp34",
 }
 
+# The keys whose configuration names the one measured target first (mobilenet-saxpy-L030,
+# resnet+inception): the stress model's and the L2 chapter's families. aggregate.py files each
+# stats file under that first name. A new family of this kind is declared here and in EXP_DIR
+# (and in matrix.sh, which runs it); aggregate.py needs no change.
+TARGET_FIRST = {"exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22",
+                "exp23", "exp24", "exp25", "exp26", "exp27", "exp28", "exp29", "exp30", "exp31",
+                "exp32", "exp33", "exp34"}
+
+
 def key_map():
     """The family -> aggregate key map."""
     return dict(EXP_DIR)

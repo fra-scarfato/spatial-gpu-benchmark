@@ -199,7 +199,7 @@ check_binaries() {
         echo "commit    $(git -C "$_GUARDS_ROOT" rev-parse --short HEAD)$(git -C "$_GUARDS_ROOT" diff --quiet HEAD -- . ':!*.sha256' 2>/dev/null || echo ' (uncommitted changes)')"
         echo "command   $0 $*"
         echo "governor  $(cat "$GPU_DEVFREQ/governor" 2>/dev/null)   gpu $(cat "$GPU_DEVFREQ/min_freq")-$(cat "$GPU_DEVFREQ/max_freq")   emc $(cat /sys/class/devfreq/bwmgr/cur_freq 2>/dev/null)"
-        echo "cuda      $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | tail -1 | grep -o 'V[0-9.]*')   l4t $(head -1 /etc/nv_tegra_release | grep -o 'R[0-9]*.*REVISION: [0-9.]*')"
+        echo "cuda      $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | grep -o "V[0-9][0-9.]*")   tensorrt $(python3 -c 'import tensorrt; print(tensorrt.__version__)' 2>/dev/null)   l4t $(head -1 /etc/nv_tegra_release | grep -o 'R[0-9]*.*REVISION: [0-9.]*')"
         (cd "$_GUARDS_ROOT" && sha256sum $PINNED_BINARIES) | sed 's/^/binary    /'
         [ -n "${ITF:-}" ] && [ "$ITF" != "$_GUARDS_ROOT/utility/probes/itfproc" ] && echo "binary    $(sha256sum "$ITF")   (ITF override, not pinned)"
         [ -n "${REPORTER:-}" ] && [ "$REPORTER" != "$_GUARDS_ROOT/utility/probes/gpu-latency/gpu-latency" ] && echo "binary    $(sha256sum "$REPORTER")   (REPORTER override, not pinned)"

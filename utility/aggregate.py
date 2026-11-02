@@ -75,7 +75,7 @@ RUN_RE = re.compile(r'^r(?P<run>\d+)(?:_(?P<net>[A-Za-z][A-Za-z0-9_+-]*))?_stats
 # the experiment is; the keys stay short because every table definition refers to them, and only
 # this mapping has to know the folder names. It lives in lib/families.py, which is the module about
 # families, so there is one copy of it rather than a copy and a parser.
-from lib.families import EXP_DIR  # noqa: E402
+from lib.families import EXP_DIR, TARGET_FIRST  # noqa: E402
 
 
 # Only gpu_ms is plotted; wall_ms includes the host round trip and prep_ms is
@@ -147,8 +147,7 @@ def load(outdir):
                 net = config[: -len("-alone")]
             elif exp == "exp9" and config.startswith(("mem", "compute", "spin", "mps_", "mps-")):
                 net = "mobilenet"
-            elif exp in ("exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22", "exp23", "exp24", "exp25", "exp26", "exp27",
-                         "exp28", "exp29", "exp30", "exp31", "exp32", "exp33", "exp34"):
+            elif exp in TARGET_FIRST:
                 # The stress model's and the L2 chapter's families: one measured target, named first in the configuration
                 # (mobilenet-saxpy-L030, resnet+inception); the co-runner writes no stats file here.
                 net = re.split(r"[-+]", config)[0]

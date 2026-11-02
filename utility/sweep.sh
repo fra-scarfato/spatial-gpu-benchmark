@@ -36,11 +36,9 @@
 #      inflating the median from 0.53 ms to 2.83 ms.
 #
 # Usage:
-#   ./utility/sweep.sh                     experiments 1 and 2 (~40 min)
-#   ./utility/sweep.sh --exp mps           a subset: each entry is matched as a
-#   ./utility/sweep.sh --exp isolated,mps  substring of the experiment name
-#   ./utility/sweep.sh --exp wq            the work queue experiment (not in the default
-#                                  set: 60 runs, asked for explicitly)
+#   ./utility/sweep.sh --exp stress-triple            one family: a whole family name
+#   ./utility/sweep.sh --exp isolated-scaling,stress-new   several, comma-separated
+#   ./utility/sweep.sh --exp section       a group: section, appendix, mem or all
 #   ./utility/sweep.sh --static-chunks 8   also run the static-partition jobs, passing
 #                                  the device's TOTAL chunk count (read it off
 #                                  `lspart`; a chunk is 2 SMs on an iGPU, so a
@@ -160,9 +158,7 @@ TMPCSV="${TMPCSV:-/dev/shm/scarfato-csv}"
 STATIC_CHUNKS=0
 
 ONLY=""                        # --only: an extended regex on family_config
-EXPS="isolated,greenctx,mps"    # substrings. The work queue experiment is NOT
-                                # in this list on purpose: it is 60 runs, so it
-                                # is asked for explicitly with --exp wq
+EXPS=""                         # --exp: whole family names, comma-separated; required
 FORCE=0
 DRY=0
 SMOKE=0
@@ -196,8 +192,8 @@ while [ $# -gt 0 ]; do
         --runs)          RUNS="$2"; shift ;;
         --out)           OUT="$2"; OUT_GIVEN=1; shift ;;
         --exp)
-            # A group name expands to its family list; anything else stays a substring of a
-            # family name, as before, so `--exp mps` still selects pair-mpsstatic-2submit.
+            # A group name expands to its family list; anything else is a list of whole family
+            # names (see selects below).
             case "$2" in
                 section)  EXPS="$(printf '%s' "$SECTION_FAMILIES" | tr ' ' ',')" ;;
                 appendix) EXPS="$(printf '%s' "$APPENDIX_FAMILIES" | tr ' ' ',')" ;;
@@ -328,15 +324,24 @@ source "$HERE/lib/matrix.sh"
 # every job line can say "N/M" and `tail -f` becomes a progress indicator on its
 # own. A resumed sweep counts the jobs it skips: they are done, so they are
 # progress, not gaps in the numbering.
+#
+# selects <family>: is the family one of the --exp entries? Whole names only: when an entry was a
+# substring, --exp stress-sensitivity-tb also ran stress-sensitivity-tbs.
+selects() {
+    local w want
+    IFS=',' read -ra want <<< "$EXPS"
+    for w in "${want[@]}"; do [ "$1" = "$w" ] && return 0; done
+    return 1
+}
+if [ -z "$EXPS" ]; then
+    echo "[sweep] say what to run: --exp <family>[,<family>...] or a group (section, appendix, mem, all)" >&2
+    exit 2
+fi
 SELECTED=0
 job_no=0
 for n in "${JOB_NAME[@]}"; do
-    e="${n%%_*}"
-    IFS=',' read -ra want <<< "$EXPS"
     [ -n "$ONLY" ] && ! [[ $n =~ $ONLY ]] && continue
-    for w in "${want[@]}"; do
-        case "$e" in *"$w"*) SELECTED=$((SELECTED + 1)); break ;; esac
-    done
+    selects "${n%%_*}" && SELECTED=$((SELECTED + 1))
 done
 printf '[sweep] %d jobs selected, %d runs each, %d runs total\n' \
        "$SELECTED" "$RUNS" "$((SELECTED * RUNS))"
@@ -580,15 +585,7 @@ for r in $(seq 1 "$RUNS"); do
         cfg="${JOB_NAME[$i]#${exp}_}"      # mobilenet_gc50
         out="$OUT/$exp/$cfg/r${r}"
 
-        # The --exp filter. Each entry is a SUBSTRING of the experiment name, so
-        # `--exp mps` selects pair-mpsstatic-2submit without anyone having to remember
-        # the full folder name, and the default list selects all of them.
-        selected=0
-        IFS=',' read -ra want <<< "$EXPS"
-        for w in "${want[@]}"; do
-            case "$exp" in *"$w"*) selected=1; break ;; esac
-        done
-        [ "$selected" = 1 ] || continue
+        selects "$exp" || continue
         [ -n "$ONLY" ] && ! [[ ${JOB_NAME[$i]} =~ $ONLY ]] && continue
       job_no=$((job_no + 1))
 

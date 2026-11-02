@@ -5,8 +5,10 @@
     python3 utility/stress.py compare [geom]  the predictions against the measured pairs
     python3 utility/stress.py selftest        the interpolation and its inverse
 
-The stressor's geometry: 8sm (the default, SAXPY on 8 SMs, exp13) or 4sm (SAXPY on the 4 SMs the real
-co-runners use, exp15). Each writes its own files, so the frozen 8 SM predictions are never touched.
+geom is one key of GEOMS below (default 8sm): 8sm, 4sm, tb, tbw, tbsw, 8smt, onoff, uniform, onoff88,
+uniform88, smooth88, smoothx88, smoothnew. Each names the stressor, the reporter and the layout (the
+mapping to descriptive names is in MEASUREMENTS.md), and writes its own files, so a frozen
+prediction is never touched by another geometry.
 
 predict reads only the reporter runs ($DATA/bench/stress-reporter) and the stress-sensitivity
 family. It never reads stress-validation: those pairs are the ground truth and must not enter the
