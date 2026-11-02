@@ -25,7 +25,7 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 
 - Jetson AGX Orin, JetPack 7.2: CUDA 13.2 (with `nvcc`), TensorRT 10.16, cuBLAS, OpenCV 4
 - GPU and CPU clocks locked with `sudo jetson_clocks`, which needs repeating after every boot
-- Python 3 with numpy and pandas for `utility/profiles.py`; the rest uses the standard library
+- Python 3 with the packages of `requirements.txt` (numpy, pandas), at the versions the thesis used
 - Nsight Systems (`nsys`) for the profiled runs, and root for the DRAM counter sets
 - ONNX models and ImageNet validation images under `$DATA`, default `/mnt/nvme/f.scarfato`
   (see [Data](#data))
@@ -95,6 +95,12 @@ python3 utility/profiles.py                 # all of the above -> $DATA/profiles
 
 These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 
+The stress chapter (the stress, counter and composition models, other partition sizes, two
+co-runners, energy) is measured by the campaign queues in `utility/campaigns/`, whose README is the
+ordered log of what was run and gives the analysis chain that regenerates its numbers. Its tables
+are printed as LaTeX rows by `utility/analysis/ensemble-tables.py` and
+`utility/analysis/geometry-tables.py`.
+
 ## Measurement protocol
 
 - Five independent runs per configuration, each in a fresh process.
@@ -127,7 +133,11 @@ utility/
   reporter.sh               the stress reporter beside SAXPY levels or networks, under MPS static
                             (LAYOUT=target: the reporter on the target's 8 SMs)
   stress.py                 the stress model: calibration, equivalent stress, sensitivity, prediction
-                            (predict|compare [4sm]: SAXPY on 8 or on 4 SMs)
+                            (predict|compare [geom], one geometry per stressor, reporter and layout)
+  analysis/                 the stress chapter's models and their scoring: counter-model.py,
+                            infwin-model.py, ensemble.py, compose.py, geometry.py, ...; and the two
+                            table generators, ensemble-tables.py and geometry-tables.py
+  campaigns/                every campaign queue of the stress chapter, as run, with the ordered log
   ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures,
                             and the L2 traffic of each network (nets)
   lib/                      shared by the scripts above:
@@ -143,8 +153,9 @@ utility/
 ```
 
 To add a configuration, add an arm to `utility/lib/matrix.sh` (and, for a new family, its folder
-to `utility/lib/families.py`); a single-network arm whose network the configuration name does not
-state also needs a rule in `aggregate.py`'s `load()`. To add a table, add it to
+to `utility/lib/families.py`, and its key to `TARGET_FIRST` there when its configurations name the
+target first); a single-network arm whose network the configuration name does not state otherwise
+also needs a rule in `aggregate.py`'s `load()`. To add a table, add it to
 `utility/results-tables.py`.
 
 ## Data
