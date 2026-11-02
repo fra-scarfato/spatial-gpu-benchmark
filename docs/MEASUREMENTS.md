@@ -22,7 +22,7 @@ profiles/                       PROFILED RUNS: one run per arm, read for traffic
   soc-budget/<arm>.*            DRAM counters, each network alone on 4 budgets, and 3 pairs (root)
   soc-itf/<arm>.*               DRAM counters, the target alone and beside compute_gemm (root)
   footprint/<arm>.*             DRAM counters, compute_gemm with its operand side varied (root)
-  calibration/                  DRAM counters during devprobe's device-to-device copies (root)
+  calibration/                  DRAM counters during device-probe's device-to-device copies (root)
   ncu/                          Nsight Compute output, per-kernel only (root); nets-<net>.csv, nets/
   derived/*.csv                 everything profiles.py computes from the above
   archive/                      earlier traces and the outputs of scripts that were replaced
@@ -131,7 +131,7 @@ traffic.) The integral has no such problem, which is why every quantity in GB is
 A percentage becomes GB/s through one measurement (`profile.sh calibration`; `calibrate()` in
 `profiles.py`, written to `derived/calibration.csv`):
 
-1. `probes/devprobe` performs device-to-device copies under the counters. The trace records each
+1. `probes/device-probe` performs device-to-device copies under the counters. The trace records each
    copy's bytes and duration: 635 copies, 25.54 GB in 0.279 s, so the copies ran at
    **91.5 GB/s**. A copy reads every byte once and writes it once, so that is 91.5 GB/s of read
    and 91.5 GB/s of write.
@@ -150,7 +150,7 @@ because each sample covers 1/10000 s.
 
 **A correction.** Before this revision the calibration point was 48 % read and **83 %** write,
 which are the maxima of the series. The 83 % belongs to 85 samples in which read is about 1 %:
-write-only phases, which are devprobe's memsets initialising its buffers, not the copy. Converting
+write-only phases, which are device-probe's memsets initialising its buffers, not the copy. Converting
 with 83 % understated every write by 83/45 = 1.8×. All absolute GB and GB/s in the earlier drafts
 (the 21–29 GB/s of the real co-runners, for instance) were affected. Ratios between runs were
 barely affected.
@@ -276,14 +276,14 @@ fitting together in the 4 MB L2, and states the arms' confounds beside it.
 
 The question: how much does a network **stress** the memory system, how **sensitive** is a target
 to that stress, and does the pair of numbers **predict** the target's slowdown beside a co-runner
-that was never profiled with it. Code: `probes/itfproc.cu` (the stressor),
+that was never profiled with it. Code: `probes/corunner.cu` (the stressor),
 `probes/gpu-latency/` (the reporter), `measure/reporter.sh` (reporter runs), the
 `stress-sensitivity` and `stress-validation` arms in `measure/lib/matrix.sh`, `analysis/stress.py`
 (the model).
 
 ### The stressor: throttled SAXPY
 
-`itfproc saxpy --level L` performs the same operation as `mem_saxpy` (y = a*x + y over two 256 MB
+`corunner saxpy --level L` performs the same operation as `mem_saxpy` (y = a*x + y over two 256 MB
 vectors, so 3 x 256 MB moved per unit), as its own kernel so that it can be throttled from inside.
 Each thread moves 16 elements, then waits a fixed time on the GPU's own clock (`%globaltimer`).
 Thousands of threads, out of phase with one another, lower the pressure uniformly at microsecond
@@ -293,7 +293,7 @@ scale, and the kernel stays resident at every level.
   same partition.** It is not a time-based duty cycle. The full-speed time comes from 9 warm-up
   units. The wait is then set from the model unit time = full-speed time + bursts per thread x
   wait, refined by three short corrections, and **frozen** for the run.
-- Once a second `itfproc` prints `level: setpoint S achieved A`, where A is the median of that
+- Once a second `corunner` prints `level: setpoint S achieved A`, where A is the median of that
   second's units (full-speed unit time / unit time). The analysis uses the median of A over the
   run, and reports its spread.
 - L = 0 runs the same kernel with waits only: resident, no memory traffic.

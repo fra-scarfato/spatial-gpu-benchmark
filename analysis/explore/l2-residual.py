@@ -5,7 +5,7 @@
     python3 analysis/explore/l2-residual.py selftest   the additive split
 
 The question comes before building a second, L2-resident reporter (model 3 in notes/p99-models.md):
-only if the temporal model (window p99, infwin-model.py) leaves errors that the L2 explains is a
+only if the temporal model (window p99, temporal-model.py) leaves errors that the L2 explains is a
 second coordinate worth its probe, calibration and runs.
 
 Test A, the decisive one. The L2 chapter ran MobileNet beside co-runners that move the same DRAM
@@ -41,9 +41,9 @@ import sys
 
 import numpy as np
 
-CMD = sys.argv[1] if len(sys.argv) > 1 else ""   # read first: avg-model rewrites sys.argv for stress.py
+CMD = sys.argv[1] if len(sys.argv) > 1 else ""   # read first: inference-average-model rewrites sys.argv for stress.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # analysis/
-W = importlib.import_module("infwin-model")    # aggregated(), rulers(), and through it avg-model, stress
+W = importlib.import_module("temporal-model")    # aggregated(), rulers(), and through it inference-average-model, stress
 C = importlib.import_module("counter-model")   # profile(): the isolated DRAM and L2 indicators
 H, S, A = W.H, W.S, W.A
 P99 = W.STATS["p"]

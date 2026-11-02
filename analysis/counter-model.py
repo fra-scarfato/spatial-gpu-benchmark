@@ -66,7 +66,7 @@ ENG_NEW = {"mobilenetint8": ("mobilenetv2-12-int8", 55), "resnetint8": ("resnet5
            "efficientnet": ("efficientnet_b0", 139), "vit": ("vit-base-patch16-224", 92)}
 # The p99 cost per kernel boundary beside the 100 us spin (exp19 spin-K100, mean of the four), the
 # same spin as every dispatch check and as g. Until 2026-10-29 it was 0.87, the median beside the
-# 27 ms spin: a calibration on one probe checked on another (notes/p99-models.md). infwin-model.py
+# 27 ms spin: a calibration on one probe checked on another (notes/p99-models.md). temporal-model.py
 # keeps its own copy of this constant.
 PRESENCE_US = 1.05
 # D and the inference rate behind L come from each network alone in an 8-SM MPS static partition

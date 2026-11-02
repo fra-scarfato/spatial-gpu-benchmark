@@ -30,7 +30,7 @@ TRTEXEC ?= /usr/src/tensorrt/bin/trtexec
 # The graphs and the engines are data, so they are on the NVMe with the rest of it.
 DATA     ?= /mnt/nvme/f.scarfato
 MODELS   ?= $(DATA)/models
-AUXPROBE ?= probes/auxprobe
+AUX_STREAMS_PROBE ?= probes/aux-streams-probe
 FP16     = --fp16
 
 MB  = $(MODELS)/mobilenetv2-12
@@ -106,7 +106,7 @@ int8:
 census:
 	@for e in $(MB)/engine/*.engine $(RS)/engine/*.engine $(INC)/engine/*.engine $(VIT)/engine/*.engine $(RN)/engine/*.engine $(EFF)/engine/*.engine; do \
 		[ -e "$$e" ] || continue; \
-		printf '  %-46s %s\n' "$$(basename $$e)" "$$($(AUXPROBE) $$e 2>/dev/null | tail -1)"; \
+		printf '  %-46s %s\n' "$$(basename $$e)" "$$($(AUX_STREAMS_PROBE) $$e 2>/dev/null | tail -1)"; \
 	done
 
 # The logs are the census evidence and stay; they are a few tens of kilobytes.

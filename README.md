@@ -34,7 +34,7 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 
 ```sh
 make                          # builds ./runner
-make -C probes        # builds the probes (devprobe, itfproc, ...)
+make -C probes        # builds the probes (device-probe, corunner, ...)
 make -f engines.mk            # builds every TensorRT engine from its ONNX file
 sudo jetson_clocks
 
@@ -89,7 +89,7 @@ are kept out of the campaign and serve as evidence about mechanisms, not as late
 sudo ./measure/profile.sh soc-budget        # DRAM counters: each network alone on 4 budgets
 sudo ./measure/profile.sh soc-itf           # DRAM counters: target alone and beside compute_gemm
 sudo ./measure/profile.sh footprint         # DRAM counters: compute_gemm's operand size
-sudo ./measure/profile.sh calibration       # DRAM counters during devprobe's copies
+sudo ./measure/profile.sh calibration       # DRAM counters during device-probe's copies
 python3 analysis/profiles.py                 # all of the above -> $DATA/profiles/derived/*.csv
 ```
 
@@ -125,8 +125,8 @@ requirements.txt            the Python packages, pinned
 src/, include/              the runner: options, inputs, statistics, SM allocation, the TensorRT
                             engine, networks, the synthetic co-runner, the run (src/spin.cu: nvcc)
 probes/                     standalone CUDA programs with their own Makefile, README and the pin
-                            file of the binaries: auxprobe, wqprobe, devprobe (the GB/s
-                            calibration), itfproc (the co-runner and stressor as a separate
+                            file of the binaries: aux-streams-probe, work-queue-probe, device-probe (the GB/s
+                            calibration), corunner (the co-runner and stressor as a separate
                             process), gpu-latency (RRZE-HPC's pointer chase, the probe, GPL-3)
 measure/                    everything that runs on the GPU, guarded
   sweep.sh                    the campaign: runs every arm of a family, resumable
@@ -142,7 +142,7 @@ analysis/                   everything that reads the data, CPU only
   aggregate.py                raw runs -> bench/aggregate/<exp>.csv and summary.csv
   profiles.py                 profiled runs -> profiles/derived/*.csv
   stress.py                   the stress models (predict|compare <geometry>)
-  avg-model.py, infwin-model.py   the temporal model
+  inference-average-model.py, temporal-model.py   the temporal model
   counter-model.py            the counter model (DRAM, L2, both)
   ensemble.py                 correction, maximum and margin of the three p99 models
   compose.py                  two stressors together (the composition ratio)
@@ -152,8 +152,8 @@ analysis/                   everything that reads the data, CPU only
   lib/tables.py               the LaTeX writer the results-section generators share
   tables/                     every thesis table, as LaTeX rows (the map below)
   explore/                    one-off investigations kept for the record, outside the pipeline:
-                              l2-residual, onoff, burst-diag, peak-test, models, streams
-docs/                       DOC.md (design decisions and traps), MEASUREMENTS.md (what every
+                              l2-residual, onoff, probe-window-bursts, peak-test, models, streams
+docs/                       DESIGN.md (design decisions and traps), MEASUREMENTS.md (what every
                             number means, the names of the geometries and the glossary)
 ```
 
@@ -162,7 +162,7 @@ docs/                       DOC.md (design decisions and traps), MEASUREMENTS.md
 | Thesis | Generator | Run by |
 |---|---|---|
 | results section | `analysis/tables/results-tables.py` (+ `split-tables.py`) | `./pipeline.py --tables` |
-| appendix | `analysis/tables/tex-tables.py` | `./pipeline.py --tables` |
+| appendix | `analysis/tables/appendix-tables.py` | `./pipeline.py --tables` |
 | stress chapter: `tab:stress-scale` ... `tab:stress-compose` (11) | `analysis/tables/stress-tables.py` | `make tables` |
 | stress chapter: `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` (6) | `analysis/tables/ensemble-tables.py` | `make tables` |
 | stress chapter: `tab:stress-sizes*`, `tab:stress-triple*`, `tab:stress-energy*` (6) | `analysis/tables/geometry-tables.py` | `make tables` |
@@ -196,7 +196,7 @@ scratch/                         temporary files; nothing reads from it
 
 ## Documentation
 
-- [`docs/DOC.md`](docs/DOC.md): design decisions, methodology, the data model and the traps found on the way
+- [`docs/DESIGN.md`](docs/DESIGN.md): design decisions, methodology, the data model and the traps found on the way
 - [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md): how every number of the memory analysis is collected and
   computed (GB/s, bytes per inference, kernel gaps, the calibration)
 - [`probes/README.md`](probes/README.md): the probe programs

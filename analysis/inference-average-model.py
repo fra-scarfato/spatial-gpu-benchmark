@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""avg-model.py - the average-over-inference stress model (hypothesis H), offline, on the 8 + 8 pairs.
+"""inference-average-model.py - the average-over-inference stress model (hypothesis H), offline, on the 8 + 8 pairs.
 
-    python3 analysis/avg-model.py
+    python3 analysis/inference-average-model.py
 
 H: a target inference feels the co-runner traffic averaged over its own length. Each reporter window
 beside a network (networks-8sm) is mapped to GB/s on a per-window ruler (the median window beside spin

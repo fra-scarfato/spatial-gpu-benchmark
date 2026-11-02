@@ -12,7 +12,7 @@ extra pessimism, the admission controller can use it; a model that never sets th
 The models, all on the 12 pairs of 8 + 8 SMs (exp24), p99 slowdown:
   Smooth     today's stress-sensitivity model (stress.py compare smooth88)
   Temporal   Smooth with the stress read as the p99 of inference-long windows (infwin88p,
-             infwin-model.py, the dispatch inside the curve)
+             temporal-model.py, the dispatch inside the curve)
   DRAM, DRAM+L2, L2   the counter model's variants (counter-model.py: dram, ref, l2)
 Each ensemble is max(Smooth, Temporal, one counter variant).
 
@@ -34,7 +34,7 @@ carried through only so that the written CSVs have models.py's columns; the goal
 
 The validation set (new, 2026-10-13): the 30 pairs of stress-validation-new, on networks no model
 saw (the four in INT8, EfficientNet-B0, the ViT). Every member is frozen: its predictions come from
-stress.py smoothnew, infwin-model.py new-predict and counter-model.py new-predict, written before the
+stress.py smoothnew, temporal-model.py new-predict and counter-model.py new-predict, written before the
 pairs were measured; its correction is minus its mean error on all 12 development pairs (for the
 counters, the mean in-sample residual of the fit on the 12, whose coefficients they use). The margin
 curve is printed again on these pairs, by block, with the margin the development curve gave (the

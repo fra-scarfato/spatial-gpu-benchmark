@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # After the target-layout reporter runs: redo saxpy4-L004 run 2 (chunk layout, with the binary the
 # rest of that calibration used). Ends with QUEUE-END, which the root queue fs-ncu-queue.sh waits for.
-# (The stressor variants - new itfproc, reporter.sh patterns, stress-pattern - were taken out.)
+# (The stressor variants - new corunner, reporter.sh patterns, stress-pattern - were taken out.)
 R=/home/nvidia/f_scarfato/runner
 S=/mnt/nvme/f.scarfato/scratch
 source $R/measure/lib/guards.sh          # only for other_gpu_users; OUT is NOT exported

@@ -1,4 +1,4 @@
-// auxprobe — the auxiliary-stream census.
+// aux-streams-probe — the auxiliary-stream census.
 //
 // Phase A of the work queue experiment settled the queue knobs. This settles the
 // other half of the professor's question: IBuilderConfig::setMaxAuxStreams() caps
@@ -15,7 +15,7 @@
 // The census is entirely in the engine, so this deserializes and prints — no
 // inference, no timing, nothing that perturbs a measurement in flight.
 //
-// Build: make -C probes auxprobe
+// Build: make -C probes aux-streams-probe
 
 #include <cstdio>
 #include <fstream>
@@ -26,7 +26,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: auxprobe <engine.engine> [engine.engine ...]\n");
+        std::fprintf(stderr, "usage: aux-streams-probe <engine.engine> [engine.engine ...]\n");
         return 2;
     }
 

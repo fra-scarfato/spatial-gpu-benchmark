@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 2026-10-12-peak-test-tuning.sh - 10 s runs of the time-based SAXPY alone on 8 SMs at duty 0.1, burst 2: GB/s against the period (peak length).
-# partition of the 8+8 geometry) with the scratch itfproc that has --burst: GB/s against duty and burst.
+# peak-test-tuning.sh - 10 s runs of the time-based SAXPY alone on 8 SMs at duty 0.1, burst 2: GB/s against the period (peak length).
+# partition of the 8+8 geometry) with the scratch corunner that has --burst: GB/s against duty and burst.
 R=/home/nvidia/f_scarfato/runner
-ITF=$R/probes/itfproc
+ITF=$R/probes/corunner
 MPS_PIPE=/tmp/mps-smoke MPS_LOG=/tmp/mps-log-smoke STATIC_CHUNKS=8 MPS_MODE=off
 source $R/measure/lib/mps.sh
 source $R/measure/lib/guards.sh

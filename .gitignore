@@ -32,8 +32,8 @@ bench_*
 
 # The probe binaries, build products of probes/Makefile like `runner` is of this one:
 # committed they would only be a diff of unreadable bytes.
-probes/auxprobe
-probes/wqprobe
-probes/devprobe
-probes/itfproc
+probes/aux-streams-probe
+probes/work-queue-probe
+probes/device-probe
+probes/corunner
 probes/gpu-latency/gpu-latency

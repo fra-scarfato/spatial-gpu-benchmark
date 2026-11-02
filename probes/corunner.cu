@@ -1,4 +1,4 @@
-// probes/itfproc.cu — the interferer as its own client process.
+// probes/corunner.cu — the interferer as its own client process.
 //
 // The in-process interferer shares the target's CUDA context, and therefore its launch
 // path. That is exactly the variable the MPS static arms need to move: here the same work
@@ -6,33 +6,33 @@
 // partition. Same kernels, same sizes, same reporting, so an MPS row and a green-context
 // row differ in the process model and in nothing else.
 //
-//   itfproc mem_saxpy    [--mb 256]     SAXPY over two buffers of 256 MiB, three times
+//   corunner mem_saxpy    [--mb 256]     SAXPY over two buffers of 256 MiB, three times
 //                                       their size moved per pass (read x, read y, write y)
-//   itfproc compute_gemm [--reps 32]    32 fp32 512-cubed SGEMMs per unit, operands
+//   corunner compute_gemm [--reps 32]    32 fp32 512-cubed SGEMMs per unit, operands
 //                                       resident in L2
-//   itfproc saxpy --level L [--mb 256]  the same SAXPY as mem_saxpy, written as our own kernel
+//   corunner saxpy --level L [--mb 256]  the same SAXPY as mem_saxpy, written as our own kernel
 //                                       so it can be throttled from inside: each thread moves a
 //                                       burst of elements, then sleeps. L in [0, 1] is the
 //                                       ACHIEVED BANDWIDTH as a fraction of the same kernel at
 //                                       full speed on the same partition. L = 0 keeps a kernel
 //                                       resident that moves no data.
-//   itfproc saxpy --period-us P --duty D  TIME-BASED: all threads move data at full speed during
+//   corunner saxpy --period-us P --duty D  TIME-BASED: all threads move data at full speed during
 //                                       the first D x P of every period P on the GPU's global
 //                                       clock, together, and wait for the rest. D is the fraction
 //                                       of TIME on; the achieved bandwidth fraction is printed.
-//   itfproc saxpy --period-us P --duty D --burst B  the same, each thread checking the clock every B
+//   corunner saxpy --period-us P --duty D --burst B  the same, each thread checking the clock every B
 //                                       elements instead of 16. At 16 a thread's burst lasts ~23 us
 //                                       on 8 SMs, so an ON part shorter than that overshoots; at B = 1
 //                                       the ON part is followed to ~1.5 us, and a P of ~100 us spreads
 //                                       even a low mean bandwidth evenly over the reporter's 0.3 ms
 //                                       windows (block 2's smooth uniform, 2026-10-11).
-//   itfproc saxpy --onoff-ms P --duty D  ON/OFF: whole full-speed units (the Steady kernel at L = 1)
+//   corunner saxpy --onoff-ms P --duty D  ON/OFF: whole full-speed units (the Steady kernel at L = 1)
 //                                       back to back during the first D x P ms of every period, then
 //                                       nothing resident until the next one. Each ON span is logged
 //                                       on CLOCK_MONOTONIC, the clock of the runner's per-inference
 //                                       stamps. With a small --mb and a short P the same mode spreads
 //                                       the same mean bandwidth uniformly in time.
-//   itfproc saxpy ... --scramble        the same bytes, still whole 128-byte lines read by a whole
+//   corunner saxpy ... --scramble        the same bytes, still whole 128-byte lines read by a whole
 //                                       warp, but the lines are visited in a scrambled order
 //                                       across the buffers: only the DRAM locality changes.
 //
@@ -40,13 +40,13 @@
 // follow-up of 2026-10-10). Each launch is one kernel; with --period-us P a launch starts every
 // P us (the host waits in between, so nothing is resident in the gap), without it the kernels
 // run back to back. The log carries launches per second and the wall time per launch.
-//   itfproc spin --kernel-us K           a register-only FMA chain that stays resident for exactly
+//   corunner spin --kernel-us K           a register-only FMA chain that stays resident for exactly
 //                                       K us (GPU clock) and touches no memory: presence alone, at a
 //                                       launch rate of 1/K back to back
-//   itfproc gemm --side S --sets N       one fp32 S-cubed SGEMM per launch, round-robin over N
+//   corunner gemm --side S --sets N       one fp32 S-cubed SGEMM per launch, round-robin over N
 //                                       distinct (A, B, C) sets: the working set grows with N while
 //                                       the work per kernel stays the same
-//   itfproc l2read --kernel-us K --level L --kb 1024   a K-us kernel whose threads re-read a small
+//   corunner l2read --kernel-us K --level L --kb 1024   a K-us kernel whose threads re-read a small
 //                                       array through the L2 (bypassing L1), throttled to L x its
 //                                       full read rate; same length and launch rate as spin, so
 //                                       the difference between the two is the L2 traffic
@@ -192,14 +192,14 @@ void onSignal(int) { g_stop = 1; }
 // would invalidate the whole comparison.
 void must(cudaError_t e, const char* what) {
     if (e != cudaSuccess) {
-        std::fprintf(stderr, "[itfproc] %s failed: %s\n", what, cudaGetErrorString(e));
+        std::fprintf(stderr, "[corunner] %s failed: %s\n", what, cudaGetErrorString(e));
         std::exit(1);
     }
 }
 
 void must(cublasStatus_t s, const char* what) {
     if (s != CUBLAS_STATUS_SUCCESS) {
-        std::fprintf(stderr, "[itfproc] %s failed (cublas status %d)\n", what, static_cast<int>(s));
+        std::fprintf(stderr, "[corunner] %s failed (cublas status %d)\n", what, static_cast<int>(s));
         std::exit(1);
     }
 }
@@ -422,7 +422,7 @@ int main(int argc, char** argv) {
             scramble = true;
             scrambleKb = static_cast<unsigned>(std::strtoul(argv[++i], nullptr, 10));
         } else {
-            std::fprintf(stderr, "[itfproc] unknown argument '%s'\n", argv[i]);
+            std::fprintf(stderr, "[corunner] unknown argument '%s'\n", argv[i]);
             return 2;
         }
     }
@@ -432,7 +432,7 @@ int main(int argc, char** argv) {
         if ((timed && kernelUs < 1.0) || (!timed && kernelUs != 0.0) || level < 0.0 || level > 1.0 ||
             (kind != "l2read" && level != 1.0) || side < 16 || sets < 1 || kb < 4 ||
             (periodUs > 0.0 && periodUs < kernelUs) || duty != 1.0 || scramble) {
-            std::fprintf(stderr, "[itfproc] usage: spin --kernel-us K | gemm --side S --sets N | "
+            std::fprintf(stderr, "[corunner] usage: spin --kernel-us K | gemm --side S --sets N | "
                                  "l2read --kernel-us K --level L [--kb KB], each with optional "
                                  "--period-us P >= K\n");
             return 2;
@@ -442,30 +442,30 @@ int main(int argc, char** argv) {
         return runPaced(kind, kernelUs, periodUs, side, sets, kb, level);
     }
     if (kind != "mem_saxpy" && kind != "compute_gemm" && kind != "saxpy") {
-        std::fprintf(stderr, "[itfproc] kind must be mem_saxpy, compute_gemm, saxpy, spin, gemm or "
+        std::fprintf(stderr, "[corunner] kind must be mem_saxpy, compute_gemm, saxpy, spin, gemm or "
                              "l2read, not '%s'\n", kind.c_str());
         return 2;
     }
     if (level < 0.0 || level > 1.0) {
-        std::fprintf(stderr, "[itfproc] --level must be in [0, 1], got %g\n", level);
+        std::fprintf(stderr, "[corunner] --level must be in [0, 1], got %g\n", level);
         return 2;
     }
     if (periodUs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0)) {
-        std::fprintf(stderr, "[itfproc] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
+        std::fprintf(stderr, "[corunner] --period-us is for saxpy, with --duty in (0, 1] and no --level\n");
         return 2;
     }
     if (burstArg != 16 && (periodUs == 0.0 || burstArg < 1)) {
-        std::fprintf(stderr, "[itfproc] --burst is for saxpy --period-us, at least 1\n");
+        std::fprintf(stderr, "[corunner] --burst is for saxpy --period-us, at least 1\n");
         return 2;
     }
     if (onoffMs > 0.0 && (kind != "saxpy" || duty <= 0.0 || duty > 1.0 || level != 1.0 ||
                           periodUs > 0.0 || scramble)) {
-        std::fprintf(stderr, "[itfproc] --onoff-ms is for saxpy, with --duty in (0, 1] and no --level, --period-us or --scramble\n");
+        std::fprintf(stderr, "[corunner] --onoff-ms is for saxpy, with --duty in (0, 1] and no --level, --period-us or --scramble\n");
         return 2;
     }
     if (scramble && (kind != "saxpy" || (mb & (mb - 1)) || (scrambleKb & (scrambleKb - 1)) ||
                      scrambleKb > mb * 1024u || (scrambleKb && scrambleKb < 4))) {
-        std::fprintf(stderr, "[itfproc] --scramble is for saxpy, with --mb and --scramble-kb powers of two, 4 KB to the buffer\n");
+        std::fprintf(stderr, "[corunner] --scramble is for saxpy, with --mb and --scramble-kb powers of two, 4 KB to the buffer\n");
         return 2;
     }
     const bool throttled = (kind == "saxpy");
@@ -597,7 +597,7 @@ int main(int argc, char** argv) {
             const auto on = duration_cast<Tick>(duration<double, std::milli>(onoffMs * duty));
             const auto unit = duration_cast<Tick>(duration<double>(tFull));
             if (on < unit) {
-                std::fprintf(stderr, "[itfproc] the ON part (%.2f ms) is shorter than one unit (%.3f ms)\n",
+                std::fprintf(stderr, "[corunner] the ON part (%.2f ms) is shorter than one unit (%.3f ms)\n",
                              onoffMs * duty, tFull * 1e3);
                 return 2;
             }

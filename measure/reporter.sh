@@ -16,8 +16,8 @@
 # The reporter is RRZE-HPC's gpu-latency (probes/gpu-latency): one thread chasing pointers
 # through an L2-sized and a DRAM-sized buffer, in its own 2-SM partition, so it adds almost no
 # traffic and reads the stress the co-runners put on the memory system as a latency. The co-runners
-# are started first and the reporter 3 s later. Beside itfproc (or alone) it runs for 30 s and
-# itfproc is then stopped; beside networks it runs until they have completed the campaign's protocol
+# are started first and the reporter 3 s later. Beside corunner (or alone) it runs for 30 s and
+# corunner is then stopped; beside networks it runs until they have completed the campaign's protocol
 # (5000 inferences and 30 s), so their own statistics (occupancy, rate) are written too.
 #
 # Output: $DATA/bench/stress-reporter/<configuration>/r<k>_latency.txt, r<k>_c<i>.log and, for a
@@ -62,7 +62,7 @@ RETQ="$M/retinanet-9/engine/retinanet-9-int8.engine"
 EFF="$M/efficientnet_b0/engine/efficientnet_b0.engine"
 VIT="$M/vit-base-patch16-224/engine/vit-base-patch16-224.engine"
 RUNNER="$ROOT/runner"
-ITF="${ITF:-$ROOT/probes/itfproc}"             # overridable: e.g. a binary built elsewhere
+ITF="${ITF:-$ROOT/probes/corunner}"             # overridable: e.g. a binary built elsewhere
 REPORTER="${REPORTER:-$ROOT/probes/gpu-latency/gpu-latency}"
 TMP=/dev/shm/fs-reporter
 
@@ -282,7 +282,7 @@ while IFS='|' read -r name shares cmds; do
             case "${co[$i]}" in "$ITF"*) stop+=($!) ;; esac
         done
         [ "${#co[@]}" -gt 0 ] && sleep "$LEAD"
-        # Beside networks the reporter runs until they have finished their protocol; beside itfproc,
+        # Beside networks the reporter runs until they have finished their protocol; beside corunner,
         # or alone, for DURATION. Its output is flushed sample by sample, so stopping it loses nothing.
         dur="$DURATION"
         [ "${#stop[@]}" -lt "${#co[@]}" ] && dur=100000

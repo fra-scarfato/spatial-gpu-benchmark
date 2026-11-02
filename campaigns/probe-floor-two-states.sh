@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026-10-10-probe-floor-two-states.sh - what flips board 1's light-load memory latency between its two states?
+# probe-floor-two-states.sh - what flips board 1's light-load memory latency between its two states?
 #
 # The reporter alone reads ~770 cycles per access right after a boot and ~805-840 later; loaded
 # readings and network latencies do not move (2026-10-10). This sequence starts from a fresh boot and
@@ -9,7 +9,7 @@
 # A probe: wait for an otherwise idle GPU, log the GPU/SoC rail power (tegrastats, no root), then run
 # the reporter alone for 10 s on the whole device (no MPS, no partition: a one-thread pointer chase
 # does not care) and print the median cycles per access, the median and p99 ns. low < 785 cycles.
-# A stimulus: itfproc on the whole device for 10 s, then stopped, so a probe sees its after-effect
+# A stimulus: corunner on the whole device for 10 s, then stopped, so a probe sees its after-effect
 # and never overlaps it. Two pauses wait for the user's read-only root dump (fs-rootdump.sh).
 R=/home/nvidia/f_scarfato/runner
 S=/mnt/nvme/f.scarfato/scratch
@@ -33,11 +33,11 @@ print("PROBE %2s %-12s cycles %6.1f  median %6.1f ns  p99 %6.1f ns  %4d windows 
       n, tag, c, st.median(ns), ns[int(0.99 * (len(ns) - 1))], len(r), vdd, "LOW" if c < 785 else "HIGH"))
 PY
 }
-stim() {   # stim <tag> <itfproc args...>
+stim() {   # stim <tag> <corunner args...>
     local tag=$1; shift
     until other_gpu_users >/dev/null 2>&1; do log "GPU busy, waiting"; sleep 30; done
-    timeout -s TERM 10 $R/probes/itfproc "$@" > $D/stim-$tag.log 2>&1
-    log "STIM $tag: itfproc $* for 10 s, $(grep -o "achieved [0-9.]*" $D/stim-$tag.log | tail -1) $(grep -o "([0-9.]* GB/s)" $D/stim-$tag.log | tail -1)"
+    timeout -s TERM 10 $R/probes/corunner "$@" > $D/stim-$tag.log 2>&1
+    log "STIM $tag: corunner $* for 10 s, $(grep -o "achieved [0-9.]*" $D/stim-$tag.log | tail -1) $(grep -o "([0-9.]* GB/s)" $D/stim-$tag.log | tail -1)"
 }
 rootgate() {
     log "ROOT-DUMP $1: please run   sudo bash $S/fs-rootdump.sh $D $1   (waiting up to 15 min)"

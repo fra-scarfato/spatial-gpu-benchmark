@@ -166,7 +166,7 @@ require_quiet_gpu() {
 }
 
 # ---- Provenance: which binaries ran, on which board state ---------------------------------------
-# A rebuilt binary changes the measurement silently: on 2026-10-09 a rebuild of itfproc made the
+# A rebuilt binary changes the measurement silently: on 2026-10-09 a rebuild of corunner made the
 # Steady SAXPY 3.6 % slower and nothing noticed for a day. So every campaign script calls
 # check_binaries once at start-up: it compares the binaries against probes/PINNED-<host>.sha256
 # and refuses to run on a mismatch, and it writes a manifest (commit, binary hashes, governor, clocks)
@@ -174,7 +174,7 @@ require_quiet_gpu() {
 # file, so a change of instrument is always a visible, dated commit.
 # Checklist: a new probe binary used by a campaign also goes into PINNED_BINARIES.
 _GUARDS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PINNED_BINARIES="runner probes/itfproc probes/gpu-latency/gpu-latency"
+PINNED_BINARIES="runner probes/corunner probes/gpu-latency/gpu-latency"
 PIN_FILE="$_GUARDS_ROOT/probes/PINNED-$(hostname).sha256"
 
 pin_binaries() {
@@ -201,7 +201,7 @@ check_binaries() {
         echo "governor  $(cat "$GPU_DEVFREQ/governor" 2>/dev/null)   gpu $(cat "$GPU_DEVFREQ/min_freq")-$(cat "$GPU_DEVFREQ/max_freq")   emc $(cat /sys/class/devfreq/bwmgr/cur_freq 2>/dev/null)"
         echo "cuda      $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | grep -o "V[0-9][0-9.]*")   tensorrt $(python3 -c 'import tensorrt; print(tensorrt.__version__)' 2>/dev/null)   l4t $(head -1 /etc/nv_tegra_release | grep -o 'R[0-9]*.*REVISION: [0-9.]*')"
         (cd "$_GUARDS_ROOT" && sha256sum $PINNED_BINARIES) | sed 's/^/binary    /'
-        [ -n "${ITF:-}" ] && [ "$ITF" != "$_GUARDS_ROOT/probes/itfproc" ] && echo "binary    $(sha256sum "$ITF")   (ITF override, not pinned)"
+        [ -n "${ITF:-}" ] && [ "$ITF" != "$_GUARDS_ROOT/probes/corunner" ] && echo "binary    $(sha256sum "$ITF")   (ITF override, not pinned)"
         [ -n "${REPORTER:-}" ] && [ "$REPORTER" != "$_GUARDS_ROOT/probes/gpu-latency/gpu-latency" ] && echo "binary    $(sha256sum "$REPORTER")   (REPORTER override, not pinned)"
     } > "$MANIFEST"
     echo "[sweep] manifest: $MANIFEST"

@@ -14,7 +14,7 @@ median of the 0.3 ms windows), and each combination is compared with the sum of 
     ratio = L_eq(a + b) / (L_eq(a alone) + L_eq(b alone))
 
 1 is additive, below 1 saturating, above 1 amplified. The same ratio on the stressors' own GB/s
-(what itfproc moved, from its logs) separates two causes: the stressors slowing each other down
+(what corunner moved, from its logs) separates two causes: the stressors slowing each other down
 (they move less together) from the memory system answering the same traffic with more latency.
 
 Sacrifices: the halves' alone readings are taken on the first partition only. Every combination is
@@ -39,7 +39,7 @@ COORDS = ("p99", "median")
 
 
 def gbs(log):
-    """The mean GB/s itfproc moved over the run: the last of its cumulative figures, or None."""
+    """The mean GB/s corunner moved over the run: the last of its cumulative figures, or None."""
     vals = re.findall(r"bytes moved:.*\(([0-9.]+) GB/s\)", open(log, errors="replace").read())
     return float(vals[-1]) if vals else None
 

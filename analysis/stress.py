@@ -98,7 +98,7 @@ REPORTER = os.path.join(BENCH, G["rep"])
 
 
 def achieved_level(log):
-    """The co-runner's achieved level, or None: the median of the levels itfproc printed once a
+    """The co-runner's achieved level, or None: the median of the levels corunner printed once a
     second; for the gbs geometries, its mean GB/s over the run (the last of the cumulative figures
     it prints once a second, which span the start-up)."""
     txt = open(log, errors="replace").read()

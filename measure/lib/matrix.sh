@@ -377,7 +377,7 @@ add "memory-interferers_spin-8sm" \
 # (`mem_saxpy` at 8 SMs and `compute_gemm` at 8 SMs), so the process model is the only
 # difference between the two sets of rows.
 #
-# The co-runner is probes/itfproc: the same work as the in-process interferer, written as
+# The co-runner is probes/corunner: the same work as the in-process interferer, written as
 # its own program, because a co-tenant is a process and not a thread. Same kernels, same
 # buffer sizes, same reporting, so its own log states the load it applied.
 #
@@ -386,9 +386,9 @@ add "memory-interferers_spin-8sm" \
 add "memory-mps-interferers_mps-alone" \
     "solo|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet||50"
 add "memory-mps-interferers_mps-memsaxpy-8sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/itfproc mem_saxpy|50"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/corunner mem_saxpy|50"
 add "memory-mps-interferers_mps-computegemm-8sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/itfproc compute_gemm|50"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/corunner compute_gemm|50"
 
 # The fixed-budget measurement under MPS static partitions: MobileNet holds 8 SMs and ResNet
 # is varied, the same two rows the green-context arm measures. A static partition set covers
@@ -404,9 +404,9 @@ add "memory-mps-budget_mps-mobilenet8-resnet8" \
 # 50:25 creates three partitions - 8 SMs to the target, 4 to the participant, 4 unassigned -
 # so the participant budget matches the green-context row it is paired with.
 add "memory-mps-interferers-4sm_mps-memsaxpy-4sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/itfproc mem_saxpy|50:25"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/corunner mem_saxpy|50:25"
 add "memory-mps-interferers-4sm_mps-computegemm-4sm" \
-    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/itfproc compute_gemm|50:25"
+    "itf|static|||$RUNNER --submit-threads 1 --dataset $DS --allocation whole --net $MOB:50:mobilenet|$ROOT/probes/corunner compute_gemm|50:25"
 
 # The two-thread check on the tail. One measured client with the interferer inside its own
 # process, two submitting threads, both pinned. The tail of this arm says whether the pathology
@@ -510,7 +510,7 @@ add "interference-additivity_resnet+retinanet+inception" \
 # The stress model, under MPS static partitions only (MEASUREMENTS.md, "The stress model").
 #
 # stress-sensitivity: each target on 8 SMs, alone and beside the throttled SAXPY on the other 8 SMs
-# at levels 0 ... 1, finer below 0.2 where the networks fall (itfproc saxpy --level, achieved
+# at levels 0 ... 1, finer below 0.2 where the networks fall (corunner saxpy --level, achieved
 # bandwidth as a fraction of full speed).
 # The target's slowdown against its alone row, per level, is its sensitivity curve.
 #
@@ -527,33 +527,33 @@ for t in $STRESS_TARGETS; do
     add "stress-sensitivity_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity_${tn}-saxpy-L$p" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:50"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:50"
     done
     # The same curves with the stressor on 4 SMs, the co-runner geometry of stress-validation
     # (target {0,1,4,5}, stressor {2,6}), and their own alone baseline.
     add "stress-sensitivity-4sm_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     for p in 000 002 004 006 008 010 015 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity-4sm_${tn}-saxpy-L$p" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:25"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --level $((10#$p / 100)).$(printf '%02d' $((10#$p % 100)))|50:25"
     done
     # The baseline: the same target beside time-based SAXPY on 8 SMs (all threads on for D of every
     # 1 ms), D = 0 ... 1.0, and its own alone row.
     add "stress-sensitivity-tb_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     add "stress-sensitivity-tb_${tn}-tb-D000" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --level 0|50:50"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --level 0|50:50"
     for d in 010 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity-tb_${tn}-tb-D$d" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100)))|50:50"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100)))|50:50"
     done
     # The same time-based SAXPY with its lines scrambled within 2 MB windows: the same bytes, less
     # DRAM-row locality, no extra page misses (scrambling the whole buffer is translation-bound:
     # 12 against 189 GB/s). Its own alone row and D = 0 (the resident kernel, as tb-D000).
     add "stress-sensitivity-tbs_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     add "stress-sensitivity-tbs_${tn}-tbs-D000" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --level 0|50:50"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --level 0|50:50"
     for d in 010 020 030 040 050 060 070 080 090 100; do
         add "stress-sensitivity-tbs_${tn}-tbs-D$d" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --scramble-kb 2048|50:50"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --period-us 1000 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --scramble-kb 2048|50:50"
     done
     for c in $STRESS_TARGETS; do
         cn="${c%%:*}"; ce="${c#*:}"
@@ -569,7 +569,7 @@ done
 
 
 # The L2 chapter (Daniel, 2026-10-10): separating a co-runner's presence from its use of the L2.
-# Every co-runner is an itfproc process on 4 SMs beside the target on 8 (shares 50:25, the geometry of
+# Every co-runner is an corunner process on 4 SMs beside the target on 8 (shares 50:25, the geometry of
 # stress-validation), so the rows compare directly with the measured pairs.
 #
 # l2-presence: does the presence cost depend on the co-runner's launch rate, or only on a kernel of
@@ -601,11 +601,11 @@ for t in $STRESS_TARGETS; do
     add "l2-presence_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     for k in 27000 1000 100 10; do
         add "l2-presence_${tn}-spin-K$k" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc spin --kernel-us $k|50:25"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner spin --kernel-us $k|50:25"
     done
     for p in 200 1000; do
         add "l2-presence_${tn}-spin-K100-P$p" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc spin --kernel-us 100 --period-us $p|50:25"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner spin --kernel-us 100 --period-us $p|50:25"
     done
 done
 t="mobilenet:$MOB"; tn="${t%%:*}"; te="${t#*:}"
@@ -613,27 +613,27 @@ add "l2-gemm-sets_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
 for n in 1 2 3 4 5 8; do
     pace=""; [ "$GEMM_PERIOD_US" != 0 ] && pace=" --period-us $GEMM_PERIOD_US"
     add "l2-gemm-sets_${tn}-gemm-N$n" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc gemm --side 288 --sets $n$pace|50:25"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner gemm --side 288 --sets $n$pace|50:25"
 done
 add "l2-read_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
 add "l2-read_${tn}-spin-K100" \
-    "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc spin --kernel-us 100|50:25"
+    "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner spin --kernel-us 100|50:25"
 for l in 000 025 050 100; do
     add "l2-read_${tn}-l2read-L$l" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc l2read --kernel-us 100 --level $((10#$l / 100)).$(printf '%02d' $((10#$l % 100)))|50:25"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner l2read --kernel-us 100 --level $((10#$l / 100)).$(printf '%02d' $((10#$l % 100)))|50:25"
 done
 add "l2-vs-dram_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
 for c in "spin-K100:spin --kernel-us 100" "computegemm:compute_gemm" "saxpy-L0243:saxpy --level 0.243" \
          "gemm-N8:gemm --side 288 --sets 8 --period-us $GEMM_PERIOD_US" "saxpy-L0087:saxpy --level 0.087"; do
     add "l2-vs-dram_${tn}-${c%%:*}" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc ${c#*:}|50:25"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner ${c#*:}|50:25"
 done
 
 
 # dispatch-count (2026-10-13): does the presence cost grow with the number of co-runners, or is it
 # paid once? MobileNet on 8 SMs beside two spins (resident, no memory traffic, 100 us kernels), each on
 # its own 4 SMs. Read against l2-presence_mobilenet-spin-K100, the same spin alone on 4 SMs (50:25).
-SPIN="$ROOT/probes/itfproc spin --kernel-us"
+SPIN="$ROOT/probes/corunner spin --kernel-us"
 add "dispatch-count_mobilenet-spin4x2" "itf|static|||$(stress_target mobilenet "$MOB")|$SPIN 100;$SPIN 100|50:25:25"
 
 # stress-onoff (Daniel, 2026-10-10): does the temporal distribution of the DRAM traffic matter at the
@@ -641,7 +641,7 @@ add "dispatch-count_mobilenet-spin4x2" "itf|static|||$(stress_target mobilenet "
 # distributions: ON/OFF, whole full-speed units during the first D of every 400 ms period and nothing
 # resident in the rest (D = 25, 50, 75, 100 %), and uniform, the same mode with 32 MB units over ~3 ms
 # periods, set to the same mean GB/s (32.5, 67.1, 99.7 against 32.3, 66.7, 99.5 measured alone).
-# itfproc logs every ON span on CLOCK_MONOTONIC, the clock of the runner's t_start_ns / t_end_ns, so
+# corunner logs every ON span on CLOCK_MONOTONIC, the clock of the runner's t_start_ns / t_end_ns, so
 # each inference can be placed in ON, OFF or across a transition.
 # smooth (2026-10-11): the uniform distribution at the reporter's time scale. The time-based SAXPY with
 # a 100 us period and a clock check every 2 elements per thread: every 0.3 ms reporter window sees the
@@ -657,7 +657,7 @@ for t in $STRESS_TARGETS; do
     tn="${t%%:*}"; te="${t#*:}"
     add "stress-onoff_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     add "stress-onoff_${tn}-spin" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc spin --kernel-us 100|50:50"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner spin --kernel-us 100|50:50"
     for c in "onoff-D025:--onoff-ms 400 --duty 0.25" \
          "onoff-D050:--onoff-ms 400 --duty 0.50" \
          "onoff-D075:--onoff-ms 400 --duty 0.75" \
@@ -675,7 +675,7 @@ for t in $STRESS_TARGETS; do
          "peak-T1000:--period-us 10000 --duty 0.10 --burst 2" \
          "peak-T3000:--period-us 30000 --duty 0.10 --burst 2"; do
         add "stress-onoff_${tn}-${c%%:*}" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy ${c#*:}|50:50"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy ${c#*:}|50:50"
     done
 done
 
@@ -696,10 +696,10 @@ for t in $NEW_TARGETS; do
     tn="${t%%:*}"; te="${t#*:}"
     add "stress-new_${tn}-alone" "solo|static|||$(stress_target "$tn" "$te")||50"
     add "stress-new_${tn}-spin" \
-        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc spin --kernel-us 100|50:50"
+        "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner spin --kernel-us 100|50:50"
     for d in 025 050 075 100; do
         add "stress-new_${tn}-smooth-D$d" \
-            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/itfproc saxpy --period-us 100 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --burst 2|50:50"
+            "itf|static|||$(stress_target "$tn" "$te")|$ROOT/probes/corunner saxpy --period-us 100 --duty $((10#$d / 100)).$(printf '%02d' $((10#$d % 100))) --burst 2|50:50"
     done
 done
 for t in $STRESS_TARGETS; do

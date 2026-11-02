@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""infwin-model.py - the 8 + 8 stress model read over one target inference (Daniel, 2026-10-13).
+"""temporal-model.py - the 8 + 8 stress model read over one target inference (Daniel, 2026-10-13).
 
-    python3 analysis/infwin-model.py              predict (frozen first), then compare
-    python3 analysis/infwin-model.py new-predict  the validation set: freeze the predictions
-    python3 analysis/infwin-model.py new-compare  the validation set against its pairs
-    python3 analysis/infwin-model.py selftest     the aggregation
+    python3 analysis/temporal-model.py              predict (frozen first), then compare
+    python3 analysis/temporal-model.py new-predict  the validation set: freeze the predictions
+    python3 analysis/temporal-model.py new-compare  the validation set against its pairs
+    python3 analysis/temporal-model.py selftest     the aggregation
 
 smooth88 reads the reporter's p99 over its 0.33 ms windows. A target inference lasts 0.67 ms
 (MobileNet) to 15.6 ms (RetinaNet), so a short peak shows in the reporter's tail whether or not it
@@ -54,9 +54,9 @@ import sys
 
 import numpy as np
 
-CMD = sys.argv[1] if len(sys.argv) > 1 else ""   # read first: avg-model rewrites sys.argv for stress.py
+CMD = sys.argv[1] if len(sys.argv) > 1 else ""   # read first: inference-average-model rewrites sys.argv for stress.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-H = importlib.import_module("avg-model")      # windows(), curves(); imports stress as smooth88
+H = importlib.import_module("inference-average-model")      # windows(), curves(); imports stress as smooth88
 S, A = H.S, H.A
 AGG = os.path.join(S.BENCH, "aggregate")
 NETS = S.NETS
@@ -211,7 +211,7 @@ def new(cmd):
         write("stress-predictions-infwinnewp.csv", predict(alone, ruler, STATS["p"], nets, rep), S.FROZEN)
     else:
         if not os.path.exists(path):
-            raise SystemExit("infwin-model.py: run new-predict first; the predictions must exist before the pairs are read")
+            raise SystemExit("temporal-model.py: run new-predict first; the predictions must exist before the pairs are read")
         preds = [dict(r, **{k: float(r[k]) for k in ("pred_p99", "pred_median")}) for r in csv.DictReader(open(path))]
         compare(preds, new_alone(data, nets, lambda t: G["exp"]), "infwinnewp", "exp27", VARIANTS[:1])
 

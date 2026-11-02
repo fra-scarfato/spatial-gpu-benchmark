@@ -1,4 +1,4 @@
-// wqprobe — Phase A reconnaissance for the green-context work queue experiment.
+// work-queue-probe — Phase A reconnaissance for the green-context work queue experiment.
 //
 // Answers three questions the experiment design depends on:
 //   1. what the device reports by default for its workqueue configuration
@@ -9,7 +9,7 @@
 //   3. whether asking for DeviceCtx versus GreenCtxBalanced is observable at all
 //      — if the two read back identically, the whole experiment is void.
 //
-// Build: make -C probes wqprobe
+// Build: make -C probes work-queue-probe
 
 #include <cstdio>
 #include <cstdlib>

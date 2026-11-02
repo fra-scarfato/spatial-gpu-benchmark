@@ -39,7 +39,7 @@ mixed into them:
                 (config, network, run, metric)
   summary.csv   across-run point estimate and spread per config/network
 
-The LaTeX tables are rendered from the same data by results-tables.py and tex-tables.py, and a run
+The LaTeX tables are rendered from the same data by results-tables.py and appendix-tables.py, and a run
 whose median is far from its siblings' is reported here as suspect.
 """
 

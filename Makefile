@@ -70,7 +70,7 @@ clean:
 # The analysis self-tests: each script checks its own arithmetic on synthetic input (interpolation,
 # fits, folds, parsing), with no GPU. A new script with a selftest goes in this list.
 SELFTESTS = analysis/stress.py analysis/compose.py analysis/counter-model.py \
-            analysis/ensemble.py analysis/geometry.py analysis/infwin-model.py \
+            analysis/ensemble.py analysis/geometry.py analysis/temporal-model.py \
             analysis/explore/l2-residual.py
 
 check:
@@ -102,62 +102,62 @@ FROZEN := $(DATA)/bench/frozen
 TABLES := $(DATA)/bench/tables
 RUNS := $(wildcard $(DATA)/bench/*/*/r*)
 PROFILES := $(wildcard $(DATA)/profiles/derived/*.csv $(DATA)/profiles/ncu/*.csv)
-AN := analysis
-LOAD := analysis/aggregate.py analysis/lib/families.py analysis/stress.py $(RUNS)
-COUNTER := $(AN)/counter-model.py $(LOAD) $(PROFILES)
+ANALYSIS := analysis
+RAW_INPUTS := analysis/aggregate.py analysis/lib/families.py analysis/stress.py $(RUNS)
+COUNTER := $(ANALYSIS)/counter-model.py $(RAW_INPUTS) $(PROFILES)
 GEOMS := onoff88 uniform88 smooth88 smoothx88 smoothnew
-cmp = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
+comparisons = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
 
 tables: $(TABLES)/stress.tex $(TABLES)/ensemble.tex $(TABLES)/geometry.tex $(AGG)/summary.csv
 
-$(AGG)/summary.csv: $(LOAD)
+$(AGG)/summary.csv: $(RAW_INPUTS)
 	python3 analysis/aggregate.py
 
-$(call cmp,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(FROZEN)/stress-predictions-%.csv $(LOAD)
+$(call comparisons,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(FROZEN)/stress-predictions-%.csv $(RAW_INPUTS)
 	python3 analysis/stress.py compare $*
 
-$(call cmp,infwin88 infwin88p infwin88d infwin88pd) &: $(AN)/infwin-model.py $(AN)/avg-model.py $(call cmp,smooth88) $(LOAD)
-	python3 $(AN)/infwin-model.py
+$(call comparisons,infwin88 infwin88p infwin88d infwin88pd) &: $(ANALYSIS)/temporal-model.py $(ANALYSIS)/inference-average-model.py $(call comparisons,smooth88) $(RAW_INPUTS)
+	python3 $(ANALYSIS)/temporal-model.py
 
-$(call cmp,infwinnewp): $(FROZEN)/stress-predictions-infwinnewp.csv $(AN)/infwin-model.py $(AN)/avg-model.py $(LOAD)
-	python3 $(AN)/infwin-model.py new-compare
+$(call comparisons,infwinnewp): $(FROZEN)/stress-predictions-infwinnewp.csv $(ANALYSIS)/temporal-model.py $(ANALYSIS)/inference-average-model.py $(RAW_INPUTS)
+	python3 $(ANALYSIS)/temporal-model.py new-compare
 
-$(AGG)/counter-model-coeffs.csv $(call cmp,counters-dram counters-ref counters-l2) &: $(COUNTER)
-	python3 $(AN)/counter-model.py
+$(AGG)/counter-model-coeffs.csv $(call comparisons,counters-dram counters-ref counters-l2) &: $(COUNTER)
+	python3 $(ANALYSIS)/counter-model.py
 
-$(call cmp,counters-new-dram counters-new-ref counters-new-l2) &: \
+$(call comparisons,counters-new-dram counters-new-ref counters-new-l2) &: \
 		$(foreach v,dram ref l2,$(FROZEN)/stress-predictions-counters-new-$(v).csv) $(COUNTER)
-	python3 $(AN)/counter-model.py new-compare
+	python3 $(ANALYSIS)/counter-model.py new-compare
 
-$(call cmp,max-dram max-ref max-l2 maxc-dram maxc-ref maxc-l2) &: $(AN)/ensemble.py $(call cmp,smooth88 infwin88p) $(COUNTER)
-	python3 $(AN)/ensemble.py
+$(call comparisons,max-dram max-ref max-l2 maxc-dram maxc-ref maxc-l2) &: $(ANALYSIS)/ensemble.py $(call comparisons,smooth88 infwin88p) $(COUNTER)
+	python3 $(ANALYSIS)/ensemble.py
 
-$(AGG)/compose-4sm.csv: $(AN)/compose.py $(LOAD)
-	python3 $(AN)/compose.py
+$(AGG)/compose-4sm.csv: $(ANALYSIS)/compose.py $(RAW_INPUTS)
+	python3 $(ANALYSIS)/compose.py
 
-GEOMETRY := $(AN)/geometry.py $(AGG)/counter-model-coeffs.csv $(AGG)/compose-4sm.csv $(COUNTER)
+GEOMETRY := $(ANALYSIS)/geometry.py $(AGG)/counter-model-coeffs.csv $(AGG)/compose-4sm.csv $(COUNTER)
 
 $(AGG)/geometry-splits.csv: $(GEOMETRY)
-	python3 $(AN)/geometry.py splits
+	python3 $(ANALYSIS)/geometry.py splits
 
 $(AGG)/geometry-triple-compare-current.csv: $(FROZEN)/geometry-triple-predictions.csv $(GEOMETRY)
-	python3 $(AN)/geometry.py triple-current
+	python3 $(ANALYSIS)/geometry.py triple-current
 
-$(AGG)/geometry-power.csv: $(AN)/geometry.py $(LOAD)
-	python3 $(AN)/geometry.py power
+$(AGG)/geometry-power.csv: $(ANALYSIS)/geometry.py $(RAW_INPUTS)
+	python3 $(ANALYSIS)/geometry.py power
 
-$(TABLES)/stress.tex: $(AN)/tables/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
-		$(call cmp,onoff88 uniform88 smooth88 smoothx88 infwin88 infwin88p) \
-		$(call cmp,counters-dram counters-ref counters-l2 counters-new-dram counters-new-ref counters-new-l2)
+$(TABLES)/stress.tex: $(ANALYSIS)/tables/stress-tables.py $(ANALYSIS)/inference-average-model.py $(AGG)/compose-4sm.csv $(RAW_INPUTS) \
+		$(call comparisons,onoff88 uniform88 smooth88 smoothx88 infwin88 infwin88p) \
+		$(call comparisons,counters-dram counters-ref counters-l2 counters-new-dram counters-new-ref counters-new-l2)
 	@mkdir -p $(TABLES)
-	python3 $(AN)/tables/stress-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(ANALYSIS)/tables/stress-tables.py > $@.tmp && mv $@.tmp $@
 
-$(TABLES)/ensemble.tex: $(AN)/tables/ensemble-tables.py $(AN)/ensemble.py \
-		$(call cmp,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
+$(TABLES)/ensemble.tex: $(ANALYSIS)/tables/ensemble-tables.py $(ANALYSIS)/ensemble.py \
+		$(call comparisons,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
 	@mkdir -p $(TABLES)
-	python3 $(AN)/tables/ensemble-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(ANALYSIS)/tables/ensemble-tables.py > $@.tmp && mv $@.tmp $@
 
-$(TABLES)/geometry.tex: $(AN)/tables/geometry-tables.py $(AGG)/geometry-splits.csv \
+$(TABLES)/geometry.tex: $(ANALYSIS)/tables/geometry-tables.py $(AGG)/geometry-splits.csv \
 		$(AGG)/geometry-triple-compare-current.csv $(AGG)/geometry-power.csv $(GEOMETRY)
 	@mkdir -p $(TABLES)
-	python3 $(AN)/tables/geometry-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(ANALYSIS)/tables/geometry-tables.py > $@.tmp && mv $@.tmp $@

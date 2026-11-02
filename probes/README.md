@@ -5,10 +5,10 @@ built by their own Makefile, so rebuilding the runner never invalidates a probe 
 
 | program | what it does | used by |
 |---|---|---|
-| `auxprobe` | Deserialises an engine and prints how many auxiliary streams it actually uses (`ICudaEngine::getNbAuxStreams()`), which can be fewer than the build allowed. No inference. | `make -f engines.mk census` |
-| `wqprobe` | Prints the device's default work-queue configuration, then creates one green context per sharing scope and reads back what each was granted. | the work-queue subsection |
-| `devprobe` | Prints the device facts the memory experiments are sized on (L2 size and others) and measures device-to-device copy bandwidth across working-set sizes. | `profile.sh calibration`: its copies are the GB/s calibration of the DRAM counters (see `MEASUREMENTS.md`) |
-| `itfproc` | The synthetic co-runner (`mem_saxpy`, `compute_gemm`) as a separate process, for the MPS arms where a co-runner has to be its own client; `saxpy --level L` is the same SAXPY throttled from inside the kernel to a fraction L of its full-speed bandwidth. | `lib/matrix.sh` (`memory-mps-*`, `stress-sensitivity`), `reporter.sh` |
+| `aux-streams-probe` | Deserialises an engine and prints how many auxiliary streams it actually uses (`ICudaEngine::getNbAuxStreams()`), which can be fewer than the build allowed. No inference. | `make -f engines.mk census` |
+| `work-queue-probe` | Prints the device's default work-queue configuration, then creates one green context per sharing scope and reads back what each was granted. | the work-queue subsection |
+| `device-probe` | Prints the device facts the memory experiments are sized on (L2 size and others) and measures device-to-device copy bandwidth across working-set sizes. | `profile.sh calibration`: its copies are the GB/s calibration of the DRAM counters (see `MEASUREMENTS.md`) |
+| `corunner` | The synthetic co-runner (`mem_saxpy`, `compute_gemm`) as a separate process, for the MPS arms where a co-runner has to be its own client; `saxpy --level L` is the same SAXPY throttled from inside the kernel to a fraction L of its full-speed bandwidth. | `lib/matrix.sh` (`memory-mps-*`, `stress-sensitivity`), `reporter.sh` |
 | `gpu-latency/` | RRZE-HPC's pointer-chase benchmark (GPL-3, vendored, see `UPSTREAM`), patched to sample a 2 MB and a 64 MB chain for a fixed duration: the stress reporter. | `reporter.sh` |
 
 ## Build
@@ -23,12 +23,21 @@ override them, for example:
 
 ## Use
 
-    probes/auxprobe /path/to/one.engine /path/to/another.engine
-    probes/wqprobe
-    probes/devprobe
-    probes/itfproc compute_gemm --reps 32      # normally started by sweep.sh
-    probes/itfproc saxpy --level 0.3           # 30 % of full-speed bandwidth
+    probes/aux-streams-probe /path/to/one.engine /path/to/another.engine
+    probes/work-queue-probe
+    probes/device-probe
+    probes/corunner compute_gemm --reps 32      # normally started by sweep.sh
+    probes/corunner saxpy --level 0.3           # 30 % of full-speed bandwidth
     probes/gpu-latency/gpu-latency --sizes-kb 2048,65536 --duration 30
 
-`auxprobe` and `wqprobe` run no kernel, but they allocate device memory, so none of them
+`aux-streams-probe` and `work-queue-probe` run no kernel, but they allocate device memory, so none of them
 belongs inside another client's timed window.
+
+## The co-runner's name
+
+`corunner` was called `itfproc` until 2026-11-02. The pinned binary was built on 2026-10-11 from
+commit `352e0cc`; since then only the names in its comments and messages changed, so the binary was
+moved, not rebuilt, and its hash is the same. The next `make -C probes` rebuilds it from the renamed
+source, and the runs then stop until it is re-pinned (`source measure/lib/guards.sh; pin_binaries`):
+nvcc builds are not byte-identical, so a rebuild is always a new pin. Logs and data written before
+keep the old name.

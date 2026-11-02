@@ -1,4 +1,4 @@
-// devprobe.cpp — the device facts the memory-interferer experiments are built on.
+// device-probe.cpp — the device facts the memory-interferer experiments are built on.
 //
 // Two numbers: how big L2 is, and how much bandwidth a pure copy actually reaches.
 // The size sweep is the point of it. A copy that fits in L2 runs far faster than one

@@ -5,7 +5,7 @@
 
 A regenerator, not a record: it reads the current model and the CSVs the analysis has written in
 $DATA/bench/aggregate, so after a change, re-run the chain that writes them (stress.py compare
-smooth88 / smoothnew, infwin-model.py, counter-model.py, its new-predict / new-compare, ensemble.py)
+smooth88 / smoothnew, temporal-model.py, counter-model.py, its new-predict / new-compare, ensemble.py)
 and then this, and paste. It writes nothing. Each block is headed by its label in stress-model.tex:
 
   tab:models-dev         the twelve 8+8 pairs: measured, each model's raw prediction and error

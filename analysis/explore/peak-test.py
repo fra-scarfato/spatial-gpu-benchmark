@@ -6,7 +6,7 @@
 Same mean bandwidth (10-12 GB/s) and height, only the length of a peak changes (peak-T0010..T3000 in
 stress-onoff and calibration-onoff). Prints (1) the reporter's view of each configuration, (2) each
 target's p99 / median slowdown against peak length, (3) today's model (reporter p99) and the
-average-over-inference model (avg-model.py) against the measured slowdowns.
+average-over-inference model (inference-average-model.py) against the measured slowdowns.
 Results: the p99 grows with the peak until a peak outlasts an inference (MobileNet 11 -> 52 %), the
 median stays flat; today's model 12.2 / 28.8 (p99), 19.6 / 34.1 (median); H 6.3 / 16.8, 2.5 / 4.7.
 """
@@ -14,7 +14,7 @@ import csv, os, statistics as st, sys
 import numpy as np
 from importlib import import_module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # analysis/
-M = import_module("avg-model")                  # same directory; its windows() and the stress.py setup
+M = import_module("inference-average-model")                  # same directory; its windows() and the stress.py setup
 S, A = M.S, M.A
 AGG = M.AGG
 CFG = ["peak-T0010", "peak-T0100", "peak-T0300", "peak-T1000", "peak-T3000"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 2026-10-11-smooth-stressor-tuning.sh - 10 s runs of the time-based SAXPY alone on 8 SMs (MPS static 50:50, the stressor's
-# partition of the 8+8 geometry) with the scratch itfproc that has --burst: GB/s against duty and burst.
+# smooth-stressor-tuning.sh - 10 s runs of the time-based SAXPY alone on 8 SMs (MPS static 50:50, the stressor's
+# partition of the 8+8 geometry) with the scratch corunner that has --burst: GB/s against duty and burst.
 R=/home/nvidia/f_scarfato/runner
 ITF=/mnt/nvme/f.scarfato/scratch/smooth/itfproc
 MPS_PIPE=/tmp/mps-smoke MPS_LOG=/tmp/mps-log-smoke STATIC_CHUNKS=8 MPS_MODE=off

@@ -37,7 +37,7 @@ DERIVED = os.path.join(PROF, "derived")
 NSYS = os.environ.get("NSYS", "/usr/local/bin/nsys")
 
 # The calibration behind every GB/s is measured, not assumed: calibrate() reads it from the
-# profiled devprobe run in profiles/calibration (see MEASUREMENTS.md). These are filled there.
+# profiled device-probe run in profiles/calibration (see MEASUREMENTS.md). These are filled there.
 COPY_GB_S = COPY_READ_PCT = COPY_WRITE_PCT = None
 SOC_HZ = 10000.0
 WARMUP = 200                      # the runner's untimed warm-up inferences, per network
@@ -99,20 +99,20 @@ def soc_series(con):
 # ------------------------------------------------------------------ calibration
 
 def calibrate():
-    """GB/s per counter percent, from devprobe's device-to-device copies profiled with the counters.
+    """GB/s per counter percent, from device-probe's device-to-device copies profiled with the counters.
 
     The copies' own rate is their bytes over their summed durations, from the trace. The counters'
     reading is the median over the copy plateau, the samples where read exceeds 20 per cent: the
     copy reads and writes every byte once, so both counters sit on a plateau while it runs. Write-
-    only samples outside the copies (devprobe's memsets, near 80 per cent write and 1 per cent read)
+    only samples outside the copies (device-probe's memsets, near 80 per cent write and 1 per cent read)
     are excluded by the same condition, and they are what an earlier reading took for the copy.
     """
     global COPY_GB_S, COPY_READ_PCT, COPY_WRITE_PCT
     d = os.path.join(PROF, "calibration")
-    db = os.path.join(d, "devprobe.sqlite")
+    db = os.path.join(d, "device-probe.sqlite")
     if not os.path.exists(db):
         subprocess.run([NSYS, "export", "--type", "sqlite", "--force-overwrite=true", "--output",
-                        db, os.path.join(d, "devprobe.nsys-rep")], check=True, capture_output=True)
+                        db, os.path.join(d, "device-probe.nsys-rep")], check=True, capture_output=True)
     con = sqlite3.connect(db)
     n, nbytes, ns = con.execute("SELECT count(*), sum(bytes), sum(end - start) FROM "
                                 "CUPTI_ACTIVITY_KIND_MEMCPY WHERE copyKind = 8").fetchone()

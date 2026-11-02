@@ -223,8 +223,8 @@ def main():
         if run([sys.executable, "analysis/tables/results-tables.py"], args.dry_run,
                capture_to=out / "results.tex") != 0:
             return 1
-        if (ROOT / "analysis/tables/tex-tables.py").exists():
-            run([sys.executable, "analysis/tables/tex-tables.py"], args.dry_run,
+        if (ROOT / "analysis/tables/appendix-tables.py").exists():
+            run([sys.executable, "analysis/tables/appendix-tables.py"], args.dry_run,
                 capture_to=out / "history.tex")
         if run([sys.executable, "analysis/tables/split-tables.py", str(out / "results.tex"),
                 "--out", str(out / "results")], args.dry_run) != 0:
@@ -240,7 +240,7 @@ def main():
     if "probes" in wanted:
         say("\n== the probes ==")
         run(["make", "-C", "probes"], args.dry_run)
-        for probe in ("auxprobe", "wqprobe", "devprobe", "itfproc"):
+        for probe in ("aux-streams-probe", "work-queue-probe", "device-probe", "corunner"):
             run(["./probes/" + probe], args.dry_run)
 
     for name in PROFILE_SETS:

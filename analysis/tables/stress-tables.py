@@ -5,7 +5,7 @@ model, the peak test, the temporal model, the counter variants and the two-SAXPY
     python3 analysis/tables/stress-tables.py     every table as LaTeX rows, then the prose numbers
 
 A regenerator, not a record: it reads the CSVs that stress.py (onoff88, uniform88, smooth88,
-smoothx88), infwin-model.py, counter-model.py and compose.py write in $DATA/bench/aggregate, and,
+smoothx88), temporal-model.py, counter-model.py and compose.py write in $DATA/bench/aggregate, and,
 for the peak test only, the probe's raw windows and the exp23 runs. It writes nothing. Each block is
 headed by its label in stress-model.tex:
 
@@ -35,7 +35,7 @@ from decimal import ROUND_HALF_UP, Decimal
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # analysis/
-M = importlib.import_module("avg-model")     # first: it sets the geometry stress.py reads at import
+M = importlib.import_module("inference-average-model")     # first: it sets the geometry stress.py reads at import
 S, A = M.S, M.A
 AGG = M.AGG
 NETS = S.NETS

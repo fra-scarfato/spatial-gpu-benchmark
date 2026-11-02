@@ -948,7 +948,7 @@ Other established facts:
 This section used to carry the procedure and a table of numbers. Both now live in one place,
 `MEASUREMENTS.md`, together with the kernel traces, because the numbers depend on the copy
 calibration and that calibration was revised: the write percentage first taken for the copy (83 %)
-belonged to devprobe's memsets, and the copy itself reads 45 %. Every GB/s in the earlier table was
+belonged to device-probe's memsets, and the copy itself reads 45 %. Every GB/s in the earlier table was
 computed with the old point and understated the write traffic by a factor of about 1.8.
 
 ## 12. Open items
@@ -986,10 +986,10 @@ from those runs to a number on a page is three commands:
 
     ./measure/sweep.sh [--exp <family>]     # measure: bench/<experiment>/<config>/r<k>_{latencies,stats}.csv
     python3 analysis/aggregate.py            # reduce:  bench/aggregate/, one csv per experiment + summary.csv
-    python3 analysis/tables/tex-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
+    python3 analysis/tables/appendix-tables.py           # render:  the LaTeX tables for Experiment 5, on stdout
 
 Each step reads only what the previous one wrote, so any step can be re-run alone.
-`aggregate.py` reads the `_stats.csv` files each run writes; `tex-tables.py` reads
+`aggregate.py` reads the `_stats.csv` files each run writes; `appendix-tables.py` reads
 the same files through the same module, so a printed table cannot disagree with the
 aggregate beside it.
 
@@ -1005,7 +1005,7 @@ follow the method, but the numbers will only match with the same board, the same
 engines, the same images and the same protocol.
 
 Every table of the results section is rendered by `analysis/tables/results-tables.py`, and the appendix's
-by `analysis/tables/tex-tables.py`; no number is transcribed by hand.
+by `analysis/tables/appendix-tables.py`; no number is transcribed by hand.
 
 ## The models
 
@@ -1064,7 +1064,7 @@ the process dies. Always build on the machine that will run it.
 ### Adding a network
 
 1. Build it the same way, with `--fp16`, and keep `trtexec`'s log beside the engine.
-2. Run `probes/auxprobe <engine>` for the auxiliary-stream count, and build the
+2. Run `probes/aux-streams-probe <engine>` for the auxiliary-stream count, and build the
    0/1/2/4 caps if it reports more than zero. That is the census, and it decides
    whether the declared-concurrency experiments have anything to test on it: a
    network with one stream cannot exercise them.

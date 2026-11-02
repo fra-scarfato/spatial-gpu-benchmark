@@ -1,5 +1,5 @@
 # Offline diagnosis of the smooth model's residual: are the networks bursty at the probe's scale?
-#   python3 analysis/explore/burst-diag.py
+#   python3 analysis/explore/probe-window-bursts.py
 # Reads every window of the probe (stress-reporter-onoff) and the smooth88 outputs.
 import csv, glob, statistics as st
 import os

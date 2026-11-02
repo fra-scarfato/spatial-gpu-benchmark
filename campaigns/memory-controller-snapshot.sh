@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 2026-10-10-memory-controller-snapshot.sh <dir> <tag> - READ-ONLY snapshot of the memory controller / EMC / DRAM state, for
+# memory-controller-snapshot.sh <dir> <tag> - READ-ONLY snapshot of the memory controller / EMC / DRAM state, for
 # comparing board 1's two light-load states. It lists and reads small debugfs files under clock and
 # memory-controller directories and changes nothing; files whose names suggest an action are skipped.
 # Run as root: sudo bash fs-rootdump.sh <dir> <tag>

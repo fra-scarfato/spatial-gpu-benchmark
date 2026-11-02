@@ -8,7 +8,7 @@
 #   sudo measure/profile.sh soc-l2      DRAM counters: the L2 chapter's co-runners under MPS static
 #   sudo measure/profile.sh soc-onoff   DRAM counters: ON/OFF and uniform SAXPY, for 10 ms series
 #   sudo measure/profile.sh footprint   DRAM counters: compute_gemm's operand side varied, and idle
-#   sudo measure/profile.sh calibration DRAM counters during devprobe's device-to-device copies
+#   sudo measure/profile.sh calibration DRAM counters during device-probe's device-to-device copies
 #   measure/profile.sh kernels-new      kernels: the validation networks (INT8, EfficientNet, ViT) (no root)
 #   sudo measure/profile.sh soc-new     DRAM counters: each validation network alone on 8 SMs
 #   sudo measure/profile.sh soc-mps     DRAM counters: all ten networks of the p99 models alone, MPS static
@@ -135,7 +135,7 @@ arms() {
         # in its campaign family, alone for 20 s and beside MobileNet on 8, to answer: is l2read
         # L2-resident (DRAM about zero)? Does the GEMM's DRAM traffic grow with its working set?
         # Which Steady level matches each co-runner's DRAM rate?
-        local I="$ROOT/probes/itfproc" c n
+        local I="$ROOT/probes/corunner" c n
         local cs=("spin-K100:spin --kernel-us 100" "l2read-L050:l2read --kernel-us 100 --level 0.50"
                   "l2read-L100:l2read --kernel-us 100 --level 1.00" "compute_gemm:compute_gemm")
         for n in 1 2 3 4 5 8; do
@@ -151,7 +151,7 @@ arms() {
         # Daniel's 10 ms DRAM series: is the traffic of ON/OFF concentrated in ON, is the uniform
         # variant uniform, and do the two reach the same mean? Each stressor on 8 SMs (50:50, the
         # stress-onoff geometry), alone for 20 s; then MobileNet next to the two at 50 %.
-        local I="$ROOT/probes/itfproc" c
+        local I="$ROOT/probes/corunner" c
         local cs=(
             "onoff-D025:saxpy --onoff-ms 400 --duty 0.25"
             "onoff-D050:saxpy --onoff-ms 400 --duty 0.50"
@@ -170,7 +170,7 @@ arms() {
         done
         ;;
     calibration)
-        echo "devprobe|NONE|"
+        echo "device-probe|NONE|"
         ;;
     footprint)
         echo "A0-idle|LONG|$T --interferer idle:25"
@@ -265,7 +265,7 @@ keep_stats() {   # $1 = arm
 }
 
 # The ITF arms (soc-l2, soc-onoff, soc-mps) run as sweep.sh's do_job does: an MPS static daemon on a private
-# pipe, the target in a 50 % partition and the itfproc co-runner in a 25 % one (50 % for soc-onoff), the co-runner started 3 s
+# pipe, the target in a 50 % partition and the corunner co-runner in a 25 % one (50 % for soc-onoff), the co-runner started 3 s
 # ahead and stopped with SIGTERM when the target exits. nsys runs only the target, which is enough
 # because the SoC counters are device-wide. With no target, nsys runs the co-runner alone for 20 s.
 # The daemon lives for one arm only, so the guard and its sentinel always see a board without MPS.
@@ -275,7 +275,7 @@ keep_stats() {   # $1 = arm
 MPS_PIPE=/tmp/mps-profile MPS_LOG=/tmp/mps-log-profile STATIC_CHUNKS=8 MPS_MODE=off
 ITF_SHARES=50:25; case "$set_name" in soc-onoff|soc-mps) ITF_SHARES=50:50 ;; esac
 source "$ROOT/measure/lib/mps.sh"
-run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<itfproc command>", either may be "-"
+run_itf() {   # $1 = arm, $2 = "<target runner arguments>|<corunner command>", either may be "-"
     local tgt="${2%%|*}" itf="${2#*|}" pid="" rc
     [ "$tgt" = - ] && tgt=""
     [ "$itf" = - ] && itf=""
@@ -322,10 +322,10 @@ while IFS='|' read -r name proto args; do
     echo "== $name"
     rm -f "$OUT/.intruded"
     watch_gpu & WATCH=$!
-    if [ "$proto" = NONE ]; then      # the calibration: devprobe's copies, not the runner
-        make -s -C "$ROOT/probes" devprobe
+    if [ "$proto" = NONE ]; then      # the calibration: device-probe's copies, not the runner
+        make -s -C "$ROOT/probes" device-probe
         "$NSYS" profile --force-overwrite=true "${FLAGS[@]}" --output "$OUT/$name" \
-            "$ROOT/probes/devprobe" > "$OUT/$name.log" 2>&1 </dev/null
+            "$ROOT/probes/device-probe" > "$OUT/$name.log" 2>&1 </dev/null
         echo "   exit $?"
     elif [ "$proto" = ITF ]; then
         run_itf "$name" "$args"

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""onoff.py - the target's latency next to ON/OFF and uniform SAXPY (family stress-onoff).
+"""onoff-latency.py - the target's latency next to ON/OFF and uniform SAXPY (family stress-onoff).
 
-    python3 analysis/explore/onoff.py [<bench dir>]      default /mnt/nvme/f.scarfato/bench/stress-onoff
+    python3 analysis/explore/onoff-latency.py [<bench dir>]      default /mnt/nvme/f.scarfato/bench/stress-onoff
 
 Daniel's readout (2026-10-10): median, p95, p99 and maximum of the target's per-inference gpu_ms,
 per configuration, and for ON/OFF the same split into inferences run during ON, during OFF, and
 across a transition.
 
 How an inference is placed. The runner stamps every inference on CLOCK_MONOTONIC (t_start_ns before
-the input fetch, t_end_ns when the host sees it complete); itfproc logs every ON span on the same
+the input fetch, t_end_ns when the host sees it complete); corunner logs every ON span on the same
 clock ("phase: on <start> <end>", from the first launch to the last synchronize of the phase). An
 inference lies in ON if its whole [t_start, t_end] is inside one ON span, in OFF if it overlaps none,
 and across a transition otherwise. The uniform configurations (periods of ~3 ms) are not split: an
@@ -46,7 +46,7 @@ def inferences(path):
 
 
 def on_spans(path):
-    """The ON spans itfproc logged, sorted, as two lists (starts, ends)."""
+    """The ON spans corunner logged, sorted, as two lists (starts, ends)."""
     s, e = [], []
     for m in re.finditer(r"phase:\s+on (\d+) (\d+)", open(path, errors="replace").read()):
         s.append(int(m.group(1)))
