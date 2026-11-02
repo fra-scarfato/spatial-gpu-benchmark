@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fs-state.sh - what flips board 1's light-load memory latency between its two states?
+# 2026-10-10-probe-floor-two-states.sh - what flips board 1's light-load memory latency between its two states?
 #
 # The reporter alone reads ~770 cycles per access right after a boot and ~805-840 later; loaded
 # readings and network latencies do not move (2026-10-10). This sequence starts from a fresh boot and

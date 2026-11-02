@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# valnets-root.sh - the counter model's profiles of the p99 networks; needs root.
+# 2026-10-16-validation-networks-profiles-root.sh - the counter model's profiles of the p99 networks; needs root.
 # Run as root on board 1 with nothing else on the GPU:
 #   cd /mnt/nvme/f.scarfato/scratch && bash valnets-root.sh 2>&1 | tee valnets-root.log
 # 1. DRAM counters, all ten networks alone in an 8-SM MPS static partition (10 short arms, ~10 min);

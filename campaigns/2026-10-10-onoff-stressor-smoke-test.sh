@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fs-onoff-smoke.sh - 10 s smoke tests of itfproc's ON/OFF mode on 8 SMs (MPS static 50:50, the
+# 2026-10-10-onoff-stressor-smoke-test.sh - 10 s smoke tests of itfproc's ON/OFF mode on 8 SMs (MPS static 50:50, the
 # stressor's partition of the 8+8 geometry), the Steady unit, and the runner's new timestamps.
 R=/home/nvidia/f_scarfato/runner
 MPS_PIPE=/tmp/mps-smoke MPS_LOG=/tmp/mps-log-smoke STATIC_CHUNKS=8 MPS_MODE=off

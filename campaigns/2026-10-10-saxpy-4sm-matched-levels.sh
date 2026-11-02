@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fs-levels.sh - Steady SAXPY on 4 SMs (MPS static, 50:25 as in the sweeps) at a few levels, 10 s
+# 2026-10-10-saxpy-4sm-matched-levels.sh - Steady SAXPY on 4 SMs (MPS static, 50:25 as in the sweeps) at a few levels, 10 s
 # each, for the GB/s that itfproc reports: picks the levels matched to 22.3 and 8.0 GB/s for 1d.
 R=/home/nvidia/f_scarfato/runner
 MPS_PIPE=/tmp/mps-levels MPS_LOG=/tmp/mps-log-levels STATIC_CHUNKS=8 MPS_MODE=off
