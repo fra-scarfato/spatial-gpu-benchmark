@@ -109,10 +109,10 @@ def calibrate():
     """
     global COPY_GB_S, COPY_READ_PCT, COPY_WRITE_PCT
     d = os.path.join(PROF, "calibration")
-    db = os.path.join(d, "device-probe.sqlite")
+    db = os.path.join(d, "devprobe.sqlite")       # data names: the probe was called devprobe then
     if not os.path.exists(db):
         subprocess.run([NSYS, "export", "--type", "sqlite", "--force-overwrite=true", "--output",
-                        db, os.path.join(d, "device-probe.nsys-rep")], check=True, capture_output=True)
+                        db, os.path.join(d, "devprobe.nsys-rep")], check=True, capture_output=True)
     con = sqlite3.connect(db)
     n, nbytes, ns = con.execute("SELECT count(*), sum(bytes), sum(end - start) FROM "
                                 "CUPTI_ACTIVITY_KIND_MEMCPY WHERE copyKind = 8").fetchone()
@@ -214,6 +214,23 @@ def dram_tables():
                           gb_sum_of_alone=round(predicted, 1),
                           ratio=round(r.gb_total / predicted, 3)))
     return dram, pd.DataFrame(pairs)
+
+
+def l2_traffic():
+    """The soc-l2 arms (tab:l2-evidence): the GPU's DRAM GB/s over each profiled session. Each
+    co-runner of the L2 experiments ran alone (alone-<co-runner>) and next to MobileNet on 8 SMs
+    (mobilenet-<co-runner>); the table takes each against the spin arm of its kind, whose kernel
+    touches no memory. The session, not the co-runner's own run time, is the denominator, so the
+    target's traffic and the co-runner's are averaged over the same window."""
+    rows = []
+    for rep in sorted(glob.glob(os.path.join(PROF, "soc-l2", "*.nsys-rep"))):
+        stem = rep[:-len(".nsys-rep")]
+        extract(rep, ("dram",))
+        gb = dram_gb(stem)[0]
+        seconds = len(pd.read_csv(stem + ".dram.csv.gz")) / SOC_HZ
+        rows.append(dict(arm=os.path.basename(stem), gb=round(gb, 3), seconds=round(seconds, 2),
+                         gb_s=round(gb / seconds, 3)))
+    return pd.DataFrame(rows)
 
 
 # ------------------------------------------------------------------ traces
@@ -460,6 +477,7 @@ def main():
     out["demand"] = demand_table(out["dram"])
     out["demand-fit"] = fits(out["demand"])
     out["footprint"] = footprint_table()
+    out["l2-traffic"] = l2_traffic()
     for name, df in out.items():
         df.to_csv(os.path.join(DERIVED, name + ".csv"), index=False)
         if name != "per-kernel":

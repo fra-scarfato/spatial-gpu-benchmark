@@ -170,7 +170,7 @@ arms() {
         done
         ;;
     calibration)
-        echo "device-probe|NONE|"
+        echo "devprobe|NONE|"            # the arm keeps its data name (profiles/calibration/devprobe.*)
         ;;
     footprint)
         echo "A0-idle|LONG|$T --interferer idle:25"

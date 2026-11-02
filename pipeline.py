@@ -217,21 +217,8 @@ def main():
 
     if "tables" in wanted:
         say("\n== tables ==")
-        out = bench / "tables"
-        out.mkdir(exist_ok=True)
-        out.mkdir(parents=True, exist_ok=True)
-        if run([sys.executable, "analysis/tables/results-tables.py"], args.dry_run,
-               capture_to=out / "results.tex") != 0:
+        if run(["make", "tables"], args.dry_run) != 0:      # one way to make every table: the Makefile
             return 1
-        if (ROOT / "analysis/tables/appendix-tables.py").exists():
-            run([sys.executable, "analysis/tables/appendix-tables.py"], args.dry_run,
-                capture_to=out / "history.tex")
-        if run([sys.executable, "analysis/tables/split-tables.py", str(out / "results.tex"),
-                "--out", str(out / "results")], args.dry_run) != 0:
-            return 1
-        if (out / "history.tex").exists() and not args.dry_run:
-            run([sys.executable, "analysis/tables/split-tables.py", str(out / "history.tex"),
-                 "--out", str(out / "history")])
 
     if "overview" in wanted:
         say("\n== overview ==")

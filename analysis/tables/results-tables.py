@@ -869,5 +869,99 @@ for _desc, _exp, _cfg, _pair in _PRES:
             _desc, ms(_m), _m / _iso_mob, thr(_exp, _cfg, "mobilenet") or 0))
 close_table()
 
+# The dispatch cost (sec:mem-causes): each target on 8 SMs next to spin on 4, whose kernel touches
+# no memory, at launch rates from 37 to 67 000 per second (l2-presence, exp19). The cost per kernel
+# boundary divides the added time by the kernels per inference of the target's trace
+# (counter-model.ENG, from profile.sh kernels); the p99 one is the counter model's presence term.
+import glob  # noqa: E402
+import importlib  # noqa: E402
+import re  # noqa: E402
+
+_C = importlib.import_module("counter-model")
+_SPIN = (("K27000", r"27\,ms, back to back"), ("K1000", r"1\,ms, back to back"),
+         ("K100", r"100\,$\mu$s, back to back"), ("K10", r"10\,$\mu$s, back to back"),
+         ("K100-P200", r"100\,$\mu$s, every 200\,$\mu$s"), ("K100-P1000", r"100\,$\mu$s, every 1\,ms"))
+_L2N = ("mobilenet", "resnet", "inception", "retinanet")
+
+
+def _launches(cfg):
+    """spin's launches per second: the median over targets and runs of the rate it prints at the end."""
+    r = []
+    for net in _L2N:
+        for log in glob.glob(os.path.join(A.DATA_ROOT, "bench", "l2-presence", "%s-spin-%s" % (net, cfg), "r*_itf.log")):
+            m = re.search(r"units:\s+\d+ in [0-9.]+ s \(([0-9.]+) units/s\)", open(log).read().split("final ---")[-1])
+            if m:
+                r.append(float(m.group(1)))
+    return float("%.3g" % st.median(r))
+
+
+if all(val("exp19", n + "-alone", n, "median") for n in _L2N):
+    open_table([r"\texttt{spin} kernel & Launches/s & \multicolumn{4}{c}{Median slowdown of the target (\%)} \\",
+                r"\cmidrule(lr){3-6}",
+                r" & & " + " & ".join(_L2N) + r" \\"], "lrrrrr",
+               "Each network on 8\\,SMs next to \\texttt{spin} on 4\\,SMs under MPS static partitions; medians of\nfive 30\\,s runs. The 10\\,$\\mu$s kernel lasts 15\\,$\\mu$s in practice. Kernels per inference come from a\nCUDA trace of each network alone; the cost per kernel uses the median of the 27\\,ms row and the p99\nof the 100\\,$\\mu$s back-to-back row.",
+               "tab:l2-presence")
+    _alone = {n: (val("exp19", n + "-alone", n, "median"), val("exp19", n + "-alone", n, "p99")) for n in _L2N}
+    for _cfg, _desc in _SPIN:
+        emit(r"{} & {:.0f} & {} \\".format(_desc, _launches(_cfg), " & ".join(
+            "%.1f" % (100 * (val("exp19", "%s-spin-%s" % (n, _cfg), n, "median") / _alone[n][0] - 1)) for n in _L2N)))
+    emit(r"\midrule")
+    _kpi = {n: _C.ENG[n][1] for n in _L2N}
+    emit(r"Kernels per inference & & {} \\".format(" & ".join(str(_kpi[n]) for n in _L2N)))
+    emit(r"Cost per kernel, median, 27\,ms ($\mu$s) & & {} \\".format(" & ".join(
+        "%.2f" % ((val("exp19", n + "-spin-K27000", n, "median") - _alone[n][0]) * 1e3 / _kpi[n]) for n in _L2N)))
+    emit(r"Cost per kernel, p99, 100\,$\mu$s ($\mu$s) & & {} \\".format(" & ".join(
+        "%.2f" % ((val("exp19", n + "-spin-K100", n, "p99") - _alone[n][1]) * 1e3 / _kpi[n]) for n in _L2N)))
+    close_table()
+
+# The L2 (sec:mem-causes): MobileNet on 8 SMs next to co-runners on 4 SMs that use the L2 differently,
+# one family per group (l2-read exp21, l2-gemm-sets exp20, l2-vs-dram exp22). DRAM added is the soc-l2
+# arm's rate less the spin arm's of the same kind (profiles.py l2_traffic); SAXPY counts its own bytes
+# (the last cumulative GB/s it prints, median over the runs), and has no counter run next to the target.
+_l2 = {r["arm"]: float(r["gb_s"]) for r in _derived("l2-traffic")}
+_GEMM_MB = 3 * 288 * 288 * 4 / 2 ** 20          # one set: A, B and C of the 288-cubed SGEMM
+
+
+def _added(arm):
+    if "alone-" + arm not in _l2:
+        return "---", "---"
+    return tuple("%.1f" % max(0.0, _l2[k + arm] - _l2[k + "spin-K100"]) for k in ("alone-", "mobilenet-"))
+
+
+def _saxpy_gb_s(cfg):
+    r = []
+    for log in glob.glob(os.path.join(A.DATA_ROOT, "bench", "l2-vs-dram", "mobilenet-" + cfg, "r*_itf.log")):
+        v = re.findall(r"bytes moved:.*\(([0-9.]+) GB/s\)", open(log).read())
+        if v:
+            r.append(float(v[-1]))
+    return "%.1f" % st.median(r)
+
+
+def _slow(exp, cfg):
+    return "%.1f" % (100 * (val(exp, "mobilenet-" + cfg, "mobilenet", "median") /
+                            val(exp, "mobilenet-alone", "mobilenet", "median") - 1))
+
+
+if _l2:
+    open_table([r"Co-runner at 4\,SMs & \multicolumn{2}{c}{DRAM added (GB/s)} & Median slowdown (\%) \\",
+                r"\cmidrule(lr){2-3}",
+                r" & alone & next to the target & \\"], "lrrr",
+               "MobileNet (8\\,SMs) next to co-runners that differ in their use of the L2, under MPS static\npartitions; slowdowns are medians of five 30\\,s runs, one group per session. DRAM traffic is from the\nSoC counters (one profiled 20\\,s run per row), relative to \\texttt{spin}; for SAXPY it is its own byte\ncount, set to match the GEMM above it.",
+               "tab:l2-evidence")
+    emit(r"\texttt{spin}, 100\,$\mu$s & %s & %s & %s \\" % (_added("spin-K100") + (_slow("exp21", "spin-K100"),)))
+    for _lv, _pct in (("025", 25), ("050", 50), ("100", 100)):
+        emit(r"L2 re-read, %d\,\%% of full rate & %s & %s & %s \\" % ((_pct,) + _added("l2read-L" + _lv) +
+                                                                    (_slow("exp21", "l2read-L" + _lv),)))
+    emit(r"\midrule")
+    for _n in (1, 2, 3, 4, 5, 8):
+        _size = r" (%.2g\,MB)" % (_n * _GEMM_MB) if _n in (1, 3, 4, 8) else ""
+        emit(r"GEMM, $N=%d$%s & %s & %s & %s \\" % ((_n, _size) + _added("gemm-N%d" % _n) + (_slow("exp20", "gemm-N%d" % _n),)))
+    emit(r"\midrule")
+    emit(r"\texttt{compute\_gemm} & %s & %s & %s \\" % (_added("compute_gemm") + (_slow("exp22", "computegemm"),)))
+    emit(r"SAXPY, level 0.243 & %s & --- & %s \\" % (_saxpy_gb_s("saxpy-L0243"), _slow("exp22", "saxpy-L0243")))
+    emit(r"GEMM, $N=8$ & %s & %s & %s \\" % (_added("gemm-N8") + (_slow("exp22", "gemm-N8"),)))
+    emit(r"SAXPY, level 0.087 & %s & --- & %s \\" % (_saxpy_gb_s("saxpy-L0087"), _slow("exp22", "saxpy-L0087")))
+    close_table()
+
 
 sys.stdout.write("\n".join(OUT))

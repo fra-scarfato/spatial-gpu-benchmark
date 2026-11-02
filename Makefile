@@ -78,10 +78,11 @@ check:
 	@echo "== the frozen files against analysis/frozen.sha256"; \
 	    cd $(DATA)/bench/frozen && sha256sum --quiet -c $(CURDIR)/analysis/frozen.sha256 && echo "  unchanged"
 
-# ------------------------------------------------------------------ the stress chapter's numbers
+# ------------------------------------------------------------------ the thesis's numbers
 #
-# `make tables` brings every derived CSV of the stress chapter up to date, in dependency order, and
-# writes the thesis tables to $(TABLES)/{stress,ensemble,geometry}.tex; `make -n tables` lists
+# `make tables` brings every derived CSV up to date, in dependency order, and writes the thesis
+# tables to $(TABLES): results.tex (the first chapter), history.tex (the appendix) and
+# {stress,ensemble,geometry}.tex (the stress chapter); `make -n tables` lists
 # what is stale without running it. Each rule names what its script reads: the raw runs, the
 # profiles, the CSVs of earlier steps and the scripts, so a new run or a changed script re-runs
 # exactly what depends on it.
@@ -108,7 +109,29 @@ COUNTER := $(ANALYSIS)/counter-model.py $(RAW_INPUTS) $(PROFILES)
 GEOMS := onoff88 uniform88 smooth88 smoothx88 smoothnew
 comparisons = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
 
-tables: $(TABLES)/stress.tex $(TABLES)/ensemble.tex $(TABLES)/geometry.tex $(AGG)/summary.csv
+tables: $(TABLES)/results.tex $(TABLES)/history.tex \
+        $(TABLES)/stress.tex $(TABLES)/ensemble.tex $(TABLES)/geometry.tex $(AGG)/summary.csv
+
+# The profiled runs (traces, DRAM counters) reduced to the derived CSVs that the first chapter's
+# tables and the counter model read. profiles.py writes them all at once.
+DERIVED := $(addprefix $(DATA)/profiles/derived/,calibration.csv dram.csv pair-traffic.csv trace-split.csv \
+        trace-overlap.csv launch-calls.csv per-kernel.csv demand.csv demand-fit.csv footprint.csv l2-traffic.csv)
+
+$(DERIVED) &: $(ANALYSIS)/profiles.py $(wildcard $(DATA)/profiles/*/*.nsys-rep $(DATA)/profiles/*/*.log) $(RAW_INPUTS)
+	python3 $(ANALYSIS)/profiles.py
+
+# The first chapter (results-section.tex) and the appendix: one file of whole tables each, then one
+# file per table under results/ and history/.
+$(TABLES)/results.tex: $(ANALYSIS)/tables/results-tables.py $(ANALYSIS)/lib/tables.py $(ANALYSIS)/counter-model.py \
+        $(DERIVED) $(RAW_INPUTS)
+	@mkdir -p $(TABLES)
+	python3 $(ANALYSIS)/tables/results-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(ANALYSIS)/tables/split-tables.py $@ --out $(TABLES)/results
+
+$(TABLES)/history.tex: $(ANALYSIS)/tables/appendix-tables.py $(ANALYSIS)/lib/tables.py $(RAW_INPUTS)
+	@mkdir -p $(TABLES)
+	python3 $(ANALYSIS)/tables/appendix-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(ANALYSIS)/tables/split-tables.py $@ --out $(TABLES)/history
 
 $(AGG)/summary.csv: $(RAW_INPUTS)
 	python3 analysis/aggregate.py

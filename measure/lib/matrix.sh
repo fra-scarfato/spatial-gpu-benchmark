@@ -569,7 +569,7 @@ done
 
 
 # The L2 chapter (Daniel, 2026-10-10): separating a co-runner's presence from its use of the L2.
-# Every co-runner is an corunner process on 4 SMs beside the target on 8 (shares 50:25, the geometry of
+# Every co-runner is a corunner process on 4 SMs beside the target on 8 (shares 50:25, the geometry of
 # stress-validation), so the rows compare directly with the measured pairs.
 #
 # l2-presence: does the presence cost depend on the co-runner's launch rate, or only on a kernel of
