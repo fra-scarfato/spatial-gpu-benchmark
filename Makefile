@@ -54,7 +54,7 @@ LIBS     := -L/usr/local/cuda/targets/sbsa-linux/lib \
             -lnvinfer -lcudart -lcublas \
             -lopencv_core -lopencv_imgproc -lopencv_imgcodecs
 
-.PHONY: all clean
+.PHONY: all clean check
 
 all: $(TARGET)
 
@@ -66,3 +66,12 @@ $(SRCDIR)/%.o: $(SRCDIR)/%.cu
 
 clean:
 	rm -f $(TARGET) $(CUOBJS)
+
+# The analysis self-tests: each script checks its own arithmetic on synthetic input (interpolation,
+# fits, folds, parsing), with no GPU. A new script with a selftest goes in this list.
+SELFTESTS = utility/stress.py utility/analysis/compose.py utility/analysis/counter-model.py \
+            utility/analysis/ensemble.py utility/analysis/geometry.py utility/analysis/infwin-model.py \
+            utility/analysis/l2-residual.py
+
+check:
+	@set -e; for t in $(SELFTESTS); do echo "== $$t"; python3 $$t selftest; done
