@@ -884,6 +884,12 @@ _SPIN = (("K27000", r"27\,ms, back to back"), ("K1000", r"1\,ms, back to back"),
 _L2N = ("mobilenet", "resnet", "inception", "retinanet")
 
 
+def _pct(x):
+    """A slowdown in per cent, one decimal; a value that rounds to zero prints 0.0, not -0.0."""
+    s = "%.1f" % x
+    return "0.0" if s == "-0.0" else s
+
+
 def _launches(cfg):
     """spin's launches per second: the median over targets and runs of the rate it prints at the end."""
     r = []
@@ -904,7 +910,7 @@ if all(val("exp19", n + "-alone", n, "median") for n in _L2N):
     _alone = {n: (val("exp19", n + "-alone", n, "median"), val("exp19", n + "-alone", n, "p99")) for n in _L2N}
     for _cfg, _desc in _SPIN:
         emit(r"{} & {:.0f} & {} \\".format(_desc, _launches(_cfg), " & ".join(
-            "%.1f" % (100 * (val("exp19", "%s-spin-%s" % (n, _cfg), n, "median") / _alone[n][0] - 1)) for n in _L2N)))
+            _pct(100 * (val("exp19", "%s-spin-%s" % (n, _cfg), n, "median") / _alone[n][0] - 1)) for n in _L2N)))
     emit(r"\midrule")
     _kpi = {n: _C.ENG[n][1] for n in _L2N}
     emit(r"Kernels per inference & & {} \\".format(" & ".join(str(_kpi[n]) for n in _L2N)))
@@ -938,8 +944,8 @@ def _saxpy_gb_s(cfg):
 
 
 def _slow(exp, cfg):
-    return "%.1f" % (100 * (val(exp, "mobilenet-" + cfg, "mobilenet", "median") /
-                            val(exp, "mobilenet-alone", "mobilenet", "median") - 1))
+    return _pct(100 * (val(exp, "mobilenet-" + cfg, "mobilenet", "median") /
+                       val(exp, "mobilenet-alone", "mobilenet", "median") - 1))
 
 
 if _l2:
@@ -949,8 +955,8 @@ if _l2:
                "MobileNet (8\\,SMs) next to co-runners that differ in their use of the L2, under MPS static\npartitions; slowdowns are medians of five 30\\,s runs, one group per session. DRAM traffic is from the\nSoC counters (one profiled 20\\,s run per row), relative to \\texttt{spin}; for SAXPY it is its own byte\ncount, set to match the GEMM above it.",
                "tab:l2-evidence")
     emit(r"\texttt{spin}, 100\,$\mu$s & %s & %s & %s \\" % (_added("spin-K100") + (_slow("exp21", "spin-K100"),)))
-    for _lv, _pct in (("025", 25), ("050", 50), ("100", 100)):
-        emit(r"L2 re-read, %d\,\%% of full rate & %s & %s & %s \\" % ((_pct,) + _added("l2read-L" + _lv) +
+    for _lv, _share in (("025", 25), ("050", 50), ("100", 100)):
+        emit(r"L2 re-read, %d\,\%% of full rate & %s & %s & %s \\" % ((_share,) + _added("l2read-L" + _lv) +
                                                                     (_slow("exp21", "l2read-L" + _lv),)))
     emit(r"\midrule")
     for _n in (1, 2, 3, 4, 5, 8):
