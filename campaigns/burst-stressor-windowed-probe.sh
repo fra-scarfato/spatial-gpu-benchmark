@@ -21,9 +21,9 @@ step() {
 log "waiting for a free GPU"
 until other_gpu_users >/dev/null 2>&1; do sleep 300; done
 for d in 0.30 1.00; do
-    timeout -s TERM 10 $R/probes/itfproc saxpy --period-us 1000 --duty $d > $S/2026-10-09-burst-stressor-windowed-probe-smoke.log 2>&1
-    log "smoke duty $d: $(grep -o "([0-9.]* GB/s)" $S/2026-10-09-burst-stressor-windowed-probe-smoke.log | tail -1) $(grep -o "achieved [0-9.]*" $S/2026-10-09-burst-stressor-windowed-probe-smoke.log | tail -1)"
-    grep -q "achieved 0\.[1-9]\|achieved 1\." $S/2026-10-09-burst-stressor-windowed-probe-smoke.log || { log "SMOKE FAILED: stopping"; exit 1; }
+    timeout -s TERM 10 $R/probes/itfproc saxpy --period-us 1000 --duty $d > $S/burst-stressor-windowed-probe-smoke.log 2>&1
+    log "smoke duty $d: $(grep -o "([0-9.]* GB/s)" $S/burst-stressor-windowed-probe-smoke.log | tail -1) $(grep -o "achieved [0-9.]*" $S/burst-stressor-windowed-probe-smoke.log | tail -1)"
+    grep -q "achieved 0\.[1-9]\|achieved 1\." $S/burst-stressor-windowed-probe-smoke.log || { log "SMOKE FAILED: stopping"; exit 1; }
 done
 step env RUNS=5 OUTROOT=$B/stress-reporter-tbw $R/measure/reporter.sh calibration-tb
 step env RUNS=5 OUTROOT=$B/stress-reporter-tbw $R/measure/reporter.sh networks
