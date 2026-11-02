@@ -90,7 +90,7 @@ check:
 # new-predict steps (stress-predictions-*.csv), the calibrations, curves and readings written with
 # them (stress-calibration-*, stress-sensitivity-*, stress-corunners-*), and
 # geometry-triple-predictions.csv. Re-freezing is a decision taken by hand
-# (campaigns/README.md); a missing frozen file stops make with "No rule to make target".
+# (experiments/README.md); a missing frozen file stops make with "No rule to make target".
 #
 # ponytail: every rule depends on all raw runs, not on its own families, so a run of any family
 # re-runs the chain (about 4 minutes). Per-family prerequisites if that becomes slow.

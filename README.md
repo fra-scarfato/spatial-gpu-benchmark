@@ -96,8 +96,8 @@ python3 analysis/profiles.py                 # all of the above -> $DATA/profile
 These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 
 The stress chapter (the stress, counter and composition models, other partition sizes, two
-co-runners, energy) is measured by the campaign queues in `campaigns/`, whose README is the
-ordered log of what was run. `make tables` regenerates its numbers from the raw runs, re-running
+co-runners, energy) is measured by the queues in `experiments/`, one folder per part of the thesis,
+whose README maps folders to sections and keeps the order of what was run. `make tables` regenerates its numbers from the raw runs, re-running
 only what is out of date, and writes its tables as LaTeX rows (`stress-tables.py`,
 `ensemble-tables.py`, `geometry-tables.py` in `analysis/tables/`).
 
@@ -137,7 +137,8 @@ measure/                    everything that runs on the GPU, guarded
   lib/guards.sh               the checks before every run: clocks, a quiet GPU, pins, manifest
   lib/matrix.sh               every arm the campaign can run, one line each
   lib/mps.sh                  the MPS daemon and its static partitions
-campaigns/                  every campaign queue of the stress chapter as run, with the ordered log
+experiments/                one folder per part of the thesis: its README (what, how, outputs) and
+                            the queues that measured it, as run; experiments/README.md is the map
 analysis/                   everything that reads the data, CPU only
   aggregate.py                raw runs -> bench/aggregate/<exp>.csv and summary.csv
   profiles.py                 profiled runs -> profiles/derived/*.csv
@@ -164,7 +165,7 @@ docs/                       DESIGN.md (design decisions and traps), MEASUREMENTS
 | results section | `analysis/tables/results-tables.py` (+ `split-tables.py`) | `./pipeline.py --tables` |
 | appendix | `analysis/tables/appendix-tables.py` | `./pipeline.py --tables` |
 | stress chapter: `tab:stress-scale` ... `tab:stress-compose` (11) | `analysis/tables/stress-tables.py` | `make tables` |
-| stress chapter: `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` (6) | `analysis/tables/ensemble-tables.py` | `make tables` |
+| stress chapter: `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` (7) | `analysis/tables/ensemble-tables.py` | `make tables` |
 | stress chapter: `tab:stress-sizes*`, `tab:stress-triple*`, `tab:stress-energy*` (6) | `analysis/tables/geometry-tables.py` | `make tables` |
 
 Each generator heads every block with its `\label`, so a table is found by its label.
