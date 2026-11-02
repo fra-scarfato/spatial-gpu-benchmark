@@ -30,7 +30,7 @@ TRTEXEC ?= /usr/src/tensorrt/bin/trtexec
 # The graphs and the engines are data, so they are on the NVMe with the rest of it.
 DATA     ?= /mnt/nvme/f.scarfato
 MODELS   ?= $(DATA)/models
-AUXPROBE ?= utility/probes/auxprobe
+AUXPROBE ?= probes/auxprobe
 FP16     = --fp16
 
 MB  = $(MODELS)/mobilenetv2-12
@@ -91,14 +91,14 @@ efficientnet:
 # INT8 versions of the four networks (2026-10-13): new workloads for the validation, with
 # less memory traffic and other kernels, and the start of the quantization work. INT8 is
 # permission on top of --fp16, as FP16 is above: TensorRT picks per layer. The scales
-# come from a real calibration (utility/int8-calib.py, 500 ImageNet images the runner
+# come from a real calibration (measure/int8-calib.py, 500 ImageNet images the runner
 # never feeds); trtexec alone would use placeholder scales and meaningless outputs.
 int8:
 	for m in $(MB)/mobilenetv2-12 $(RS)/resnet50-v2-7 $(INC)/inception_v3 $(RN)/retinanet-9; do \
 		d=$$(dirname $$m); n=$$(basename $$m); \
-		python3 utility/int8-calib.py calib $$m.onnx $$d/engine/$$n-int8.calib > $$d/engine/$$n-int8.caliblog 2>&1 && \
+		python3 measure/int8-calib.py calib $$m.onnx $$d/engine/$$n-int8.calib > $$d/engine/$$n-int8.caliblog 2>&1 && \
 		$(TRTEXEC) --onnx=$$m.onnx $(FP16) --int8 --calib=$$d/engine/$$n-int8.calib --saveEngine=$$d/engine/$$n-int8.engine > $$d/engine/$$n-int8.buildlog 2>&1 && \
-		python3 utility/int8-calib.py check $$d/engine/$$n.engine $$d/engine/$$n-int8.engine >> $$d/engine/$$n-int8.caliblog 2>&1 || exit 1; \
+		python3 measure/int8-calib.py check $$d/engine/$$n.engine $$d/engine/$$n-int8.engine >> $$d/engine/$$n-int8.caliblog 2>&1 || exit 1; \
 	done
 
 # What every built engine says about itself. This is the census, and it is the

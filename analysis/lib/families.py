@@ -1,0 +1,205 @@
+"""Where the experiments are, what they are called, and what state they are in.
+
+The family-to-key map lives here, and aggregate.py imports it; the group lists are read from
+`sweep.sh`, which is where the sweep uses them, rather than repeated. A copy of either would be a
+copy that can disagree with the thing that matters.
+
+    from lib import families
+    families.groups()                 # {'section': [...], 'appendix': [...], ...}
+    families.state(bench, "memory-interferers")   # configurations, replicates, dates
+"""
+import datetime
+import os
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+SWEEP = ROOT / "measure" / "sweep.sh"
+DEFAULT_DATA = "/mnt/nvme/f.scarfato"
+
+GROUP_VARS = {"section": "SECTION_FAMILIES", "appendix": "APPENDIX_FAMILIES",
+              "mem": "MEM_FAMILIES", "all": "ALL_FAMILIES"}
+
+
+def data_root():
+    return Path(os.environ.get("DATA", DEFAULT_DATA))
+
+
+def bench_root():
+    return data_root() / "bench"
+
+
+# The family -> aggregate key map. Two folders share a key when their rows belong in the
+# same tables: pair-greenctx-workqueue-2submit is the work-queue half of pair-greenctx-2submit's setup, and
+# the memory families all feed the same tables, so the tables see one configuration space.
+EXP_DIR = {
+    "isolated-scaling":    "exp1",
+    "pair-greenctx-2submit": "exp2",
+    # The work queue experiment is Experiment 2's setup with the work queue half
+    # of the green context descriptor set explicitly, so it belongs in the SAME
+    # tables: a devctx_8_50_50 row sitting next to the 50_50 row it must
+    # reproduce is the whole point of running it. Mapping two folders onto one
+    # key is what makes that free — the tables see one configuration space.
+    "pair-greenctx-workqueue-2submit":       "exp2",
+    # Same idea again: the auxiliary-stream family is Experiment 2's pair with a
+    # different ResNet build, so it needs its own key (its rows are not
+    # comparable to the default build) but the same table shape.
+    "pair-greenctx-auxstreams-2submit":      "exp5",
+    # The CPU-cpu-affinity arms live in two folders because they were run at
+    # different times; the config names do not collide, so one key is enough and
+    # the aggregate picks up every replicate.
+    # The same three intra-process families, measured with a single
+    # submitting thread. Distinct keys on purpose: mapping them onto exp2/
+    # exp4/exp5 would collide with the two-thread runs of the same config
+    # names, and one set would silently overwrite the other.
+    "pair-greenctx-1submit": "exp2-1t",
+    "pair-greenctx-workqueue-1submit":       "exp4-1t",
+    "pair-greenctx-auxstreams-1submit":      "exp5-1t",
+    "cpu-affinity":             "exp6",
+    "submission-model":        "exp7",
+    "workqueue-declaration":                "exp8",
+    "workqueue-three-clients":                "exp8",
+    "memory-budget-greenctx":               "exp9",
+    "memory-interferers":               "exp9",
+    "memory-mps-interferers":               "exp9",
+    "memory-mps-budget":               "exp9",
+    "memory-mps-interferers-4sm":               "exp9",
+    "memory-two-threads":               "exp9",
+    "workqueue-aux-streams": "exp10",
+    "interference-additivity": "exp11",
+    "interference-additivity-mps": "exp12",
+    "repeatability":               "exp6",
+    "pair-mpsstatic-2submit":      "exp3",
+    "stress-sensitivity":          "exp13",
+    "stress-validation":           "exp14",
+    "stress-sensitivity-4sm":      "exp15",
+    "stress-sensitivity-tb":       "exp17",
+    "stress-sensitivity-tbs":      "exp18",
+    "l2-presence":                 "exp19",
+    "l2-gemm-sets":                "exp20",
+    "l2-read":                     "exp21",
+    "l2-vs-dram":                  "exp22",
+    "stress-onoff":                "exp23",
+    "stress-validation-8":         "exp24",
+    "dispatch-count":              "exp25",
+    "stress-new":                  "exp26",
+    "stress-validation-new":       "exp27",
+    "stress-split-412":            "exp28",
+    "stress-split-610":            "exp29",
+    "stress-split-124":            "exp30",
+    "stress-sizes":                "exp31",
+    "stress-triple":               "exp32",
+    "power-check-off":             "exp33",
+    "power-check-on":              "exp34",
+}
+
+# The keys whose configuration names the one measured target first (mobilenet-saxpy-L030,
+# resnet+inception): the stress model's and the L2 chapter's families. aggregate.py files each
+# stats file under that first name. A new family of this kind is declared here and in EXP_DIR
+# (and in matrix.sh, which runs it); aggregate.py needs no change.
+TARGET_FIRST = {"exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22",
+                "exp23", "exp24", "exp25", "exp26", "exp27", "exp28", "exp29", "exp30", "exp31",
+                "exp32", "exp33", "exp34"}
+
+
+def key_map():
+    """The family -> aggregate key map."""
+    return dict(EXP_DIR)
+
+
+def groups():
+    """The named family groups, from sweep.sh.
+
+    One level of $VAR reference is resolved, because ALL_FAMILIES is defined in terms of the
+    other two: reading it literally would yield the two variable names as if they were families.
+    """
+    src = SWEEP.read_text()
+    var_of = {v: k for k, v in GROUP_VARS.items()}
+    raw = {}
+    for name, var in GROUP_VARS.items():
+        m = re.search(var + r'="([^"]*)"', src)
+        raw[name] = m.group(1) if m else ""
+
+    def resolve(text, depth=4):
+        for _ in range(depth):
+            new = re.sub(r"\$([A-Z_]+)",
+                         lambda m: raw.get(var_of.get(m.group(1), ""), ""), text)
+            if new == text:
+                break
+            text = new
+        return text
+
+    return {name: resolve(text).split() for name, text in raw.items()}
+
+
+def gpu_devfreq():
+    """The GPU governor directory, taken from the sweep so the two check the same thing."""
+    src = SWEEP.read_text()
+    m = re.search(r'^GPU_DEVFREQ=(.+)$', src, re.M)
+    if not m:
+        return None
+    value = m.group(1).strip()
+    inner = re.search(r":-([^}]+)}", value)     # ${GPU_DEVFREQ:-/sys/...}
+    if inner:
+        value = inner.group(1)
+    value = value.strip().strip('"').strip("'")
+    return Path(value) if value.startswith("/") else None
+
+
+def expand(selection):
+    """A group name, a family name, or a comma-separated list of either."""
+    known = groups()
+    out = []
+    for token in str(selection).split(","):
+        token = token.strip()
+        if token in known:
+            out.extend(known[token])
+        else:
+            out.append(token)
+    return out
+
+
+def families_on_disk(bench=None):
+    bench = bench or bench_root()
+    if not bench.is_dir():
+        return []
+    return sorted(p.name for p in bench.iterdir()
+                  if p.is_dir() and p.name not in ("aggregate", "trace"))
+
+
+def state(bench, family):
+    """Configurations, the replicate count they hold, and the dates they were measured.
+
+    Counted by run index, not by stats file: a two-network arm writes one file per network per
+    run, so counting files would double it.
+    """
+    d = Path(bench) / family
+    if not d.is_dir():
+        return None
+    cfgs, per_config, dates = [], [], set()
+    for cfg in sorted(p for p in d.iterdir() if p.is_dir()):
+        files = sorted(cfg.glob("r*_stats.csv"))
+        if not files:
+            continue
+        cfgs.append(cfg.name)
+        per_config.append(len({f.name.split("_")[0] for f in files}))
+        for f in files:
+            dates.add(datetime.date.fromtimestamp(f.stat().st_mtime))
+    if not cfgs:
+        return None
+    return dict(family=family, key=key_map().get(family, "?"), configs=len(cfgs),
+                each=max(per_config), stored=sum(per_config),
+                first=min(dates).isoformat(), last=max(dates).isoformat())
+
+
+def group_state(selection, bench=None):
+    """The same, aggregated over a selection."""
+    bench = Path(bench or bench_root())
+    rows = [state(bench, fam) for fam in expand(selection)]
+    rows = [r for r in rows if r]
+    if not rows:
+        return None
+    return dict(families=len(rows), configs=sum(r["configs"] for r in rows),
+                stored=sum(r["stored"] for r in rows),
+                first=min(r["first"] for r in rows), last=max(r["last"] for r in rows),
+                rows=rows)

@@ -14,7 +14,7 @@
 #
 # which prints exactly what it would execute.
 #
-# Layout: the sources are here (include/, src/, utility/) and so is the binary.
+# Layout: the sources are here (include/, src/) and so is the binary.
 # The data and the results are NOT: models/, dataset/, labels/ and bench/ are on
 # the NVMe, in /mnt/nvme/f.scarfato, because the root filesystem is small and shared.
 # sweep.sh is what tells the runner where they are, and it takes that root from $DATA.
@@ -69,9 +69,9 @@ clean:
 
 # The analysis self-tests: each script checks its own arithmetic on synthetic input (interpolation,
 # fits, folds, parsing), with no GPU. A new script with a selftest goes in this list.
-SELFTESTS = utility/stress.py utility/analysis/compose.py utility/analysis/counter-model.py \
-            utility/analysis/ensemble.py utility/analysis/geometry.py utility/analysis/infwin-model.py \
-            utility/analysis/l2-residual.py
+SELFTESTS = analysis/stress.py analysis/compose.py analysis/counter-model.py \
+            analysis/ensemble.py analysis/geometry.py analysis/infwin-model.py \
+            analysis/explore/l2-residual.py
 
 check:
 	@set -e; for t in $(SELFTESTS); do echo "== $$t"; python3 $$t selftest; done
@@ -88,7 +88,7 @@ check:
 # new-predict steps (stress-predictions-*.csv), the calibrations, curves and readings written with
 # them (stress-calibration-*, stress-sensitivity-*, stress-corunners-*), and
 # geometry-triple-predictions.csv. Re-freezing is a decision taken by hand
-# (utility/campaigns/README.md); a missing frozen file stops make with "No rule to make target".
+# (campaigns/README.md); a missing frozen file stops make with "No rule to make target".
 #
 # ponytail: every rule depends on all raw runs, not on its own families, so a run of any family
 # re-runs the chain (about 4 minutes). Per-family prerequisites if that becomes slow.
@@ -98,8 +98,8 @@ export DATA
 AGG := $(DATA)/bench/aggregate
 RUNS := $(wildcard $(DATA)/bench/*/*/r*)
 PROFILES := $(wildcard $(DATA)/profiles/derived/*.csv $(DATA)/profiles/ncu/*.csv)
-AN := utility/analysis
-LOAD := utility/aggregate.py utility/lib/families.py utility/stress.py $(RUNS)
+AN := analysis
+LOAD := analysis/aggregate.py analysis/lib/families.py analysis/stress.py $(RUNS)
 COUNTER := $(AN)/counter-model.py $(LOAD) $(PROFILES)
 GEOMS := onoff88 uniform88 smooth88 smoothx88 smoothnew
 cmp = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
@@ -107,10 +107,10 @@ cmp = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
 tables: $(AGG)/tables-stress.tex $(AGG)/tables-ensemble.tex $(AGG)/tables-geometry.tex $(AGG)/summary.csv
 
 $(AGG)/summary.csv: $(LOAD)
-	python3 utility/aggregate.py
+	python3 analysis/aggregate.py
 
 $(call cmp,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(AGG)/stress-predictions-%.csv $(LOAD)
-	python3 utility/stress.py compare $*
+	python3 analysis/stress.py compare $*
 
 $(call cmp,infwin88 infwin88p infwin88d infwin88pd) &: $(AN)/infwin-model.py $(AN)/avg-model.py $(call cmp,smooth88) $(LOAD)
 	python3 $(AN)/infwin-model.py
@@ -142,15 +142,15 @@ $(AGG)/geometry-triple-compare-current.csv: $(AGG)/geometry-triple-predictions.c
 $(AGG)/geometry-power.csv: $(AN)/geometry.py $(LOAD)
 	python3 $(AN)/geometry.py power
 
-$(AGG)/tables-stress.tex: $(AN)/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
+$(AGG)/tables-stress.tex: $(AN)/tables/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
 		$(call cmp,onoff88 uniform88 smooth88 smoothx88 infwin88 infwin88p) \
 		$(call cmp,counters-dram counters-ref counters-l2 counters-new-dram counters-new-ref counters-new-l2)
-	python3 $(AN)/stress-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(AN)/tables/stress-tables.py > $@.tmp && mv $@.tmp $@
 
-$(AGG)/tables-ensemble.tex: $(AN)/ensemble-tables.py $(AN)/ensemble.py \
+$(AGG)/tables-ensemble.tex: $(AN)/tables/ensemble-tables.py $(AN)/ensemble.py \
 		$(call cmp,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
-	python3 $(AN)/ensemble-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(AN)/tables/ensemble-tables.py > $@.tmp && mv $@.tmp $@
 
-$(AGG)/tables-geometry.tex: $(AN)/geometry-tables.py $(AGG)/geometry-splits.csv \
+$(AGG)/tables-geometry.tex: $(AN)/tables/geometry-tables.py $(AGG)/geometry-splits.csv \
 		$(AGG)/geometry-triple-compare-current.csv $(AGG)/geometry-power.csv $(GEOMETRY)
-	python3 $(AN)/geometry-tables.py > $@.tmp && mv $@.tmp $@
+	python3 $(AN)/tables/geometry-tables.py > $@.tmp && mv $@.tmp $@

@@ -1,5 +1,5 @@
 # The Python the analysis scripts need, at the versions every thesis number was computed with
-# (board 1, Python 3.12.3). TensorRT 10.16.2.10 and OpenCV 4.8.0 (only utility/int8-calib.py)
+# (board 1, Python 3.12.3). TensorRT 10.16.2.10 and OpenCV 4.8.0 (only measure/int8-calib.py)
 # come with JetPack 7.2 and are not installed from here.
 numpy==1.26.4
 pandas==2.1.4

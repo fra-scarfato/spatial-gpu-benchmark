@@ -34,7 +34,7 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 
 ```sh
 make                          # builds ./runner
-make -C utility/probes        # builds the probes (devprobe, itfproc, ...)
+make -C probes        # builds the probes (devprobe, itfproc, ...)
 make -f engines.mk            # builds every TensorRT engine from its ONNX file
 sudo jetson_clocks
 
@@ -75,31 +75,31 @@ tables, overview) and stops at the first failure:
 The same stages by hand:
 
 ```sh
-./utility/sweep.sh --exp section                       # measure -> $DATA/bench/<family>/<config>/
-python3 utility/aggregate.py                           # reduce  -> $DATA/bench/aggregate/
-python3 utility/results-tables.py > tables.tex         # the results section's tables
-python3 utility/split-tables.py tables.tex --out tables/   # one file per table
+./measure/sweep.sh --exp section                       # measure -> $DATA/bench/<family>/<config>/
+python3 analysis/aggregate.py                           # reduce  -> $DATA/bench/aggregate/
+python3 analysis/tables/results-tables.py > tables.tex         # the results section's tables
+python3 analysis/tables/split-tables.py tables.tex --out tables/   # one file per table
 ```
 
 Profiled runs (Nsight Systems kernel traces and DRAM counters) perturb what they measure, so they
 are kept out of the campaign and serve as evidence about mechanisms, not as latencies:
 
 ```sh
-./utility/profile.sh traces                 # CUDA kernel traces (no root)
-sudo ./utility/profile.sh soc-budget        # DRAM counters: each network alone on 4 budgets
-sudo ./utility/profile.sh soc-itf           # DRAM counters: target alone and beside compute_gemm
-sudo ./utility/profile.sh footprint         # DRAM counters: compute_gemm's operand size
-sudo ./utility/profile.sh calibration       # DRAM counters during devprobe's copies
-python3 utility/profiles.py                 # all of the above -> $DATA/profiles/derived/*.csv
+./measure/profile.sh traces                 # CUDA kernel traces (no root)
+sudo ./measure/profile.sh soc-budget        # DRAM counters: each network alone on 4 budgets
+sudo ./measure/profile.sh soc-itf           # DRAM counters: target alone and beside compute_gemm
+sudo ./measure/profile.sh footprint         # DRAM counters: compute_gemm's operand size
+sudo ./measure/profile.sh calibration       # DRAM counters during devprobe's copies
+python3 analysis/profiles.py                 # all of the above -> $DATA/profiles/derived/*.csv
 ```
 
 These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
 
 The stress chapter (the stress, counter and composition models, other partition sizes, two
-co-runners, energy) is measured by the campaign queues in `utility/campaigns/`, whose README is the
+co-runners, energy) is measured by the campaign queues in `campaigns/`, whose README is the
 ordered log of what was run. `make tables` regenerates its numbers from the raw runs, re-running
 only what is out of date, and writes its tables as LaTeX rows (`stress-tables.py`,
-`ensemble-tables.py`, `geometry-tables.py` in `utility/analysis/`).
+`ensemble-tables.py`, `geometry-tables.py` in `analysis/tables/`).
 
 ## Measurement protocol
 
@@ -113,50 +113,67 @@ only what is out of date, and writes its tables as LaTeX rows (`stress-tables.py
 
 ## Repository layout
 
+The folders follow the path of a number: built, measured, recorded, reduced and modelled, then
+printed as a table. Raw data never enters the repository (see [Data](#data)).
+
 ```
-src/, include/              the runner: options, inputs, statistics, SM allocation, the TensorRT
-                            engine, networks, the synthetic co-runner, the run
-src/spin.cu                 the spin co-runner's kernel, built by nvcc
-pipeline.py                 the entry point: every stage below, in order
+README.md, Makefile         how to build and reproduce; `make` (the runner), `make check` (the
+                            self-tests), `make tables` (the stress chapter's numbers and tables)
+pipeline.py                 the results section's entry point: engines, measure, reduce, tables
 engines.mk                  every TensorRT engine, rebuilt from its ONNX file
-utility/
-  sweep.sh                  the campaign: runs every arm of a family, guarded, resumable
-  mps-additivity-block.sh   the additivity family under MPS (three clients, three processes)
-  aggregate.py              runs -> bench/aggregate/<exp>.csv and summary.csv; flags suspect runs
-  results-tables.py         the LaTeX tables of the results section
-  tex-tables.py             the LaTeX tables of the appendix
-  split-tables.py           a generator's output -> one .tex file per table
-  overview.py               bench/OVERVIEW.md: every family, its configurations and runs
-  profile.sh                every profiled run (kernel traces, DRAM counters), guarded
-  profiles.py               the profiled runs -> profiles/derived/*.csv
-  streams.py                per-stream activity and overlap in one trace (run by hand)
-  reporter.sh               the stress reporter beside SAXPY levels or networks, under MPS static
-                            (LAYOUT=target: the reporter on the target's 8 SMs)
-  stress.py                 the stress model: calibration, equivalent stress, sensitivity, prediction
-                            (predict|compare [geom], one geometry per stressor, reporter and layout)
-  analysis/                 the stress chapter's models and their scoring: counter-model.py,
-                            infwin-model.py, ensemble.py, compose.py, geometry.py, ...; and the two
-                            table generators, stress-tables.py, ensemble-tables.py and geometry-tables.py
-  campaigns/                every campaign queue of the stress chapter, as run, with the ordered log
-  ncu.sh                    Nsight Compute: does it work here, per-kernel cache and DRAM figures,
-                            and the L2 traffic of each network (nets)
-  lib/                      shared by the scripts above:
-    guards.sh                 the checks before every run: clocks locked, GPU quiet, sentinel
-    matrix.sh                 the campaign's arms, one line each: what sweep.sh can run
-    mps.sh                    the MPS daemon and its static partitions
-    families.py               family folder -> aggregate key, and the groups (section, mem, ...)
-    tables.py                 the LaTeX table writer and the accessors the two generators share
-  probes/                   standalone CUDA programs with their own Makefile and README:
-                            auxprobe, wqprobe, devprobe (the GB/s calibration), itfproc (the
-                            co-runner as a separate process, including the throttled SAXPY), and
-                            gpu-latency (RRZE-HPC's pointer chase, the stress reporter, GPL-3)
+requirements.txt            the Python packages, pinned
+src/, include/              the runner: options, inputs, statistics, SM allocation, the TensorRT
+                            engine, networks, the synthetic co-runner, the run (src/spin.cu: nvcc)
+probes/                     standalone CUDA programs with their own Makefile, README and the pin
+                            file of the binaries: auxprobe, wqprobe, devprobe (the GB/s
+                            calibration), itfproc (the co-runner and stressor as a separate
+                            process), gpu-latency (RRZE-HPC's pointer chase, the probe, GPL-3)
+measure/                    everything that runs on the GPU, guarded
+  sweep.sh                    the campaign: runs every arm of a family, resumable
+  reporter.sh                 the probe beside stressor levels or networks, under MPS static
+  profile.sh, ncu.sh          the profiled runs (kernel traces, DRAM counters, Nsight Compute)
+  mps-additivity-block.sh     the additivity family under MPS (three clients, three processes)
+  int8-calib.py               the INT8 calibration engines.mk uses
+  lib/guards.sh               the checks before every run: clocks, a quiet GPU, pins, manifest
+  lib/matrix.sh               every arm the campaign can run, one line each
+  lib/mps.sh                  the MPS daemon and its static partitions
+campaigns/                  every campaign queue of the stress chapter as run, with the ordered log
+analysis/                   everything that reads the data, CPU only
+  aggregate.py                raw runs -> bench/aggregate/<exp>.csv and summary.csv
+  profiles.py                 profiled runs -> profiles/derived/*.csv
+  stress.py                   the stress models (predict|compare <geometry>)
+  avg-model.py, infwin-model.py   the temporal model
+  counter-model.py            the counter model (DRAM, L2, both)
+  ensemble.py                 correction, maximum and margin of the three p99 models
+  compose.py                  two stressors together (the composition ratio)
+  geometry.py                 other partition sizes, two co-runners, power
+  overview.py                 bench/OVERVIEW.md: every family, its configurations and runs
+  lib/families.py             family folder -> aggregate key, target-first families, groups
+  lib/tables.py               the LaTeX writer the results-section generators share
+  tables/                     every thesis table, as LaTeX rows (the map below)
+  explore/                    one-off investigations kept for the record, outside the pipeline:
+                              l2-residual, onoff, burst-diag, peak-test, models, streams
+docs/                       DOC.md (design decisions and traps), MEASUREMENTS.md (what every
+                            number means, the names of the geometries and the glossary)
 ```
 
-To add a configuration, add an arm to `utility/lib/matrix.sh` (and, for a new family, its folder
-to `utility/lib/families.py`, and its key to `TARGET_FIRST` there when its configurations name the
+### Where each thesis table comes from
+
+| Thesis | Generator | Run by |
+|---|---|---|
+| results section | `analysis/tables/results-tables.py` (+ `split-tables.py`) | `./pipeline.py --tables` |
+| appendix | `analysis/tables/tex-tables.py` | `./pipeline.py --tables` |
+| stress chapter: `tab:stress-scale` ... `tab:stress-compose` (11) | `analysis/tables/stress-tables.py` | `make tables` |
+| stress chapter: `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` (6) | `analysis/tables/ensemble-tables.py` | `make tables` |
+| stress chapter: `tab:stress-sizes*`, `tab:stress-triple*`, `tab:stress-energy*` (6) | `analysis/tables/geometry-tables.py` | `make tables` |
+
+Each generator heads every block with its `\label`, so a table is found by its label.
+
+To add a configuration, add an arm to `measure/lib/matrix.sh` (and, for a new family, its folder
+to `analysis/lib/families.py`, and its key to `TARGET_FIRST` there when its configurations name the
 target first); a single-network arm whose network the configuration name does not state otherwise
 also needs a rule in `aggregate.py`'s `load()`. To add a table, add it to
-`utility/results-tables.py`.
+`analysis/tables/results-tables.py`.
 
 ## Data
 
@@ -165,7 +182,7 @@ All data lives outside the repository under `$DATA` (default `/mnt/nvme/f.scarfa
 ```
 bench/<family>/<config>/r<k>_*   the campaign: one stats, latencies and log file per run
 bench/aggregate/                 the reduction: <exp>.csv per experiment, summary.csv
-bench/OVERVIEW.md                every experiment and configuration, from utility/overview.py
+bench/OVERVIEW.md                every experiment and configuration, from analysis/overview.py
 profiles/<set>/                  the profiled runs: report, log, stats, extracted .csv.gz
 profiles/derived/                everything profiles.py computes
 models/<model>/                  ONNX files, and engine/ with the built engines and their logs
@@ -175,10 +192,10 @@ scratch/                         temporary files; nothing reads from it
 
 ## Documentation
 
-- [`DOC.md`](DOC.md): design decisions, methodology, the data model and the traps found on the way
-- [`MEASUREMENTS.md`](MEASUREMENTS.md): how every number of the memory analysis is collected and
+- [`docs/DOC.md`](docs/DOC.md): design decisions, methodology, the data model and the traps found on the way
+- [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md): how every number of the memory analysis is collected and
   computed (GB/s, bytes per inference, kernel gaps, the calibration)
-- [`utility/probes/README.md`](utility/probes/README.md): the probe programs
+- [`probes/README.md`](probes/README.md): the probe programs
 
 ## Caveats
 

@@ -14,20 +14,20 @@ Interactive when run bare, scriptable with the same words:
 
 Stages, in order, each skippable with --stage:
     engines   rebuild every TensorRT engine from its ONNX file
-    measure   utility/sweep.sh on the selection
-    reduce    utility/aggregate.py
+    measure   measure/sweep.sh on the selection
+    reduce    analysis/aggregate.py
     tables    both generators, split into one file per table
-    overview  utility/overview.py
+    overview  analysis/overview.py
 
 Diagnostics, run only when named with --stage. Each one profiles what it measures, so its output
 is evidence about a mechanism and never a latency a table reports. All write under $DATA/profiles:
-    traces      utility/profile.sh traces       CUDA kernel traces, no root
-    soc-budget  utility/profile.sh soc-budget   DRAM counters, each network alone (root)
-    soc-itf     utility/profile.sh soc-itf      DRAM counters, target alone and with compute_gemm (root)
-    footprint   utility/profile.sh footprint    DRAM counters, compute_gemm's operand side (root)
-    profiles    utility/profiles.py             read all of the above into profiles/derived
-    ncu         utility/ncu.sh diagnose         does Nsight Compute work here (root)
-    probes      the standalone probes of utility/
+    traces      measure/profile.sh traces       CUDA kernel traces, no root
+    soc-budget  measure/profile.sh soc-budget   DRAM counters, each network alone (root)
+    soc-itf     measure/profile.sh soc-itf      DRAM counters, target alone and with compute_gemm (root)
+    footprint   measure/profile.sh footprint    DRAM counters, compute_gemm's operand side (root)
+    profiles    analysis/profiles.py             read all of the above into profiles/derived
+    ncu         measure/ncu.sh diagnose         does Nsight Compute work here (root)
+    probes      the standalone probes of probes/
 
 The measurement is never started without the sweep's own guard, which the pipeline runs first so
 a free governor is reported before a warm-up rather than after it.
@@ -39,7 +39,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "utility"))
+sys.path.insert(0, str(ROOT / "analysis"))
 
 from lib import families  # noqa: E402
 
@@ -49,7 +49,7 @@ STAGES = ("engines", "measure", "reduce", "tables", "overview")
 # The stages, in the two groups the pipeline distinguishes. A measurement produces the numbers the
 # thesis reports; a diagnostic profiles what it measures and therefore perturbs it, so its output
 # is evidence about mechanisms and not a latency. Four diagnostics need root.
-PROFILE_SETS = ("traces", "soc-budget", "soc-itf", "footprint")      # utility/profile.sh <set>
+PROFILE_SETS = ("traces", "soc-budget", "soc-itf", "footprint")      # measure/profile.sh <set>
 STAGES_DIAGNOSTIC = PROFILE_SETS + ("profiles", "ncu", "probes")
 
 
@@ -186,7 +186,7 @@ def main():
 
     if "measure" in wanted:
         say("\n== measure ==")
-        cmd = ["./utility/sweep.sh", "--exp", selection, "--runs", str(args.runs)]
+        cmd = ["./measure/sweep.sh", "--exp", selection, "--runs", str(args.runs)]
         if args.static_chunks:
             cmd += ["--static-chunks", str(args.static_chunks)]
         if args.smoke:
@@ -206,54 +206,54 @@ def main():
             specs = [str(models / "mobilenetv2-12/engine/mobilenetv2-12.engine") + ":mobilenet",
                      str(models / "retinanet-9/engine/retinanet-9.engine") + ":retinanet",
                      str(models / "inception_v3-onnx-float/engine/inception_v3.engine") + ":inception"]
-            if run(["./utility/mps-additivity-block.sh", "--block", str(args.runs)] + specs,
+            if run(["./measure/mps-additivity-block.sh", "--block", str(args.runs)] + specs,
                    args.dry_run) != 0:
                 return 1
 
     if "reduce" in wanted:
         say("\n== reduce ==")
-        if run([sys.executable, "utility/aggregate.py", "--out", str(bench)], args.dry_run) != 0:
+        if run([sys.executable, "analysis/aggregate.py", "--out", str(bench)], args.dry_run) != 0:
             return 1
 
     if "tables" in wanted:
         say("\n== tables ==")
         out = bench / "aggregate"
         out.mkdir(parents=True, exist_ok=True)
-        if run([sys.executable, "utility/results-tables.py"], args.dry_run,
+        if run([sys.executable, "analysis/tables/results-tables.py"], args.dry_run,
                capture_to=out / "tables.tex") != 0:
             return 1
-        if (ROOT / "utility/tex-tables.py").exists():
-            run([sys.executable, "utility/tex-tables.py"], args.dry_run,
+        if (ROOT / "analysis/tables/tex-tables.py").exists():
+            run([sys.executable, "analysis/tables/tex-tables.py"], args.dry_run,
                 capture_to=out / "tables-history.tex")
-        if run([sys.executable, "utility/split-tables.py", str(out / "tables.tex"),
+        if run([sys.executable, "analysis/tables/split-tables.py", str(out / "tables.tex"),
                 "--out", str(out / "tables")], args.dry_run) != 0:
             return 1
         if (out / "tables-history.tex").exists() and not args.dry_run:
-            run([sys.executable, "utility/split-tables.py", str(out / "tables-history.tex"),
+            run([sys.executable, "analysis/tables/split-tables.py", str(out / "tables-history.tex"),
                  "--out", str(out / "tables-history")])
 
     if "overview" in wanted:
         say("\n== overview ==")
-        run([sys.executable, "utility/overview.py"], args.dry_run)
+        run([sys.executable, "analysis/overview.py"], args.dry_run)
 
     if "probes" in wanted:
         say("\n== the probes ==")
-        run(["make", "-C", "utility/probes"], args.dry_run)
+        run(["make", "-C", "probes"], args.dry_run)
         for probe in ("auxprobe", "wqprobe", "devprobe", "itfproc"):
-            run(["./utility/probes/" + probe], args.dry_run)
+            run(["./probes/" + probe], args.dry_run)
 
     for name in PROFILE_SETS:
         if name in wanted:
             say("\n== profiles: {} ==".format(name))
-            run(([] if name == "traces" else ["sudo"]) + ["./utility/profile.sh", name], args.dry_run)
+            run(([] if name == "traces" else ["sudo"]) + ["./measure/profile.sh", name], args.dry_run)
 
     if "profiles" in wanted:
         say("\n== profiles: reading them into $DATA/profiles/derived ==")
-        run([sys.executable, "utility/profiles.py"], args.dry_run)
+        run([sys.executable, "analysis/profiles.py"], args.dry_run)
 
     if "ncu" in wanted:
         say("\n== ncu: does it work here, and under which flags (needs root) ==")
-        run(["sudo", "./utility/ncu.sh", "diagnose"], args.dry_run)
+        run(["sudo", "./measure/ncu.sh", "diagnose"], args.dry_run)
 
     say("\ndone")
     return 0
