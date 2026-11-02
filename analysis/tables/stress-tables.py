@@ -42,8 +42,8 @@ NETS = S.NETS
 DUTY = {"D025": "25\\,\\%", "D050": "50\\,\\%", "D075": "75\\,\\%", "D100": "100\\,\\%"}
 
 
-def read(name):
-    return list(csv.DictReader(open(os.path.join(AGG, name))))
+def read(name, where=AGG):
+    return list(csv.DictReader(open(os.path.join(where, name))))
 
 
 def pts(x):
@@ -80,7 +80,7 @@ def scale_rows(geom):
     calibration and sensitivity CSVs, which keep 2-4 decimals: too few to round 790.553 ns or a
     slowdown of 1.25449 as the exact values do."""
     S.G, S.REPORTER = S.GEOMS[geom], os.path.join(S.BENCH, S.GEOMS[geom]["rep"])
-    cfgs = [r["config"] for r in sorted(read("stress-calibration-%s.csv" % geom), key=lambda r: float(r["level"]))]
+    cfgs = [r["config"] for r in sorted(read("stress-calibration-%s.csv" % geom, A.FROZEN_DIR), key=lambda r: float(r["level"]))]
     sens = {t: S.sensitivity(DATA, t) for t in NETS}
     assert all(len(sens[t]) == len(cfgs) for t in NETS), geom
     out = []
@@ -125,7 +125,7 @@ for name, g in STRESSORS:
         row(name if i == 0 else "", DUTY[cfg.split("-")[1]], *[pct(x[0]) for x in s], *[pct(x[1]) for x in s])
 
 head("tab:stress-corunners (probe p99, then L_eq on the ON/OFF and uniform scales)")
-co = {g: {r["corunner"]: r for r in read("stress-corunners-%s.csv" % g)} for _, g in STRESSORS}
+co = {g: {r["corunner"]: r for r in read("stress-corunners-%s.csv" % g, A.FROZEN_DIR)} for _, g in STRESSORS}
 for c in sorted(co["onoff88"], key=lambda c: float(co["onoff88"][c]["p99_ns"])):
     row(c, f1(co["onoff88"][c]["p99_ns"]), *[f1(co[g][c]["L_eq_p99"]) for _, g in STRESSORS])
 
@@ -156,7 +156,7 @@ head("tab:stress-smooth (duty, GB/s, probe p99; p99 slowdowns; median slowdowns)
 for cfg, level, p99, s in scale_rows("smooth88"):
     duty = "\\texttt{spin}" if cfg == "spin" else DUTY[cfg.split("-")[1]]
     row(duty, f1(level), f1(p99), *[pct(x[0]) for x in s], *[pct(x[1]) for x in s])
-sm = read("stress-corunners-smooth88.csv")
+sm = read("stress-corunners-smooth88.csv", A.FROZEN_DIR)
 print("% on the smooth scale: " + ", ".join("%s %.0f GB/s (%s)" % (r["corunner"], float(r["L_eq_p99"]),
                                                                  "inside" if r["p99_inside"] == "True" else "clamped")
                                          for r in sm))

@@ -67,7 +67,7 @@ SMOOTH = ["smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]
 
 def rulers():
     """Each stressor's ruler: reporter directory, configurations and their levels, curves, output name."""
-    steady = [r for r in csv.DictReader(open(os.path.join(AGG, "stress-calibration-8smt.csv")))
+    steady = [r for r in csv.DictReader(open(os.path.join(S.FROZEN, "stress-calibration-8smt.csv")))
               if r["config"].startswith("saxpy-L")]
     return {"infwin88": dict(rep=S.REPORTER, cfgs=["spin"] + SMOOTH, curves=H.curves("smooth88"),
                              levels=[0.0] + [S.reporter_config(c)["level"] for c in SMOOTH]),
@@ -141,8 +141,8 @@ def predict(alone, ruler, stat, nets=NETS, wroot=None):
     return rows
 
 
-def write(name, rows):
-    path = os.path.join(AGG, name)
+def write(name, rows, where=None):
+    path = os.path.join(where or AGG, name)
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -199,16 +199,16 @@ def new_alone(data, nets, curve_family):
 def new(cmd):
     """The validation set: freeze the Temporal predictions (new-predict), or score them (new-compare)."""
     G = S.GEOMS["smoothnew"]
-    nets, path = G["nets"], os.path.join(AGG, "stress-predictions-infwinnewp.csv")
+    nets, path = G["nets"], os.path.join(S.FROZEN, "stress-predictions-infwinnewp.csv")
     data = A.load(S.BENCH)
     if cmd == "new-predict":
-        cal = {r["config"]: float(r["level"]) for r in csv.DictReader(open(os.path.join(AGG, "stress-calibration-smoothnew.csv")))}
+        cal = {r["config"]: float(r["level"]) for r in csv.DictReader(open(os.path.join(S.FROZEN, "stress-calibration-smoothnew.csv")))}
         rep = os.path.join(S.BENCH, G["rep"])
         ruler = dict(rep=rep, cfgs=["spin"] + SMOOTH, curves=H.curves("smoothnew"),
                      levels=[0.0] + [cal[c] for c in SMOOTH])
         # T, the inference length, from the alone row the target's curve is normalised by
         alone = new_alone(data, nets, lambda t: G["curves"].get(t, (G["exp"],))[0])
-        write("stress-predictions-infwinnewp.csv", predict(alone, ruler, STATS["p"], nets, rep))
+        write("stress-predictions-infwinnewp.csv", predict(alone, ruler, STATS["p"], nets, rep), S.FROZEN)
     else:
         if not os.path.exists(path):
             raise SystemExit("infwin-model.py: run new-predict first; the predictions must exist before the pairs are read")

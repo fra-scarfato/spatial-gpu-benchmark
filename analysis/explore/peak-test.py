@@ -19,7 +19,7 @@ S, A = M.S, M.A
 AGG = M.AGG
 CFG = ["peak-T0010", "peak-T0100", "peak-T0300", "peak-T1000", "peak-T3000"]
 
-cal = sorted(csv.DictReader(open(os.path.join(AGG, "stress-calibration-smooth88.csv"))), key=lambda r: float(r["level"]))
+cal = sorted(csv.DictReader(open(os.path.join(A.FROZEN_DIR, "stress-calibration-smooth88.csv"))), key=lambda r: float(r["level"]))
 lv = [float(r["level"]) for r in cal]
 ns_med = [float(r["median"]) for r in cal]
 ns_p99 = [float(r["p99"]) for r in cal]

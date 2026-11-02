@@ -217,20 +217,21 @@ def main():
 
     if "tables" in wanted:
         say("\n== tables ==")
-        out = bench / "aggregate"
+        out = bench / "tables"
+        out.mkdir(exist_ok=True)
         out.mkdir(parents=True, exist_ok=True)
         if run([sys.executable, "analysis/tables/results-tables.py"], args.dry_run,
-               capture_to=out / "tables.tex") != 0:
+               capture_to=out / "results.tex") != 0:
             return 1
         if (ROOT / "analysis/tables/tex-tables.py").exists():
             run([sys.executable, "analysis/tables/tex-tables.py"], args.dry_run,
-                capture_to=out / "tables-history.tex")
-        if run([sys.executable, "analysis/tables/split-tables.py", str(out / "tables.tex"),
-                "--out", str(out / "tables")], args.dry_run) != 0:
+                capture_to=out / "history.tex")
+        if run([sys.executable, "analysis/tables/split-tables.py", str(out / "results.tex"),
+                "--out", str(out / "results")], args.dry_run) != 0:
             return 1
-        if (out / "tables-history.tex").exists() and not args.dry_run:
-            run([sys.executable, "analysis/tables/split-tables.py", str(out / "tables-history.tex"),
-                 "--out", str(out / "tables-history")])
+        if (out / "history.tex").exists() and not args.dry_run:
+            run([sys.executable, "analysis/tables/split-tables.py", str(out / "history.tex"),
+                 "--out", str(out / "history")])
 
     if "overview" in wanted:
         say("\n== overview ==")

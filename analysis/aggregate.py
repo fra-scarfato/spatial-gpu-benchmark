@@ -55,6 +55,10 @@ import sys
 # and not in this repository, which is code: the engines, the image set, the
 # labels and the results are on the NVMe. Override with the DATA variable.
 DATA_ROOT = os.environ.get("DATA", "/mnt/nvme/f.scarfato")
+# The frozen files: predictions written before their pairs were read, with the calibrations, curves and
+# readings written with them. Written only by a predict step, read by everything else, hashed in
+# analysis/frozen.sha256 (make check). Everything in bench/aggregate can be regenerated; nothing here can.
+FROZEN_DIR = os.path.join(DATA_ROOT, "bench", "frozen")
 
 # The file name carries only the run number and the optional network label:
 #

@@ -81,7 +81,7 @@ ALONE = {4: ("exp28", "-alone"), 6: ("exp29", "-alone"), 12: ("exp30", "-alone")
          8: ("exp31", "-alone08"), 10: ("exp31", "-alone10")}
 TRIPLE = "exp32"
 FAMILY_DIR = {e: f for f, e in A.EXP_DIR.items() if e in ("exp28", "exp29", "exp30", "exp31", "exp32")}
-FROZEN = os.path.join(C.AGG, "geometry-triple-predictions.csv")
+FROZEN = os.path.join(A.FROZEN_DIR, "geometry-triple-predictions.csv")
 
 
 # ------------------------------------------------------------------ inputs

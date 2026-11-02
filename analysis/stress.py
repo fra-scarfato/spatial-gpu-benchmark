@@ -36,6 +36,7 @@ import aggregate as A  # noqa: E402
 BENCH = os.path.join(A.DATA_ROOT, "bench")
 REPORTER = os.path.join(BENCH, "stress-reporter")
 OUT = os.path.join(BENCH, "aggregate")
+FROZEN = A.FROZEN_DIR                 # what predict writes: the frozen model
 # The reporter's coordinates, all on the 64 MB (DRAM) chain: a statistic of the run's windows.
 STATS = {"p99": lambda v: float(np.percentile(v, 99)), "median": lambda v: float(np.median(v)),
          "mean": lambda v: float(np.mean(v))}     # mean: the unpatched reporter's one number per run
@@ -198,11 +199,11 @@ def sensitivity(data, target):
     return pts
 
 
-def write(name, rows):
+def write(name, rows, where=OUT):
     if not rows:
         print("  %s: nothing to write yet" % name)
         return
-    path = os.path.join(OUT, name.replace(".csv", G["suffix"] + ".csv"))
+    path = os.path.join(where, name.replace(".csv", G["suffix"] + ".csv"))
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -232,7 +233,7 @@ def predict():
     if len(calib) < 3:
         raise SystemExit("stress.py: too few calibration levels measured")
     write("stress-calibration.csv", calib + ([dict(config="idle", **{k: fmt(v) for k, v in idle.items()})]
-                                             if idle and not G.get("gbs") else []))
+                                             if idle and not G.get("gbs") else []), FROZEN)
     xs = [r["level"] for r in calib]
 
     # 2. equivalent stress of each network as a co-runner, per coordinate
@@ -249,7 +250,7 @@ def predict():
             eq[(net, c)] = leq
         row["occupancy"], row["inf_per_s"] = fmt(r.get("occupancy", "")), fmt(r.get("inf_per_s", ""))
         corunners.append(row)
-    write("stress-corunners.csv", corunners)
+    write("stress-corunners.csv", corunners, FROZEN)
 
     # 3. sensitivity curves, from stress-sensitivity ONLY
     exps = {G["exp"]} | {e for e, _ in G.get("curves", {}).values()}
@@ -261,7 +262,7 @@ def predict():
             curves[t] = pts
             sens += [dict(target=t, level=fmt(l), slowdown_p99=fmt(a), slowdown_median=fmt(b))
                      for l, a, b in pts]
-    write("stress-sensitivity.csv", sens)
+    write("stress-sensitivity.csv", sens, FROZEN)
 
     # 4. the predictions, frozen before any pair is read
     preds = []
@@ -276,15 +277,15 @@ def predict():
                 row["pred_p99_" + c] = fmt(float(np.interp(eq[(net, c)], L, [p[1] for p in pts])))
                 row["pred_median_" + c] = fmt(float(np.interp(eq[(net, c)], L, [p[2] for p in pts])))
             preds.append(row)
-    write("stress-predictions.csv", preds)
+    write("stress-predictions.csv", preds, FROZEN)
 
 
 def compare():
-    path = os.path.join(OUT, "stress-predictions%s.csv" % G["suffix"])
+    path = os.path.join(FROZEN, "stress-predictions%s.csv" % G["suffix"])
     if not os.path.exists(path):
         raise SystemExit("stress.py: run `predict` first; the predictions must exist before the pairs are read")
     preds = list(csv.DictReader(open(path)))
-    occ = {r["corunner"]: r for r in csv.DictReader(open(os.path.join(OUT, "stress-corunners%s.csv" % G["suffix"])))}
+    occ = {r["corunner"]: r for r in csv.DictReader(open(os.path.join(FROZEN, "stress-corunners%s.csv" % G["suffix"])))}
     data = A.load(BENCH)
     rows = []
     for p in preds:

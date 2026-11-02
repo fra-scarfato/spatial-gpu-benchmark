@@ -12,7 +12,9 @@ All data is under `$DATA = /mnt/nvme/f.scarfato`, outside the repository.
 bench/                          THE CAMPAIGN: latencies, five runs per configuration
   <family>/<config>/r<k>_stats.csv        one row per statistic of one run (gpu_ms is the one used)
   <family>/<config>/r<k>.log              the runner's report, including a co-runner's own figures
-  aggregate/                              aggregate.py's reduction, stress.py's files, the tables
+  aggregate/                              aggregate.py's reduction and every derived CSV
+  frozen/                                 the predictions frozen before their pairs, hashed
+  tables/                                 every generated table
   stress-reporter/<config>/                the stress reporter beside SAXPY or a network (reporter.sh)
   stress-reporter-target/<config>/         the same with LAYOUT=target
 profiles/                       PROFILED RUNS: one run per arm, read for traffic and timelines
@@ -358,9 +360,9 @@ flight. The reporter reads either with the same instrument, in the same partitio
 203 GB/s read and 208 GB/s write. Predictions hold for co-runners whose reading falls inside the calibrated range.
 
 Output: `$DATA/bench/stress-reporter/<config>/r<k>_latency.txt`, `r<k>_c<i>.log` and
-`r<k>_c<i>_stats.csv`. `stress.py` writes `$DATA/bench/aggregate/stress-calibration.csv`,
-`stress-corunners.csv`, `stress-sensitivity.csv`, `stress-predictions.csv` and
-`stress-comparison.csv`.
+`r<k>_c<i>_stats.csv`. `stress.py predict` writes, frozen, `$DATA/bench/frozen/stress-calibration.csv`,
+`stress-corunners.csv`, `stress-sensitivity.csv` and `stress-predictions.csv`; `stress.py compare`
+writes `$DATA/bench/aggregate/stress-comparison.csv`.
 
 ### The 4-SM stressor (`stress.py ... 4sm`)
 

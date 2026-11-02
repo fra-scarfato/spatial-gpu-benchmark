@@ -75,16 +75,18 @@ SELFTESTS = analysis/stress.py analysis/compose.py analysis/counter-model.py \
 
 check:
 	@set -e; for t in $(SELFTESTS); do echo "== $$t"; python3 $$t selftest; done
+	@echo "== the frozen files against analysis/frozen.sha256"; \
+	    cd $(DATA)/bench/frozen && sha256sum --quiet -c $(CURDIR)/analysis/frozen.sha256 && echo "  unchanged"
 
 # ------------------------------------------------------------------ the stress chapter's numbers
 #
 # `make tables` brings every derived CSV of the stress chapter up to date, in dependency order, and
-# writes the thesis tables to $(AGG)/tables-{stress,ensemble,geometry}.tex; `make -n tables` lists
+# writes the thesis tables to $(TABLES)/{stress,ensemble,geometry}.tex; `make -n tables` lists
 # what is stale without running it. Each rule names what its script reads: the raw runs, the
 # profiles, the CSVs of earlier steps and the scripts, so a new run or a changed script re-runs
 # exactly what depends on it.
 #
-# The frozen files are inputs, never targets: the predictions of stress.py predict and of the
+# The frozen files, in $(FROZEN), are inputs, never targets: the predictions of stress.py predict and of the
 # new-predict steps (stress-predictions-*.csv), the calibrations, curves and readings written with
 # them (stress-calibration-*, stress-sensitivity-*, stress-corunners-*), and
 # geometry-triple-predictions.csv. Re-freezing is a decision taken by hand
@@ -96,6 +98,8 @@ check:
 DATA ?= /mnt/nvme/f.scarfato
 export DATA
 AGG := $(DATA)/bench/aggregate
+FROZEN := $(DATA)/bench/frozen
+TABLES := $(DATA)/bench/tables
 RUNS := $(wildcard $(DATA)/bench/*/*/r*)
 PROFILES := $(wildcard $(DATA)/profiles/derived/*.csv $(DATA)/profiles/ncu/*.csv)
 AN := analysis
@@ -104,25 +108,25 @@ COUNTER := $(AN)/counter-model.py $(LOAD) $(PROFILES)
 GEOMS := onoff88 uniform88 smooth88 smoothx88 smoothnew
 cmp = $(foreach n,$(1),$(AGG)/stress-comparison-$(n).csv)
 
-tables: $(AGG)/tables-stress.tex $(AGG)/tables-ensemble.tex $(AGG)/tables-geometry.tex $(AGG)/summary.csv
+tables: $(TABLES)/stress.tex $(TABLES)/ensemble.tex $(TABLES)/geometry.tex $(AGG)/summary.csv
 
 $(AGG)/summary.csv: $(LOAD)
 	python3 analysis/aggregate.py
 
-$(call cmp,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(AGG)/stress-predictions-%.csv $(LOAD)
+$(call cmp,$(GEOMS)): $(AGG)/stress-comparison-%.csv: $(FROZEN)/stress-predictions-%.csv $(LOAD)
 	python3 analysis/stress.py compare $*
 
 $(call cmp,infwin88 infwin88p infwin88d infwin88pd) &: $(AN)/infwin-model.py $(AN)/avg-model.py $(call cmp,smooth88) $(LOAD)
 	python3 $(AN)/infwin-model.py
 
-$(call cmp,infwinnewp): $(AGG)/stress-predictions-infwinnewp.csv $(AN)/infwin-model.py $(AN)/avg-model.py $(LOAD)
+$(call cmp,infwinnewp): $(FROZEN)/stress-predictions-infwinnewp.csv $(AN)/infwin-model.py $(AN)/avg-model.py $(LOAD)
 	python3 $(AN)/infwin-model.py new-compare
 
 $(AGG)/counter-model-coeffs.csv $(call cmp,counters-dram counters-ref counters-l2) &: $(COUNTER)
 	python3 $(AN)/counter-model.py
 
 $(call cmp,counters-new-dram counters-new-ref counters-new-l2) &: \
-		$(foreach v,dram ref l2,$(AGG)/stress-predictions-counters-new-$(v).csv) $(COUNTER)
+		$(foreach v,dram ref l2,$(FROZEN)/stress-predictions-counters-new-$(v).csv) $(COUNTER)
 	python3 $(AN)/counter-model.py new-compare
 
 $(call cmp,max-dram max-ref max-l2 maxc-dram maxc-ref maxc-l2) &: $(AN)/ensemble.py $(call cmp,smooth88 infwin88p) $(COUNTER)
@@ -136,21 +140,24 @@ GEOMETRY := $(AN)/geometry.py $(AGG)/counter-model-coeffs.csv $(AGG)/compose-4sm
 $(AGG)/geometry-splits.csv: $(GEOMETRY)
 	python3 $(AN)/geometry.py splits
 
-$(AGG)/geometry-triple-compare-current.csv: $(AGG)/geometry-triple-predictions.csv $(GEOMETRY)
+$(AGG)/geometry-triple-compare-current.csv: $(FROZEN)/geometry-triple-predictions.csv $(GEOMETRY)
 	python3 $(AN)/geometry.py triple-current
 
 $(AGG)/geometry-power.csv: $(AN)/geometry.py $(LOAD)
 	python3 $(AN)/geometry.py power
 
-$(AGG)/tables-stress.tex: $(AN)/tables/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
+$(TABLES)/stress.tex: $(AN)/tables/stress-tables.py $(AN)/avg-model.py $(AGG)/compose-4sm.csv $(LOAD) \
 		$(call cmp,onoff88 uniform88 smooth88 smoothx88 infwin88 infwin88p) \
 		$(call cmp,counters-dram counters-ref counters-l2 counters-new-dram counters-new-ref counters-new-l2)
+	@mkdir -p $(TABLES)
 	python3 $(AN)/tables/stress-tables.py > $@.tmp && mv $@.tmp $@
 
-$(AGG)/tables-ensemble.tex: $(AN)/tables/ensemble-tables.py $(AN)/ensemble.py \
+$(TABLES)/ensemble.tex: $(AN)/tables/ensemble-tables.py $(AN)/ensemble.py \
 		$(call cmp,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
+	@mkdir -p $(TABLES)
 	python3 $(AN)/tables/ensemble-tables.py > $@.tmp && mv $@.tmp $@
 
-$(AGG)/tables-geometry.tex: $(AN)/tables/geometry-tables.py $(AGG)/geometry-splits.csv \
+$(TABLES)/geometry.tex: $(AN)/tables/geometry-tables.py $(AGG)/geometry-splits.csv \
 		$(AGG)/geometry-triple-compare-current.csv $(AGG)/geometry-power.csv $(GEOMETRY)
+	@mkdir -p $(TABLES)
 	python3 $(AN)/tables/geometry-tables.py > $@.tmp && mv $@.tmp $@

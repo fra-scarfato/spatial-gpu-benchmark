@@ -49,7 +49,7 @@ def ruler(top):
 def curves(name):
     """Each target's sensitivity points (level, p99 slowdown, median slowdown) from stress.py's CSV."""
     c = {}
-    for r in csv.DictReader(open(os.path.join(AGG, "stress-sensitivity-%s.csv" % name))):
+    for r in csv.DictReader(open(os.path.join(A.FROZEN_DIR, "stress-sensitivity-%s.csv" % name))):
         c.setdefault(r["target"], []).append((float(r["level"]), float(r["slowdown_p99"]), float(r["slowdown_median"])))
     return {t: sorted(v) for t, v in c.items()}
 

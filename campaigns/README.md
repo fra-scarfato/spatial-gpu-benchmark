@@ -49,9 +49,9 @@ make -n tables     # what is out of date, without running it
 ```
 
 The rules are at the end of the repository's `Makefile`, one per analysis step, each naming what it
-reads. The tables land in `$DATA/bench/aggregate/tables-{stress,ensemble,geometry}.tex`, one block
+reads. The tables land in `$DATA/bench/tables/{stress,ensemble,geometry}.tex`, one block
 per `stress-model.tex` label, ready to paste; the prose numbers follow each block as comments.
 
 The validation predictions are frozen by `stress.py predict smoothnew`, `infwin-model.py new-predict`
-and `counter-model.py new-predict`, before the pairs were read. They are inputs of
-`make`, never targets: re-running them after a change of model overwrites the frozen files, which is a decision to record, not a routine step.
+and `counter-model.py new-predict`, before the pairs were read. They live in `$DATA/bench/frozen/`,
+hashed in `analysis/frozen.sha256` (`make check`), and are inputs of `make`, never targets: re-running them after a change of model overwrites the frozen files, which is a decision to record, not a routine step.

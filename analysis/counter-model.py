@@ -174,8 +174,8 @@ def checks(prof, rows):
               % (net, m["dram_mb"], m["D"], float(g["mb_per_inference"]), float(g["gb_s_run_average"])))
 
 
-def write(name, rows):
-    path = os.path.join(AGG, name)
+def write(name, rows, where=None):
+    path = os.path.join(where or AGG, name)
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
@@ -241,10 +241,10 @@ def new(cmd):
         for v, X in VARIANTS.items():
             write("stress-predictions-counters-new-%s.csv" % v, [dict(
                 target=t, corunner=c, **{"pred_" + q: round(predict(t, c, prof, X, coef[(v, q)]), 4) for q in ("p99", "median")})
-                for t in prof for c in prof if t != c])
+                for t in prof for c in prof if t != c], A.FROZEN_DIR)
         return
     for v in VARIANTS:
-        path = os.path.join(AGG, "stress-predictions-counters-new-%s.csv" % v)
+        path = os.path.join(A.FROZEN_DIR, "stress-predictions-counters-new-%s.csv" % v)
         if not os.path.exists(path):
             raise SystemExit("counter-model.py: run new-predict first; the predictions must exist before the pairs are read")
         rows = []

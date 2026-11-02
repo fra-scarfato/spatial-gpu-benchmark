@@ -8,6 +8,7 @@ os.chdir(os.path.join(os.environ.get("DATA", "/mnt/nvme/f.scarfato"), "bench"))
 
 REP = "stress-reporter-onoff"
 AGG = "aggregate"
+FROZEN = "frozen"
 
 def windows(cfg):
     runs = []
@@ -32,7 +33,7 @@ for c in CFGS:
 
 # 2. The smooth scale for single windows: window median per level -> GB/s. Each window of a network
 #    is placed on it; the time average of these is the stress the network applies on average.
-cal = {r["config"]: r for r in csv.DictReader(open(f"{AGG}/stress-calibration-smooth88.csv"))}
+cal = {r["config"]: r for r in csv.DictReader(open(f"{FROZEN}/stress-calibration-smooth88.csv"))}
 lv = [float(cal[c]["level"]) for c in ["spin", "smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]]
 med = [float(cal[c]["median"]) for c in ["spin", "smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]]
 p99 = [float(cal[c]["p99"]) for c in ["spin", "smooth-D025", "smooth-D050", "smooth-D075", "smooth-D100"]]
@@ -57,7 +58,7 @@ for c in CFGS[5:]:
 # 3. The stress each target actually felt: its measured p99 slowdown inverted on its own smooth
 #    sensitivity curve, against what the probe said.
 sens = {}
-for r in csv.DictReader(open(f"{AGG}/stress-sensitivity-smooth88.csv")):
+for r in csv.DictReader(open(f"{FROZEN}/stress-sensitivity-smooth88.csv")):
     sens.setdefault(r["target"], []).append((float(r["level"]), float(r["slowdown_p99"]), float(r["slowdown_median"])))
 print("\n3. felt stress (GB/s): measured slowdown inverted on the target's smooth curve")
 for r in csv.DictReader(open(f"{AGG}/stress-comparison-smooth88.csv")):
