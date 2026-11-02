@@ -1,46 +1,43 @@
 # The choice of the stressor
 
-Which synthetic stressor gives a probe scale and sensitivity curves that predict the twelve pairs:
-ON/OFF SAXPY (400 ms periods), uniform SAXPY (short pulses, the same mean bandwidth), and the smooth
-stressor (100 us periods), each next to the probe and next to the four targets, then the twelve 8+8
-pairs as ground truth; and the peak test (duty 10 %, peaks of 0.01-3 ms), which shows that the
-target's p99 responds to the stress over one inference. Thesis: `sec:stress-stressor`
-(`tab:stress-scale` to `tab:stress-peak`).
+Which synthetic stressor gives a probe scale and sensitivity curves that predict the slowdown of a
+network next to another: ON/OFF SAXPY (400 ms periods), uniform SAXPY (short pulses at the same mean
+bandwidth) and the smooth stressor (100 us periods), each read by the probe and run next to the four
+targets; the twelve pairs of the four networks on 8+8 SMs as ground truth; and the peak test (duty
+10 %, peaks of 0.01-3 ms), in which the target's p99 responds to the stress over one inference.
+Thesis: `sec:stress-stressor` (`tab:stress-scale` to `tab:stress-peak`).
 
-## The queues, in the order they ran
+## Commands
 
-| Date | Script | What it ran |
-|---|---|---|
-| 10-10 | `onoff-stressor-smoke-test.sh` | ON/OFF stressor smoke tests |
-| 10-10 | `onoff-uniform-bandwidth-match.sh` | ON/OFF, uniform and Steady settings matched in mean bandwidth |
-| 10-10 | `onoff-uniform-bandwidth-match-b.sh` | The same matching, for given argument lists |
-| 10-10 | `onoff-uniform-stressors.sh` | stress-onoff (exp23): the ON/OFF and uniform stressors next to the four targets |
-| 10-11 | `onoff-uniform-models.sh` | Probe calibration-onoff and networks; `stress.py onoff`, `uniform` |
-| 10-11 | `pairs-8-plus-8.sh` | The 8+8 configuration: probe networks-8sm; stress-validation-8 (exp24, the twelve pairs); `stress.py onoff88`, `uniform88` |
-| 10-11 | `spin-zero-rows.sh` | The spin rows (the zero of each scale) of stress-onoff |
-| 10-11 | `smooth-stressor-tuning.sh` | The smooth stressor's settings |
-| 10-11 | `smooth-stressor.sh` | The smooth stressor's curves (stress-onoff smooth-D); `stress.py smooth88` |
-| 10-12 | `peak-test-tuning.sh` | The peak test's settings |
-| 10-12 | `peak-test.sh` | The peak test (stress-onoff peak-T) |
+```sh
+# 1. The probe next to every stressor and next to each network, in one boot (about 1.5 h)
+export LAYOUT=target OUTROOT=$DATA/bench/stress-reporter-onoff
+./measure/reporter.sh calibration-onoff
+./measure/reporter.sh networks-8sm
+unset LAYOUT OUTROOT
 
-## Running it
+# 2. Each target next to every stressor, including spin (the zero) and the peak test (about 4 h)
+./measure/sweep.sh --exp stress-onoff --static-chunks 8
 
-Copy a queue to `$DATA/scratch/` and start it with `nohup bash <name>.sh > <name>.log 2>&1 &`;
-the checks before it, and what to change on another board, are in [`../README.md`](../README.md).
+# 3. Freeze the predictions of each stressor's model, before the pairs are measured
+for g in onoff88 uniform88 smooth88 smoothx88; do python3 analysis/stress.py predict $g; done
 
-The tuning and matching queues found the stressors' settings on this board (period, duty, pulse
-size); the settings they found are the arms of stress-onoff in `measure/lib/matrix.sh`.
+# 4. The twelve pairs, each network on 8 SMs (about 40 min)
+./measure/sweep.sh --exp stress-validation-8 --static-chunks 8
 
-## Outputs
+# 5. The tables
+make tables
+```
 
-- Reporter sets `$DATA/bench/stress-reporter-onoff/`; families stress-onoff (exp23: the stressors,
-  the spin zero, smooth-D, peak-T) and stress-validation-8 (exp24: the twelve pairs).
-- Models: `python3 analysis/stress.py predict <geometry>` (onoff88, uniform88, smooth88, smoothx88)
-  writes the frozen predictions in `$DATA/bench/frozen/`, before the pairs are read; `compare` scores
-  them. `make tables` re-runs the comparisons and `analysis/tables/stress-tables.py`.
-- The twelve pairs are also the development set of [`../models/`](../models/).
+`LAYOUT=target` puts the probe on the target's partition, the stressor or the network on the other 8
+SMs. The stressors' settings are the arms of stress-onoff in `measure/lib/matrix.sh` and the
+configurations of `calibration-onoff` in `measure/reporter.sh`.
 
-## On another board
+## What it writes
 
-The scale and the curves must be measured in one session, and the probe's floor drifts between
-sessions, so never reuse a calibration across boots or boards.
+- `$DATA/bench/stress-reporter-onoff/`: the probe's readings. `$DATA/bench/stress-onoff/` and
+  `$DATA/bench/stress-validation-8/`: the targets.
+- `$DATA/bench/frozen/stress-{calibration,corunners,sensitivity,predictions}-<model>.csv`: each
+  model, frozen by `stress.py predict`.
+- `$DATA/bench/tables/stress.tex`: this part's tables; the twelve pairs are also the development set
+  of [`../models/`](../models/).

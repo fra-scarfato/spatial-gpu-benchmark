@@ -23,21 +23,65 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 
 ## Requirements
 
-- Jetson AGX Orin, JetPack 7.2: CUDA 13.2 (with `nvcc`), TensorRT 10.16, cuBLAS, OpenCV 4
-- GPU and CPU clocks locked with `sudo jetson_clocks`, which needs repeating after every boot
-- Python 3 with the packages of `requirements.txt` (numpy, pandas), at the versions the thesis used
-- Nsight Systems (`nsys`) for the profiled runs, and root for the DRAM counter sets
-- ONNX models and ImageNet validation images under `$DATA`, default `/mnt/nvme/f.scarfato`
-  (see [Data](#data))
+- A Jetson AGX Orin 64 GB (module P3701-0005) with JetPack 7.2: L4T R39.2, CUDA 13.2 with `nvcc`,
+  TensorRT 10.16 (`trtexec`), cuBLAS, OpenCV 4. Every measurement records these versions, the
+  commit and the binaries' hashes in `$DATA/bench/_manifests/`.
+- The clocks locked with `sudo jetson_clocks` after every boot (GPU 1300.5 MHz, memory 3199 MHz),
+  and the GPU governor `performance`. The measuring scripts refuse to run otherwise.
+- Python 3 with `pip install -r requirements.txt` (numpy and pandas, pinned).
+- Nsight Systems (`nsys`) and Nsight Compute (`ncu`) for the profiled runs, and root for the DRAM
+  counters and `ncu`.
+- About 30 GB under `$DATA` (default `/mnt/nvme/f.scarfato`; `export DATA=<path>` elsewhere).
 
-## Quick start
+## Models and images
+
+Six ONNX models, under `$DATA/models/`. `models.sha256` holds their checksums:
+`cd $DATA/models && sha256sum -c <repo>/models.sha256`.
+
+| Network | File under `$DATA/models/` | Source |
+|---|---|---|
+| MobileNet V2 | `mobilenetv2-12/mobilenetv2-12.onnx` | ONNX Model Zoo, `validated/vision/classification/mobilenet/model/` |
+| ResNet-50 v2 | `resnet50-v2-7/resnet50-v2-7.onnx` | ONNX Model Zoo, `validated/vision/classification/resnet/model/` |
+| Inception v3 | `inception_v3-onnx-float/` (`inception_v3.onnx` and its weights, `inception_v3.data`) | Qualcomm AI Hub, release v0.62.0: `https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/inception_v3/releases/v0.62.0/inception_v3-onnx-float.zip` |
+| RetinaNet | `retinanet-9/retinanet-9.onnx` | ONNX Model Zoo, `validated/vision/object_detection_segmentation/retinanet/model/` |
+| EfficientNet-B0 | `efficientnet_b0/efficientnet_b0_Opset17.onnx` | ONNX Model Zoo, `Computer_Vision/efficientnet_b0_Opset17_timm/`, commit `69d6901` |
+| ViT-B/16 | `vit-base-patch16-224/vit-base-patch16-224.onnx` | `google/vit-base-patch16-224` (Hugging Face), exported to ONNX with PyTorch 2.7.1 |
+
+The ONNX Model Zoo is `https://github.com/onnx/models` (the files are in Git LFS).
+
+The images are the ImageNet (ILSVRC2012) validation set, from image-net.org, as
+`$DATA/dataset/imagenet-1k/ILSVRC2012_val_*.JPEG`. Every measurement uses the first 32 files in
+sorted order; the INT8 calibration uses files 1000-1499, so no measured input is a calibration input.
+
+## Build
 
 ```sh
-make                          # builds ./runner
-make -C probes        # builds the probes (device-probe, corunner, ...)
-make -f engines.mk            # builds every TensorRT engine from its ONNX file
-sudo jetson_clocks
+make                                          # the runner
+make -C probes                                # the probes: the co-runner, gpu-latency, device-probe, ...
+make -f engines.mk                            # every TensorRT engine, FP16 and INT8, from the ONNX files
+source measure/lib/guards.sh; pin_binaries    # record this build's binary hashes
+```
 
+`nvcc` builds are not byte-reproducible, so `pin_binaries` records the hashes of this build
+(`probes/PINNED-<host>.sha256`), and every measuring script refuses to run if a binary changes.
+
+## Reproducing the thesis
+
+1. **Measure.** [`experiments/README.md`](experiments/README.md) lists the parts of the thesis, the
+   order between them and, in each part's folder, its commands. All parts take about a day and a
+   half of GPU time.
+2. **Tables.** `make tables` writes every thesis table from the data into `$DATA/bench/tables/`:
+   `results.tex` (the first chapter, also one file per table under `results/`), `stress.tex`,
+   `ensemble.tex` and `geometry.tex` (the stress chapter) and `history.tex` (the appendix), each
+   table headed by its `\label`. It re-runs only what is out of date; `make -n tables` lists it.
+3. **Check.** `make check` runs the analysis self-tests and verifies that the predictions frozen
+   before their pairs were measured are the thesis's.
+
+With a copy of the raw data under `$DATA`, step 2 alone rebuilds every table, with no board.
+
+## A single run by hand
+
+```sh
 ./runner --dataset $DATA/dataset/imagenet-1k \
          --net $DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine:50:mobilenet \
          --allocation greenctx --submit-threads 1 --fixed 32 \
@@ -55,51 +99,8 @@ gpu compute (ms)          40839      0.6748      0.6747      0.0023  ...      0.
 Throughput (whole loop): 1361.3 inferences/s
 ```
 
-`./runner --help` lists every option. A plain `./runner` call has **no** busy-board guard; the
-scripts below run every measurement behind one.
-
-## Reproducing the results
-
-`pipeline.py` is the single entry point. It runs the stages in order (engines, measure, reduce,
-tables, overview) and stops at the first failure:
-
-```sh
-./pipeline.py                               # interactive: what is measured, then what to run
-./pipeline.py section                       # every family the results section uses
-./pipeline.py mem --runs 3                  # one group, fewer replicates
-./pipeline.py all --stage reduce,tables     # regenerate the tables, measure nothing
-./pipeline.py section --dry-run             # print every command instead of running it
-./pipeline.py --state                       # what is measured so far
-```
-
-The same stages by hand:
-
-```sh
-./measure/sweep.sh --exp section                       # measure -> $DATA/bench/<family>/<config>/
-python3 analysis/aggregate.py                           # reduce  -> $DATA/bench/aggregate/
-python3 analysis/tables/results-tables.py > tables.tex         # the results section's tables
-python3 analysis/tables/split-tables.py tables.tex --out tables/   # one file per table
-```
-
-Profiled runs (Nsight Systems kernel traces and DRAM counters) perturb what they measure, so they
-are kept out of the campaign and serve as evidence about mechanisms, not as latencies:
-
-```sh
-./measure/profile.sh traces                 # CUDA kernel traces (no root)
-sudo ./measure/profile.sh soc-budget        # DRAM counters: each network alone on 4 budgets
-sudo ./measure/profile.sh soc-itf           # DRAM counters: target alone and beside compute_gemm
-sudo ./measure/profile.sh footprint         # DRAM counters: compute_gemm's operand size
-sudo ./measure/profile.sh calibration       # DRAM counters during device-probe's copies
-python3 analysis/profiles.py                 # all of the above -> $DATA/profiles/derived/*.csv
-```
-
-These are also pipeline stages: `./pipeline.py mem --stage traces,profiles`.
-
-The stress chapter (the stress, counter and composition models, other partition sizes, two
-co-runners, energy) is measured by the queues in `experiments/`, one folder per part of the thesis,
-whose README maps folders to sections and keeps the order of what was run. `make tables` regenerates its numbers from the raw runs, re-running
-only what is out of date, and writes its tables as LaTeX rows (`stress-tables.py`,
-`ensemble-tables.py`, `geometry-tables.py` in `analysis/tables/`).
+`./runner --help` lists every option. A plain `./runner` call has **no** busy-GPU guard; the
+measuring scripts run every measurement behind one.
 
 ## Measurement protocol
 
@@ -118,8 +119,9 @@ printed as a table. Raw data never enters the repository (see [Data](#data)).
 
 ```
 README.md, Makefile         how to build and reproduce; `make` (the runner), `make check` (the
-                            self-tests), `make tables` (the stress chapter's numbers and tables)
-pipeline.py                 the results section's entry point: engines, measure, reduce, tables
+                            self-tests), `make tables` (every table of the thesis)
+models.sha256               the checksums of the six ONNX models
+pipeline.py                 the first chapter's driver: engines, measure, reduce, tables (`make tables`)
 engines.mk                  every TensorRT engine, rebuilt from its ONNX file
 requirements.txt            the Python packages, pinned
 src/, include/              the runner: options, inputs, statistics, SM allocation, the TensorRT
@@ -137,8 +139,8 @@ measure/                    everything that runs on the GPU, guarded
   lib/guards.sh               the checks before every run: clocks, a quiet GPU, pins, manifest
   lib/matrix.sh               every arm the campaign can run, one line each
   lib/mps.sh                  the MPS daemon and its static partitions
-experiments/                one folder per part of the thesis: its README (what, how, outputs) and
-                            the queues that measured it, as run; experiments/README.md is the map
+experiments/                one folder per part of the thesis: what it shows and the commands that
+                            measure it; experiments/README.md is the map and the order
 analysis/                   everything that reads the data, CPU only
   aggregate.py                raw runs -> bench/aggregate/<exp>.csv and summary.csv
   profiles.py                 profiled runs -> profiles/derived/*.csv
@@ -162,8 +164,8 @@ docs/                       DESIGN.md (design decisions and traps), MEASUREMENTS
 
 | Thesis | Generator | Run by |
 |---|---|---|
-| results section | `analysis/tables/results-tables.py` (+ `split-tables.py`) | `./pipeline.py --tables` |
-| appendix | `analysis/tables/appendix-tables.py` | `./pipeline.py --tables` |
+| results section | `analysis/tables/results-tables.py` (+ `split-tables.py`) | `make tables` |
+| appendix | `analysis/tables/appendix-tables.py` | `make tables` |
 | stress chapter: `tab:stress-scale` ... `tab:stress-compose` (11) | `analysis/tables/stress-tables.py` | `make tables` |
 | stress chapter: `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` (7) | `analysis/tables/ensemble-tables.py` | `make tables` |
 | stress chapter: `tab:stress-sizes*`, `tab:stress-triple*`, `tab:stress-energy*` (6) | `analysis/tables/geometry-tables.py` | `make tables` |
@@ -204,8 +206,8 @@ scratch/                         temporary files; nothing reads from it
 
 ## Caveats
 
-- The board is shared. Every scripted run checks the clocks, the GPU's other users and a sentinel
-  latency first, and a profiled run is also watched while it runs.
+- Every scripted run checks the clocks, the GPU's other users and a sentinel latency first, and a
+  profiled run is also watched while it runs.
 - TensorRT engines are not bit-reproducible across builds. Compare results within one build.
 - Profiled runs are single runs and are perturbed by the profiler. Only shapes, ratios and
   traffic are taken from them, never latencies.

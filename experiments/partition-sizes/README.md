@@ -1,37 +1,45 @@
 # Other partition sizes, two co-runners, power
 
-The counter model with the L2 input, frozen on the 8+8 pairs, tested unchanged on other splits
-(4+12, 6+10, 12+4, and 8+4) and with two co-runners (8+4+4, 24 triples), with the presence cost
-growing with the number of co-runners; and the power and energy per inference of each network,
-alone by size and together. Thesis: `sec:stress-sizes` (`tab:stress-sizes`, `tab:stress-sizes-sens`),
-`sec:stress-triple` (`tab:stress-triple`, `tab:stress-triple-where`), `sec:stress-energy`
-(`tab:stress-energy`, `tab:stress-energy-together`).
+The counter model with the L2 input, frozen on the 8+8 pairs, tested unchanged on other splits (4+12,
+6+10, 12+4 and 8+4 SMs) and with two co-runners (8+4+4, 24 triples), with the dispatch cost growing
+with the number of co-runners; and the power and the energy per inference of each network, alone by
+size and together. Thesis: `sec:stress-sizes`, `sec:stress-triple`, `sec:stress-energy`.
 
-## The queues, in the order they ran
+## Commands
 
-| Date | Script | What it ran |
-|---|---|---|
-| 10-13 | `dispatch-two-spins.sh` | dispatch-count (exp25): MobileNet next to two spins on 4+4 |
-| 10-28 | `partition-sizes-and-two-corunners.sh` | Partition sizes and two co-runners: stress-split-412/-610/-124, stress-sizes, stress-triple, power-check (exp28-34); `geometry.py` |
+```sh
+# 1. Each network's DRAM traffic alone at 4, 6, 10 and 12 SMs (root)
+sudo ./measure/profile.sh soc-mps-sizes
+python3 analysis/profiles.py
 
-## Running it
+# 2. MobileNet next to two spins on 4+4 SMs: the growth of the dispatch cost (a few minutes)
+./measure/sweep.sh --exp dispatch-count --static-chunks 8
 
-Copy a queue to `$DATA/scratch/` and start it with `nohup bash <name>.sh > <name>.log 2>&1 &`;
-the checks before it, and what to change on another board, are in [`../README.md`](../README.md).
+# 3. Each network alone at every size, and the pairs on every split, with power (about 7.5 h)
+for f in stress-sizes stress-split-412 stress-split-610 stress-split-124; do
+    POWER=1 ./measure/sweep.sh --exp $f --static-chunks 8
+done
 
-`dispatch-two-spins.sh` measures MobileNet next to two spins on 4+4; against one spin (l2-presence,
-exp19, in [`../partitioning-mechanisms/`](../partitioning-mechanisms/)) it gives the growth of the
-presence cost with a second co-runner (g in `analysis/geometry.py`), which the triple model uses.
-The root profiles of the new sizes (`profile.sh soc-mps-sizes`) are the user's step.
+# 4. Freeze the 8+4 and 8+4+4 predictions; this refuses once the triples exist
+python3 analysis/geometry.py triple-predict
 
-## Outputs
+# 5. The triples, with power (about 4 h)
+POWER=1 ./measure/sweep.sh --exp stress-triple --static-chunks 8
 
-Families stress-split-412, -610, -124, stress-sizes, stress-triple and power-check (exp28-34) and
-dispatch-count (exp25). `analysis/geometry.py` (splits, triple-current, power) writes
-`$DATA/bench/aggregate/geometry-*.csv`; `make tables` prints the six tables (`geometry-tables.py`).
-The triple predictions are frozen (`$DATA/bench/frozen/geometry-triple-predictions.csv`).
+# 6. The tables
+make tables
+```
 
-## On another board
+`POWER=1` samples the board's three INA3221 power rails every 200 ms during each run. The splits are
+MPS static shares of the 16 SMs, which round to 2-SM chunks: 25, 37 and 75 % give 4, 6 and 12 SMs.
+The dispatch growth also uses MobileNet next to one spin, from l2-presence in
+[`../partitioning-mechanisms/`](../partitioning-mechanisms/).
 
-The splits are MPS static shares of 16 SMs, which round to 2-SM chunks: 25, 37 and 75 % give 4, 6
-and 12 SMs (`measure/lib/matrix.sh`, the stress-split arms).
+## What it writes
+
+- `$DATA/profiles/soc-mps-sizes/`, reduced to `$DATA/profiles/derived/dram.csv`.
+- `$DATA/bench/` families dispatch-count, stress-sizes, stress-split-412, -610, -124, stress-triple,
+  each run with its `_power.log`.
+- `$DATA/bench/frozen/geometry-triple-predictions.csv`; `analysis/geometry.py` (run by `make
+  tables`) writes `$DATA/bench/aggregate/geometry-*.csv`, and the tables are in
+  `$DATA/bench/tables/geometry.tex`.
