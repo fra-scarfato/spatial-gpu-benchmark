@@ -390,6 +390,45 @@ counters, which checks the two instruments against each other. Output:
 `$DATA/profiles/ncu/nets-<net>.csv`. The first run (2026-10-07, in `profiles/ncu/nets/`) profiled
 kernels inside the warm-up.
 
+### Names: the geometries of `stress.py`, and code against thesis
+
+A geometry names the stressor, how the reporter reads, and where it sits. Steady is the
+bandwidth-based SAXPY (`--level`), Burst the time-based one (`--duty`); Windowed is the reporter
+with `WINDOW=512`, Plain with `WINDOW=0`; Separate is `LAYOUT=chunk`, Symmetric `LAYOUT=target`.
+
+| geometry | stressor | reporter | layout | families |
+|---|---|---|---|---|
+| `8sm` | Steady on 8 SMs | Windowed | Separate | exp13 |
+| `4sm` | Steady on 4 SMs | Windowed | Separate | exp15 |
+| `8smt` | Steady on 8 SMs | Windowed | Symmetric | exp13 |
+| `tb` | Burst | Plain | Symmetric | exp17 |
+| `tbw` | Burst | Windowed | Symmetric | exp17 |
+| `tbsw` | Burst, scrambled in 2 MB windows | Windowed | Symmetric | exp18 |
+| `onoff`, `uniform` | ON/OFF over 400 ms; uniform 32 MB units over ~3 ms | Windowed | Symmetric | exp23 |
+| `onoff88`, `uniform88` | the same | Windowed, networks on 8 SMs | Symmetric | exp23, pairs exp24 |
+| `smooth88` | Smooth: 100 us periods, pulses of ~3 us (the thesis's stress model) | Windowed, networks on 8 SMs | Symmetric | exp23, pairs exp24 |
+| `smoothx88` | Smooth, topped by the plain kernel back to back | the same | Symmetric | exp23, pairs exp24 |
+| `smoothnew` | `smooth88` on the validation networks | the same | Symmetric | exp26, pairs exp27 |
+
+One term per concept; the code's term where it differs from the thesis's:
+
+| code | thesis | meaning |
+|---|---|---|
+| reporter (`gpu-latency`) | probe | the pointer chase that reads the memory latency |
+| victim (`geometry.py` columns) | target | the network whose slowdown is measured or predicted |
+| co-runner | co-runner | every other network or stressor on the GPU |
+| level (`--level`) | level | achieved bandwidth over the same kernel's full-speed bandwidth on the same partition |
+| duty (`--duty`) | duty | the fraction of each period the time-based SAXPY runs |
+| `L_eq` | equivalent stress | the stressor's level (or GB/s) whose probe reading equals the reading next to a network |
+| `S(L)` | sensitivity | the target's slowdown next to the stressor at level L, over the target alone |
+| presence, `PRESENCE_US`, `p_t` | dispatch term | kernels per inference x 1.05 us over the target's median latency alone |
+| `L`, `L_t`, `L_c` (`counter-model.py`) | L2 bandwidth | ncu L2 MB per inference x inferences per second |
+| `g` | growth of the dispatch term | two spin co-runners over one (1.60 on MobileNet) |
+| `rho`, `f` | composition factor | the two-SAXPY ratio of `compose.py`; `f`, a constant on the summed load |
+
+"Pressure" and "bubble" (Bubble-Up's word for a stressor) are not used: the terms are stress and
+stressor.
+
 ## 8. Limits, all of which the text states where they apply
 
 - A profiled run is perturbed by the profiler. Its latencies (MobileNet alone: 0.69 ms profiled,
