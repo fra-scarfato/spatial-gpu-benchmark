@@ -153,6 +153,7 @@ $(TABLES)/stress.tex: $(ANALYSIS)/tables/stress-tables.py $(ANALYSIS)/inference-
 	python3 $(ANALYSIS)/tables/stress-tables.py > $@.tmp && mv $@.tmp $@
 
 $(TABLES)/ensemble.tex: $(ANALYSIS)/tables/ensemble-tables.py $(ANALYSIS)/ensemble.py \
+		$(FROZEN)/stress-sensitivity-smooth88.csv $(FROZEN)/stress-sensitivity-smoothnew.csv \
 		$(call comparisons,smooth88 infwin88p smoothnew infwinnewp counters-new-l2) $(COUNTER)
 	@mkdir -p $(TABLES)
 	python3 $(ANALYSIS)/tables/ensemble-tables.py > $@.tmp && mv $@.tmp $@

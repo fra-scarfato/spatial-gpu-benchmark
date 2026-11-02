@@ -10,6 +10,7 @@ and then this, and paste. It writes nothing. Each block is headed by its label i
 
   tab:models-dev         the twelve 8+8 pairs: measured, each model's raw prediction and error
   tab:models-val         the thirty pairs with the new networks, the same
+  tab:models-baselines   the two baselines (ensemble.constant, bytes_only) and the three models, scores only
   tab:bound-dev          the twelve pairs: each model corrected, and their maximum
   tab:bound-val          the thirty pairs: the same, with the corrections frozen on the twelve
   tab:stress-margin      the corrected maximum of the three plus a margin of 0-5 points
@@ -109,6 +110,27 @@ def table(label, s, pred, cols):
 
 table("tab:models-dev", "dev", raw["dev"], [raw["dev"][m] for m in THREE])
 table("tab:models-val", "new", raw["new"], [raw["new"][m] for m in THREE])
+head("tab:models-baselines (p99, points: mean |e|, max |e|, mean e, under; twelve pairs, then thirty)")
+keys = {s: [p[:2] for p in pairs[s]] for s in pairs}
+base = {"dev": {"Constant": E.constant(rows, QI), "Bytes only": E.bytes_only(keys["dev"], prof, E.curves("smooth88"))},
+        "new": {"Constant": {k: np.mean([r[QI] for r in rows]) for k in keys["new"]},
+                "Bytes only": E.bytes_only(keys["new"], dict(prof, **C.profile(data, C.ENG_NEW, "exp26")),
+                                           E.curves("smoothnew"))}}
+for lab, m in (("Constant", "Constant"), ("Bytes only", "Bytes only"), (None, None),
+               ("Smooth", "Smooth"), ("Temporal", "Temporal"), ("Counters (L2)", "L2")):
+    if lab is None:
+        print("\\midrule")
+        continue
+    cells = [lab]
+    for s in ("dev", "new"):
+        e = errs((base if m in base[s] else raw)[s][m], s)
+        cells += ["%.1f" % np.abs(e).mean(), "%.1f" % np.abs(e).max(), pts(e.mean()), "%d" % (e < 0).sum()]
+    print(" & ".join(cells) + " \\\\")
+for s in ("dev", "new"):
+    e = errs(base[s]["Bytes only"], s)
+    print("%% bytes only, %s: largest errors " % s + ", ".join("%s+%s %+.1f" % (t, c, x) for x, (t, c, _) in
+                                                               sorted(zip(e, pairs[s]), key=lambda z: -abs(z[0]))[:4]))
+
 table("tab:bound-dev", "dev", cor["dev"], [cor["dev"][m] for m in THREE] + [with_max(cor["dev"], THREE)])
 table("tab:bound-val", "new", cor["new"], [cor["new"][m] for m in THREE] + [with_max(cor["new"], THREE)])
 

@@ -16,6 +16,10 @@ The models, all on the 12 pairs of 8 + 8 SMs (exp24), p99 slowdown:
   DRAM, DRAM+L2, L2   the counter model's variants (counter-model.py: dram, ref, l2)
 Each ensemble is max(Smooth, Temporal, one counter variant).
 
+Two baselines answer "better than what?" (constant(), bytes_only()); they enter no ensemble:
+  Constant     always the mean measured slowdown, learnt with the counter model's folds
+  Bytes only   Smooth with the probe replaced by the co-runner's DRAM GB/s alone, nothing fitted
+
 Two versions of every ensemble:
   raw        the predictions as each model gives them;
   corrected  each model shifted by minus its mean error (bias removal, no safety margin), learnt
@@ -70,6 +74,29 @@ def correct(raw, rows, qi):
     """Bias removal of a model with no fit on the pairs: each pair shifted by minus the mean error of
     the pairs that don't contain its target (the fold of counter-model.loo)."""
     return {k: p - np.mean([raw[r[:2]] - r[qi] for r in rows if k[0] not in r[:2]]) for k, p in raw.items()}
+
+
+def constant(rows, qi):
+    """Baseline: every pair predicted at the mean measured slowdown. Learnt with the counter model's
+    folds, so the pairs of a target are predicted from the mean of the 6 pairs without it; frozen for
+    new networks, it is the mean of all 12."""
+    return {r[:2]: np.mean([x[qi] for x in rows if r[0] not in x[:2]]) for r in rows}
+
+
+def curves(geom):
+    """The p99 sensitivity curves stress.py predict froze for one geometry: {target: [(GB/s, slowdown)]}."""
+    out = {}
+    for r in csv.DictReader(open(os.path.join(A.FROZEN_DIR, "stress-sensitivity-%s.csv" % geom))):
+        out.setdefault(r["target"], []).append((float(r["level"]), float(r["slowdown_p99"])))
+    return {t: sorted(v) for t, v in out.items()}
+
+
+def bytes_only(keys, prof, curve):
+    """Baseline (p99): the target's smooth curve read at the co-runner's own DRAM GB/s alone (D), in
+    place of the equivalent stress the probe reads. Both axes are bytes per second: the curve's level
+    is the stressor's own byte count, D the GPU's DRAM counters calibrated on copies (MEASUREMENTS.md).
+    Clamped at the curve's ends, as the equivalent stress is. Nothing is fitted on the pairs."""
+    return {(t, c): float(np.interp(prof[c]["D"], *zip(*curve[t]))) for t, c in keys}
 
 
 def counter(rows, prof, X, qi):
@@ -296,6 +323,13 @@ def selftest():
     pred["x"][("a", "b")] = 2.0
     p, who = ensemble(pred, ["x", "y"])
     assert who[("a", "b")] == "x" and p[("a", "b")] == 2.0 and who[("b", "a")] == "y" and p[("b", "a")] == 1.5
+    assert all(abs(v - 1.2) < 1e-12 for v in constant(rows, 2).values())
+    spiked = [(r[0], r[1], 2.2 if r[:2] == ("a", "b") else 1.2, 1.1) for r in rows]
+    k = constant(spiked, 2)
+    assert abs(k[("a", "b")] - 1.2) < 1e-12 and k[("c", "d")] > 1.2   # its own fold never saw it
+    curve = {"a": [(0.0, 1.1), (100.0, 1.5)]}
+    b = bytes_only([("a", "b"), ("a", "c")], {"b": {"D": 50.0}, "c": {"D": 200.0}}, curve)
+    assert abs(b[("a", "b")] - 1.3) < 1e-12 and b[("a", "c")] == 1.5   # past the curve: clamped
     assert [block(*k) for k in (("resnetint8", "mobilenetint8"), ("vit", "resnet"), ("mobilenet", "efficientnet"),
                                 ("efficientnet", "vit"))] == ["INT8", "ViT", "EfficientNet", "EfficientNet+ViT"]
     print("  selftest passed")
