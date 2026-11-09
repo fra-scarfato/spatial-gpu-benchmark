@@ -139,13 +139,21 @@ mps_create_partitions() {  # $1 = "50" | "50:25" | "50:25:25": the clients' shar
 mps_remove_partitions() {
     [ "$MPS_MODE" = static ] || return 0
     [ "${#PART_LIST[@]}" -gt 0 ] || return 0
-    # Removal fails while clients are still attached ("Partition %s in use"), but the daemon is
-    # torn down immediately after, so this is best effort.
-    local part
+    # A partition whose id starts with "/" cannot be removed: sm_partition rm answers "Failed to
+    # remove partition" whatever form the id takes (CUDA 13.2 MPS, board 1, 2026-11-09). The id is the
+    # base64 of the partition's chunk mask, so this hits a partition holding chunks 2-7, such as the
+    # 14 SMs of 2+14 (mask 0xfe). Left in place, it would stop the next job from creating its own
+    # partitions, so any failed removal stops the daemon and the next job starts a fresh one. The
+    # chunk placement stays MPS's own; only the daemon is new.
+    local part failed=0
     for part in "${PART_LIST[@]}"; do
-        mps_ctl "sm_partition rm $part" >/dev/null 2>&1 || true
+        mps_ctl "sm_partition rm $part" | grep -q " removed$" || failed=1
     done
     PART_LIST=(); PART_A=""; PART_B=""
+    if [ "$failed" = 1 ]; then
+        echo "[sweep] a partition could not be removed: restarting the MPS daemon"
+        mps_stop
+    fi
 }
 
 cleanup() { mps_stop; }
