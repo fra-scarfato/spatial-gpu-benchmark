@@ -29,7 +29,7 @@ POWER=1 ./measure/sweep.sh --exp stress-triple --static-chunks 8
 # 6. The tables
 make tables
 
-# 7. The final check of the normalized model on new splits (about 7 h): each network alone on 2, 6, 8
+# 7. The final check of the normalized model on new splits (about 10 h): each network alone on 2, 6, 8
 #    and 14 SMs, then the frozen predictions (this refuses once a check split has a row), then 2+14,
 #    14+2 and 6+6
 POWER=1 ./measure/sweep.sh --exp stress-sizes-check --static-chunks 8
