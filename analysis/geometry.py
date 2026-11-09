@@ -7,6 +7,8 @@
     python3 analysis/geometry.py triple-compare  score the frozen predictions on the measured runs
     python3 analysis/geometry.py triple-current  the same scoring, with the current model's predictions
     python3 analysis/geometry.py power           power, completed inferences, energy per inference
+    python3 analysis/geometry.py check-predict   the final check: freeze the normalized model's predictions
+    python3 analysis/geometry.py check-compare   score them on 2+14, 14+2 and 6+6
     python3 analysis/geometry.py selftest
 
 The model is counter-model.py's L2 variant with its frozen p99 coefficients (counter-model-coeffs.csv):
@@ -33,6 +35,16 @@ frozen side by side (the user, 2026-10-28):
   rho_max1 the sum times max(1, rho): only the amplification at high load
 and the presence of two co-runners is g p_t, with g the growth from one spin to two on MobileNet
 (exp25 against exp19: +13.7 % against +8.6 % at the p99, g = 1.60), recomputed here from the data.
+
+The normalized model (the user, 2026-11-09) reads the target's sensitivity from its L2 GB/s per SM,
+scaled to the 8 SMs on which the coefficients were fitted:
+
+    s - p_t = (b0 + b1 (8/n) L_t) L_c,    n = the target's SMs
+
+On 8 SMs it is the model above. The form was chosen on the 4+12, 6+10 and 12+4 runs, so the final check
+tests it on splits never measured (2+14, 14+2, 6+6) in a new session: the inputs come only from that
+session's alone rows (stress-sizes-check, at 2, 6, 8 and 14 SMs) and check-predict freezes the
+predictions before any other row of the check exists. Generalization only: one co-runner, no f, no g.
 
 Every tenant is a victim (the user, 2026-10-28: admission checks each admitted network's p99, not only
 the newcomer's). The target is measured as always; each runner co-runner's per-inference rows are kept
@@ -80,7 +92,12 @@ SPLITS = {"exp28": ("412", 4, 12), "exp29": ("610", 6, 10), "exp30": ("124", 12,
 ALONE = {4: ("exp28", "-alone"), 6: ("exp29", "-alone"), 12: ("exp30", "-alone"),
          8: ("exp31", "-alone08"), 10: ("exp31", "-alone10")}
 TRIPLE = "exp32"
-FAMILY_DIR = {e: f for f, e in A.EXP_DIR.items() if e in ("exp28", "exp29", "exp30", "exp31", "exp32")}
+# The final check: its splits, its own alone rows (measured first, in the same session) and its frozen file.
+CHECK = {"exp36": ("214", 2, 14), "exp37": ("142", 14, 2), "exp38": ("66", 6, 6)}
+CHECK_ALONE = {n: ("exp35", "-alone%02d" % n) for n in (2, 6, 8, 14)}
+CHECK_FROZEN = os.path.join(A.FROZEN_DIR, "geometry-check-predictions.csv")
+FAMILY_DIR = {e: f for f, e in A.EXP_DIR.items()
+              if e in ("exp28", "exp29", "exp30", "exp31", "exp32", "exp35", "exp36", "exp37", "exp38")}
 FROZEN = os.path.join(A.FROZEN_DIR, "geometry-triple-predictions.csv")
 
 
@@ -103,18 +120,19 @@ def sudo_rows():
     return out
 
 
-def inputs(data):
+def inputs(data, alone=ALONE):
     """{net: {size: dict(thr, alone_ms, p, L_scaled, D_scaled, L_sudo, D_sudo)}} for every size whose
-    alone row exists. L and D at 8 SMs are the frozen profile's, so scaled equals frozen there."""
+    alone row exists; alone maps a size to the (family, suffix) of its alone rows (the final check
+    passes its own session's). L and D at 8 SMs are the frozen profile's, so scaled equals frozen there."""
     prof = dict(C.profile(data), **C.profile(data, {n: ENG[n] for n in NEW}, "exp26"))
     sudo = sudo_rows()
     out = {}
     for net in NETS:
         eng, kpi = ENG[net]
-        f8, s8 = ALONE[8]
+        f8, s8 = alone[8]
         thr8 = throughput(data, f8, net + s8, net)
         out[net] = {}
-        for n, (exp, suf) in sorted(ALONE.items()):
+        for n, (exp, suf) in sorted(alone.items()):
             thr = throughput(data, exp, net + suf, net)
             if thr is None or thr8 is None:
                 continue
@@ -122,7 +140,7 @@ def inputs(data):
             x = dict(thr=thr, alone_ms=ms, p=kpi * C.PRESENCE_US * 1e-3 / ms,
                      L_scaled=prof[net]["L"] * thr / thr8, D_scaled=prof[net]["D"] * thr / thr8,
                      L_sudo=None, D_sudo=None)
-            r = sudo.get((eng, SHARE[n]))
+            r = sudo.get((eng, SHARE.get(n)))     # no root profile at 2 or 14 SMs
             if r:
                 x["L_sudo"] = prof[net]["l2_mb"] * float(r["inf_per_s"]) / 1e3
                 x["D_sudo"] = float(r["gb_s_run_average"])
@@ -186,9 +204,9 @@ def slowdown(data, exp, cfg, net, alone_cfg):
     return m[0] / a[0] if m and a else None
 
 
-def alone_p99(data, net, n):
+def alone_p99(data, net, n, alone=ALONE):
     """The p99 of a network alone on n SMs (median over runs), from this campaign's alone rows."""
-    exp, suf = ALONE[n]
+    exp, suf = alone[n]
     a = A.aggr(data, exp, net + suf, net, "gpu_ms", "p99")
     return a[0] if a else None
 
@@ -257,8 +275,10 @@ def summary(label, errs):
     e = np.array(errs)
     if not len(e):
         return "  %-44s (no rows)" % label
-    return "  %-44s n %2d  mean |e| %4.1f  max |e| %4.1f  under %2d  worst %+5.1f  bias %+5.1f" % (
-        label, len(e), np.abs(e).mean(), np.abs(e).max(), (e < 0).sum(), min(e.min(), 0), e.mean())
+    u = e[e < 0]
+    return "  %-44s n %2d  mean |e| %4.1f  max |e| %4.1f  under %2d (mean %4.1f)  worst %+5.1f  bias %+5.1f" % (
+        label, len(e), np.abs(e).mean(), np.abs(e).max(), len(u), -u.mean() if len(u) else 0.0,
+        min(e.min(), 0), e.mean())
 
 
 def block(*nets):
@@ -375,19 +395,31 @@ def sha256(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
+def freeze(path, rows, head):
+    """rows to path (head first, then the other columns sorted) and its sha256 next to it."""
+    keys = head + sorted({k for r in rows for k in r} - set(head))
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=keys)
+        w.writeheader()
+        w.writerows(rows)
+    open(path + ".sha256", "w").write("%s  %s\n" % (sha256(path), os.path.basename(path)))
+    print("  frozen %d rows: %s, sha256 %s" % (len(rows), path, sha256(path)))
+
+
+def frozen_rows(path):
+    """The rows of a frozen file, after checking it against the sha256 written when it was frozen."""
+    want = open(path + ".sha256").read().split()[0]
+    if sha256(path) != want:
+        raise SystemExit("geometry.py: %s changed after it was frozen" % path)
+    print("  frozen predictions intact (sha256 %s...)" % want[:12])
+    return list(csv.DictReader(open(path)))
+
+
 def cmd_triple_predict():
     data = A.load(P.BENCH)
     if any(k[0] == TRIPLE and "+" in k[1] for k in data):
         raise SystemExit("geometry.py: stress-triple pairs exist already; the predictions must be frozen before them")
-    rows = triple_rows(data)
-    head = ["config", "victim", "victim_sms", "position", "g"]
-    keys = head + sorted({k for r in rows for k in r} - set(head))
-    with open(FROZEN, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=keys)
-        w.writeheader()
-        w.writerows(rows)
-    open(FROZEN + ".sha256", "w").write("%s  %s\n" % (sha256(FROZEN), os.path.basename(FROZEN)))
-    print("  frozen %d rows: %s, sha256 %s" % (len(rows), FROZEN, sha256(FROZEN)))
+    freeze(FROZEN, triple_rows(data), ["config", "victim", "victim_sms", "position", "g"])
 
 
 def cmd_triple_compare(current=False):
@@ -399,11 +431,7 @@ def cmd_triple_compare(current=False):
         preds = triple_rows(data)
         print("  current model's predictions (not frozen: presence %.2f us)" % C.PRESENCE_US)
     else:
-        want = open(FROZEN + ".sha256").read().split()[0]
-        if sha256(FROZEN) != want:
-            raise SystemExit("geometry.py: %s changed after it was frozen" % FROZEN)
-        print("  frozen predictions intact (sha256 %s...)" % want[:12])
-        preds = list(csv.DictReader(open(FROZEN)))
+        preds = frozen_rows(FROZEN)
     err, out = {}, []
     print("\n8 + 4 and 8 + 4 + 4: p99 slowdown of each tenant, measured and frozen predictions (error, points)")
     for p in preds:
@@ -446,6 +474,79 @@ def cmd_triple_compare(current=False):
         if sa and sb:
             print("  %-28s %.2f" % (r["config"], (r["measured"] - 1) / (sa + sb - 2)))
     write("geometry-triple-compare-current.csv" if current else "geometry-triple-compare.csv", out)
+
+
+# ------------------------------------------------------------------ final check
+
+def normalized(b, p_t, L_t, n, L_c):
+    """The normalized model's p99 slowdown of a target on n SMs: its L2 GB/s scaled to 8 SMs (per SM,
+    times 8) before the sensitivity is read. On 8 SMs it is predict() itself."""
+    return predict(b, p_t, 8.0 * L_t / n, L_c)
+
+
+def check_rows(data):
+    """Every tenant of every pair of the three check splits, and every target beside spin (the presence
+    term alone), with the normalized and the as-fitted prediction. Reads only the alone rows."""
+    inp, b = inputs(data, CHECK_ALONE), coefficients()
+    missing = [(t, n) for t in NETS for n in CHECK_ALONE if n not in inp[t]]
+    if missing:
+        raise SystemExit("geometry.py: alone rows missing for %s; run stress-sizes-check first" % missing)
+    rows = []
+    for exp, (name, nt, nc) in CHECK.items():
+        for t in NETS:
+            p = round(1 + inp[t][nt]["p"], 4)
+            rows.append(dict(split=name, config=t + "-spin", victim=t, victim_sms=nt, position="target",
+                             pred_normalized=p, pred_fitted=p))
+            for c in NETS:
+                if c == t:
+                    continue
+                for v, n, pos, ((o, m),) in victims(t + "+" + c, nt, nc):
+                    x, L_c = inp[v][n], inp[o][m]["L_scaled"]
+                    rows.append(dict(split=name, config=t + "+" + c, victim=v, victim_sms=n, position=pos,
+                                     pred_normalized=round(normalized(b, x["p"], x["L_scaled"], n, L_c), 4),
+                                     pred_fitted=round(predict(b, x["p"], x["L_scaled"], L_c), 4)))
+    return rows
+
+
+def cmd_check_predict():
+    data = A.load(P.BENCH)
+    if any(k[0] in CHECK for k in data):
+        raise SystemExit("geometry.py: rows of the check splits exist already; the predictions must be frozen before them")
+    freeze(CHECK_FROZEN, check_rows(data), ["split", "config", "victim", "victim_sms", "position"])
+
+
+def cmd_check_compare():
+    """Score the frozen predictions: each tenant's p99 against its network alone at its size, both from
+    the check's session. The spin rows score the presence term alone; the pairs both models."""
+    preds, data = frozen_rows(CHECK_FROZEN), A.load(P.BENCH)
+    exp_of = {name: exp for exp, (name, nt, nc) in CHECK.items()}
+    err, out = {}, []
+    for p in preds:
+        exp, cfg, v, n, pos = exp_of[p["split"]], p["config"], p["victim"], int(p["victim_sms"]), p["position"]
+        if pos == "target":
+            m = A.aggr(data, exp, cfg, v, "gpu_ms", "p99")
+            m = m[0] if m else None
+        else:
+            m = corunner_p99(os.path.join(P.BENCH, FAMILY_DIR[exp], cfg), int(pos[2:]))
+        a = alone_p99(data, v, n, CHECK_ALONE)
+        if not (m and a):
+            continue
+        s = m / a
+        split = "%d+%d" % CHECK[exp][1:]
+        row = dict(p, measured=round(s, 4))
+        for k in ("normalized", "fitted"):
+            row["err_" + k] = round((float(p["pred_" + k]) - s) * 100, 2)
+        if cfg.endswith("-spin"):
+            err.setdefault((split, "dispatch (spin)"), []).append(row["err_normalized"])
+        else:
+            for k in ("normalized", "fitted"):
+                err.setdefault((split, pos if pos == "target" else "co-runner", k,
+                                block(*cfg.split("+"))), []).append(row["err_" + k])
+        out.append(row)
+    print("\nfinal check: predicted minus measured p99 slowdown (points)")
+    for k in sorted(err):
+        print(summary(" / ".join(k), err[k]))
+    write("geometry-check.csv", out)
 
 
 # ------------------------------------------------------------------ power
@@ -550,11 +651,15 @@ def selftest():
         open(os.path.join(d, "r1_co1.csv"), "w").write(hdr + "\n".join(rows) + "\n")
         inside = [1.0 + i / 1000 for i in range(500) if 10 + i * 0.01 + 0.005 <= 20]
         assert abs(corunner_p99(d, 1) - np.percentile(inside, 99)) < 1e-12
+    assert normalized(b, 0.05, 100, 8, 50) == predict(b, 0.05, 100, 50)                    # 8 SMs: unchanged
+    assert abs(normalized(b, 0.05, 50, 4, 50) - predict(b, 0.05, 100, 50)) < 1e-12         # per SM, times 8
+    assert sorted(CHECK_ALONE) == [2, 6, 8, 14] and CHECK_ALONE[2] == ("exp35", "-alone02")
     print("  selftest passed")
 
 
 if __name__ == "__main__":
     {"inputs": cmd_inputs, "splits": cmd_splits, "triple-predict": cmd_triple_predict,
-     "triple-compare": cmd_triple_compare,
+     "triple-compare": cmd_triple_compare, "check-predict": cmd_check_predict,
+     "check-compare": cmd_check_compare,
      "triple-current": lambda: cmd_triple_compare(True), "power": cmd_power, "selftest": selftest}.get(
         CMD, lambda: sys.exit(__doc__))()

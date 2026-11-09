@@ -790,3 +790,28 @@ for c in $DEV; do
 done
 add "power-check-off_mobilenet-alone" "solo|static|||$(stress_target mobilenet "$MOB")||50"
 add "power-check-on_mobilenet-alone" "solo|static|||$(stress_target mobilenet "$MOB")||50"
+
+# Final check (the user, 2026-11-09): the normalized model, s - 1 = p_t + (b0 + b1 (8/n) L_t) L_c, on
+# splits never measured, in a new session; the generalization to other sizes only, so no configuration
+# with two co-runners. stress-sizes-check runs first: each network alone on 2, 6, 8 and 14 SMs (shares
+# 12, 37, 50, 88; the rest of the device is an empty partition). geometry.py check-predict freezes the
+# predictions from these rows before any other row of the check exists. stress-split-check-214 / -142 /
+# -66: the target on 2, 14 or 6 SMs and the co-runner on 14, 2 or 6 (6+6 leaves 2 SMs unassigned); each
+# target beside spin and beside every other network, all 30 ordered pairs. The families are also
+# declared in analysis/lib/families.py.
+for t in $GEO_NETS; do
+    for s in 02:12 06:37 08:50 14:88; do
+        add "stress-sizes-check_${t%%:*}-alone${s%%:*}" "solo|static|||$(stress_target "${t%%:*}" "${t#*:}")||${s#*:}"
+    done
+done
+for sp in 214:12 142:88 66:37:37; do
+    for t in $GEO_NETS; do
+        tn="${t%%:*}"; te="${t#*:}"
+        add "stress-split-check-${sp%%:*}_${tn}-spin" "itf|static|||$(stress_target "$tn" "$te")|$SPIN 100|${sp#*:}"
+        for c in $GEO_NETS; do
+            [ "$c" = "$t" ] && continue
+            add "stress-split-check-${sp%%:*}_${tn}+${c%%:*}" \
+                "itf|static|||$(stress_target "$tn" "$te")|$(geo_co "${c%%:*}" "${c#*:}")|${sp#*:}"
+        done
+    done
+done
