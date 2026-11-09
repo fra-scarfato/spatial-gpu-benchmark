@@ -311,7 +311,8 @@ PART_B=""
 #
 # A job is a name plus a spec of the form
 #      kind | mps | envA | envB | cmdA | cmdB | ratio
-#   kind : solo (one process) | pair (two processes launched together)
+#   kind : solo (one process) | pair (two or more processes launched together; cmdB holds the
+#          second and later commands, ';'-separated) | itf (a target and its co-runners)
 #   mps  : off | on | static   (static also creates the partitions)
 #   env* : extra environment for that client, e.g. the ATP variable
 #   cmd* : the runner invocation, without the protocol flags
@@ -366,8 +367,9 @@ printf '[sweep] %d jobs selected, %d runs each, %d runs total\n' \
 # mid-measurement leaves its latency CSV behind but no stats file, so it is not
 # "done" and gets re-run as if it had never started.
 #
-# A pair run (two measured processes) writes one labelled stats file per network, <prefix>_<net>_stats.csv
-# (net_label below), so it is done when two of them exist.
+# A pair run (two or more measured processes) writes one labelled stats file per network,
+# <prefix>_<net>_stats.csv (net_label below), so it is done when two of them exist: they are moved into
+# the tree together, after every process has exited.
 job_done() {  # $1 = output prefix
     [ -f "$1_stats.csv" ] || [ "$(compgen -G "$1_*_stats.csv" | wc -l)" -ge 2 ]
 }
@@ -380,11 +382,12 @@ interrupted() {  # $1 = output prefix
 
 # The label of a measured process in a pair run: the network named after the last ':' of its --net. The
 # older pair families name no --net in their commands and keep the labels they always had, mobilenet for
-# the first process and resnet for the second ($2).
-net_label() {  # $1 = runner command, $2 = the label when it names no --net
+# the first process and resnet for the second; a later one without --net would be net3, net4, ...
+net_label() {  # $1 = runner command, $2 = its position in the job, from 0
     local l
     l=$(sed -n 's/.*--net [^ ]*:\([A-Za-z0-9_]*\).*/\1/p' <<< "$1")
-    echo "${l:-$2}"
+    [ -n "$l" ] || case "$2" in 0) l=mobilenet ;; 1) l=resnet ;; *) l="net$(( $2 + 1 ))" ;; esac
+    echo "$l"
 }
 
 move_back() {  # $1 = tmpfs prefix, $2 = results prefix
@@ -398,7 +401,8 @@ move_back() {  # $1 = tmpfs prefix, $2 = results prefix
 # A measured process that has not finished in this many seconds is stopped, and its run counts as
 # not done (no stats file), so a restart measures it again. A run takes under 3 minutes; two TensorRT
 # clients under MPS static partitions were seen to hang right after connecting (2 of 16 runs of
-# stress-validation), spinning for hours instead of failing.
+# stress-validation), spinning for hours instead of failing. energy-tenants runs RetinaNet's 10000
+# inferences on 4 SMs next to other networks, about 6 minutes, so it is run with RUN_TIMEOUT=1200.
 RUN_TIMEOUT="${RUN_TIMEOUT:-600}"
 
 # POWER=1: each run also writes <out>_power.log, the board's three INA3221 rails sampled every 200 ms
@@ -439,7 +443,7 @@ power_stop() {
 
 do_job() {  # $1 = spec, $2 = output prefix
     local spec="$1" out="$2"
-    local kind mps envA envB cmdA cmdB ratio rc_a=0 rc_b=0
+    local kind mps envA envB cmdA cmdB ratio rc_a=0
     # IFS is scoped to this one read, so it does not leak into the rest of the
     # function. `read` splits on the pipe and leaves empty fields empty.
     IFS='|' read -r kind mps envA envB cmdA cmdB ratio <<< "$spec"
@@ -525,33 +529,44 @@ do_job() {  # $1 = spec, $2 = output prefix
         return "$rc_a"
     fi
 
-    # Two processes, launched back to back so their warm-ups overlap as far as
-    # the OS allows. $! must be read immediately, before the next command can
-    # overwrite it, and each exit status is collected separately rather than
-    # letting the failure of one mask the other.
+    # Two or more processes (cmdB holds the second and later commands, ';'-separated), launched back to
+    # back so their warm-ups overlap as far as the OS allows. Under static MPS the i-th takes the i-th
+    # partition, and any beyond the last share it, as for itf. $! must be read immediately, before the
+    # next command can overwrite it, and each exit status is collected separately rather than letting
+    # the failure of one mask another.
     #
-    # Each file is labelled with its network (net_label). With POWER=1 the rails are sampled from before the two start until both have exited: the
-    # equal-work runs (energy-same-n) measure the energy of the whole job, each network stopping by
-    # itself.
-    local la lb
-    la=$(net_label "$cmdA" mobilenet)
-    lb=$(net_label "$cmdB" resnet)
+    # Each file is labelled with its network (net_label). With POWER=1 the rails are sampled from before
+    # the first starts until the last has exited: the equal-work runs (energy-same-n, energy-tenants)
+    # measure the energy of the whole job, each network stopping by itself.
+    local cmds labels=() pids=() rcs="" envi i j rc failed=0
+    IFS=';' read -ra cmds <<< "$cmdB"
+    cmds=("$cmdA" "${cmds[@]}")
     power_start "$out"
-    # shellcheck disable=SC2086
-    timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_$la" > "${out}_$la.log" 2>&1 &
-    local pid_a=$!
-    # shellcheck disable=SC2086
-    timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_$lb" > "${out}_$lb.log" 2>&1 &
-    local pid_b=$!
+    for i in "${!cmds[@]}"; do
+        labels+=("$(net_label "${cmds[$i]}" "$i")")
+        envi="$envB"; [ "$i" = 0 ] && envi="$envA"
+        if [ "$mps" = static ]; then
+            j=$i; [ "$j" -ge "${#PART_LIST[@]}" ] && j=$(( ${#PART_LIST[@]} - 1 ))
+            envi="CUDA_MPS_SM_PARTITION=${PART_LIST[$j]}"
+        fi
+        # shellcheck disable=SC2086
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envi ${cmds[$i]} $PROTO --csv "${tmp}_${labels[$i]}" \
+            > "${out}_${labels[$i]}.log" 2>&1 &
+        pids+=($!)
+    done
 
     # `|| rc=$?` instead of letting the failure propagate, because `set -e`
-    # would otherwise abort before we could report WHICH of the two failed.
-    wait "$pid_a" || rc_a=$?
-    wait "$pid_b" || rc_b=$?
+    # would otherwise abort before we could report WHICH of them failed.
+    for i in "${!pids[@]}"; do
+        rc=0
+        wait "${pids[$i]}" || rc=$?
+        rcs="$rcs ${labels[$i]} rc=$rc"
+        [ "$rc" -ne 0 ] && failed=1
+    done
     power_stop
-    if [ "$rc_a" -ne 0 ] || [ "$rc_b" -ne 0 ]; then
-        echo "[sweep] ABORT: run failed ($la rc=$rc_a, $lb rc=$rc_b)." >&2
-        echo "        See ${out}_$la.log / ${out}_$lb.log" >&2
+    if [ "$failed" = 1 ]; then
+        echo "[sweep] ABORT: run failed ($rcs )." >&2
+        echo "        See ${out}_<network>.log" >&2
         return 1
     fi
     move_back "$tmp" "$out"
@@ -636,8 +651,12 @@ for r in $(seq 1 "$RUNS"); do
                 printf '      A: %s %s --csv %s   (measured)\n' "$_cA" "$PROTO" "$out"
                 printf '      B: %s   (co-runner process, stopped when A exits)\n' "$_cB"
             else
-                printf '      A: %s %s --csv %s_%s\n' "$_cA" "$PROTO" "$out" "$(net_label "$_cA" mobilenet)"
-                printf '      B: %s %s --csv %s_%s\n' "$_cB" "$PROTO" "$out" "$(net_label "$_cB" resnet)"
+                IFS=';' read -ra _cs <<< "$_cB"
+                _cs=("$_cA" "${_cs[@]}")
+                for _k in "${!_cs[@]}"; do
+                    printf '      %d: %s %s --csv %s_%s\n' "$((_k + 1))" "${_cs[$_k]}" "$PROTO" "$out" \
+                           "$(net_label "${_cs[$_k]}" "$_k")"
+                done
             fi
             continue
         fi

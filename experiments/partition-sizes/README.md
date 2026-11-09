@@ -45,6 +45,11 @@ POWER=1 ./measure/sweep.sh --exp energy-alone-16 --static-chunks 8
 POWER=1 MIN_INF=10000 MIN_DUR=0 ./measure/sweep.sh --exp energy-same-n --static-chunks 8
 python3 analysis/geometry.py power
 python3 analysis/geometry.py energy
+
+# 9. Tenants: 2, 3 and 4 of the development networks together on 8+8, 8+4+4 and 4+4+4+4, every network
+#    stopping after the same 10000 inferences, and each alone on the whole GPU (about 6 h)
+POWER=1 MIN_INF=10000 MIN_DUR=0 RUN_TIMEOUT=1200 ./measure/sweep.sh --exp energy-tenants --static-chunks 8
+python3 analysis/geometry.py tenants
 ```
 
 `POWER=1` samples the board's three INA3221 power rails every 200 ms during each run. The splits are

@@ -839,3 +839,33 @@ for en_s in mobilenet:08 mobilenet:04 resnet:08 resnet:04 retinanet:04 inception
     add "energy-same-n_${en_s%%:*}-alone${en_s#*:}" \
         "solo|static|||$(stress_target "${en_s%%:*}" "$(eng_of "${en_s%%:*}")")||$(energy_share "${en_s#*:}")"
 done
+
+# Tenants (the professor, 2026-11-09): split the 16 SMs hierarchically, 16 -> 8+8 -> 8+4+4 -> 4+4+4+4, and
+# find how far adding tenants pays in time and energy. energy-tenants is run like energy-same-n
+# (MIN_INF=10000 MIN_DUR=0, POWER=1): k of the four development networks launched together on the
+# k-tenant layout, each stopping after the same 10000 inferences and keeping its partition until then
+# (running tenants are never resized). Two tenants: the 6 pairs on 8+8. Three: each network on 8 SMs (the
+# first one named) with each pair of the other three on 4+4, 12 layouts. Four: all four on 4+4+4+4. Each
+# network alone on the whole GPU, in the same session, is the baseline. The family is also declared in
+# analysis/lib/families.py.
+et_cmd() { stress_target "$1" "$(eng_of "$1")"; }
+et_dev=($DEV)
+for et_t in $DEV; do
+    add "energy-tenants_${et_t}-alone16" "solo|static|||$(et_cmd "$et_t")||100:"
+done
+for et_i in 0 1 2; do
+    for et_j in $(seq $((et_i + 1)) 3); do
+        add "energy-tenants_${et_dev[$et_i]}+${et_dev[$et_j]}" \
+            "pair|static|||$(et_cmd "${et_dev[$et_i]}")|$(et_cmd "${et_dev[$et_j]}")|50"
+    done
+done
+for et_t in $DEV; do
+    et_o=(); for et_c in $DEV; do [ "$et_c" = "$et_t" ] || et_o+=("$et_c"); done
+    for et_p in 0:1 0:2 1:2; do
+        et_a=${et_o[${et_p%:*}]} et_b=${et_o[${et_p#*:}]}
+        add "energy-tenants_${et_t}+${et_a}+${et_b}" \
+            "pair|static|||$(et_cmd "$et_t")|$(et_cmd "$et_a");$(et_cmd "$et_b")|50:25:25"
+    done
+done
+add "energy-tenants_${et_dev[0]}+${et_dev[1]}+${et_dev[2]}+${et_dev[3]}" \
+    "pair|static|||$(et_cmd "${et_dev[0]}")|$(et_cmd "${et_dev[1]}");$(et_cmd "${et_dev[2]}");$(et_cmd "${et_dev[3]}")|25:25:25:25"

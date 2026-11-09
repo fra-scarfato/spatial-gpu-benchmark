@@ -11,6 +11,8 @@
     python3 analysis/geometry.py check-compare   score them on 2+14, 14+2 and 6+6
     python3 analysis/geometry.py energy          sec:stress-energy: alone by size, pairs at equal work,
                                                  and the direct check (energy-same-n)
+    python3 analysis/geometry.py tenants         16 -> 8+8 -> 8+4+4 -> 4+4+4+4: time, energy and p99
+                                                 at equal work (energy-tenants)
     python3 analysis/geometry.py selftest
 
 The model is counter-model.py's L2 variant with its frozen p99 coefficients (counter-model-coeffs.csv):
@@ -740,6 +742,91 @@ def cmd_energy():
         print(line)
 
 
+# ------------------------------------------------------------------ tenants
+#
+# The professor (2026-11-09): split the 16 SMs hierarchically, 16 -> 8+8 -> 8+4+4 -> 4+4+4+4, and find how
+# far adding tenants pays in time and energy. energy-tenants: k of the development networks launched
+# together on the k-tenant layout (LAYOUT; in 8+4+4 the first network named is on 8 SMs), each doing the
+# same N inferences and keeping its partition until it is done, so running tenants are never resized;
+# against the same networks one after the other alone on the whole GPU, the family's own alone16 rows.
+# Per run: the time from the first inference to the last and the rails' energy over it (run_energy), and
+# each network's p99 while all k are running, against its p99 alone on the whole GPU. The networks
+# finish at very different times (MobileNet does 10000 inferences in seconds, RetinaNet in minutes), so
+# the window in which all of them run can be short: the number of inferences behind each p99 is printed.
+LAYOUT = {2: "8+8", 3: "8+4+4", 4: "4+4+4+4"}
+
+
+def p99_together(prefix):
+    """{network: (p99 gpu_ms, inferences)} of one group run, over the timed ("bench") rows lying wholly in
+    the window where every network is in its timed phase: from the latest first start to the earliest
+    last end. A network with no row in the window gets (None, 0); a run without rows gives {}."""
+    rows = {}
+    for f in glob.glob(prefix + "_*_latencies.csv"):
+        rows[f[len(prefix) + 1:-len("_latencies.csv")]] = [
+            (int(r["t_start_ns"]), int(r["t_end_ns"]), float(r["gpu_ms"]))
+            for r in csv.DictReader(open(f)) if r["phase"] == "bench"]
+    if not rows or not all(rows.values()):
+        return {}
+    lo = max(min(s for s, e, g in v) for v in rows.values())
+    hi = min(max(e for s, e, g in v) for v in rows.values())
+    out = {}
+    for net, v in rows.items():
+        x = [g for s, e, g in v if lo <= s and e <= hi]
+        out[net] = (float(np.percentile(x, 99)), len(x)) if x else (None, 0)
+    return out
+
+
+def cmd_tenants():
+    d = os.path.join(P.BENCH, "energy-tenants")
+    if not os.path.isdir(d):
+        sys.exit("no energy-tenants runs in " + d)
+    runs = lambda cfg: [f[:-len("_power.log")] for f in sorted(glob.glob(os.path.join(d, cfg, "r*_power.log")))]
+    rng = lambda v: "%.2f (%.2f-%.2f)" % (st.median(v), min(v), max(v))
+
+    # Each network alone on the whole GPU: median seconds, joules and p99 over its runs.
+    alone = {}
+    for cfg in sorted(c for c in os.listdir(d) if c.endswith("-alone16")):
+        ps = runs(cfg)
+        es = [x for x in map(run_energy, ps) if x]
+        p99 = [np.percentile([float(r["gpu_ms"]) for r in csv.DictReader(open(p + "_latencies.csv"))
+                              if r["phase"] == "bench"], 99) for p in ps]
+        if es:
+            alone[cfg[:-len("-alone16")]] = (st.median(x[0] for x in es), st.median(x[1] for x in es), st.median(p99))
+    print("each network alone on the whole GPU, the same N inferences (medians of the runs):")
+    for net, (t, e, p) in alone.items():
+        print("  %-12s %6.1f s %6.0f J  p99 %.3f ms" % (net, t, e, p))
+
+    print("\ntogether on the layout, against the same networks one after the other alone on the whole GPU:")
+    print("time and energy ratios (medians of the runs); each network's p99 while all run, against its p99")
+    print("alone on the whole GPU, with the inferences behind it")
+    res = {}
+    for cfg in sorted((c for c in os.listdir(d) if "+" in c), key=lambda c: (c.count("+"), c)):
+        nets = cfg.split("+")
+        got = [(x, p99_together(p)) for p in runs(cfg) for x in [run_energy(p)] if x]
+        if not got or any(n not in alone for n in nets):
+            print("  %-8s %-40s incomplete" % (LAYOUT.get(len(nets), "?"), cfg))
+            continue
+        t, e = st.median(x[0] for x, q in got), st.median(x[1] for x, q in got)
+        rt, re = t / sum(alone[n][0] for n in nets), e / sum(alone[n][1] for n in nets)
+        cells = []
+        for n in nets:
+            v = [q[n] for x, q in got if q.get(n, (None, 0))[0] is not None]
+            cells.append("%s %s" % (n, "%.2f (%d)" % (st.median(a for a, c in v) / alone[n][2],
+                                                      st.median(c for a, c in v)) if v else "-"))
+        res.setdefault(len(nets), []).append((nets, rt, re))
+        print("  %-8s %-40s %6.1f s %6.0f J  time %.2f  energy %.2f  | %s" % (
+            LAYOUT[len(nets)], cfg, t, e, rt, re, "  ".join(cells)))
+
+    print("\nby tenant count: median (range) of the time and energy ratios")
+    for k in sorted(res):
+        for label, keep in (("all", lambda n: True), ("with RetinaNet", lambda n: "retinanet" in n),
+                            ("without RetinaNet", lambda n: "retinanet" not in n)):
+            v = [x for x in res[k] if keep(x[0])]
+            if v:
+                print("  %d tenants %-8s %-18s %2d layouts  time %s  energy %s" % (
+                    k, LAYOUT[k], label, len(v), rng([x[1] for x in v]), rng([x[2] for x in v])))
+
+
 # ------------------------------------------------------------------ selftest
 
 def selftest():
@@ -795,12 +882,24 @@ def selftest():
     t, e, ta, ea = same_n_computed(by, "stress-triple", "a", "b")
     # side by side 0.01 s at 30 W (b does 0.5), then b alone 0.005 s and 0.1 J; alone 0.015 s, 0.3 J
     assert abs(t - 0.015) < 1e-12 and abs(e - 0.4) < 1e-12 and abs(ta - 0.015) < 1e-12 and abs(ea - 0.3) < 1e-12
+    with tempfile.TemporaryDirectory() as d:
+        # a's timed rows run from 10 to 20.5 s, b's from 15 to 29.5 s: both are timed from 15 to 20.5 s,
+        # which holds six rows of each; the warm-up row is never counted
+        hdr = "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns\n"
+        for net, first, last in (("a", 10, 20), ("b", 15, 29)):
+            open(os.path.join(d, "r1_%s_latencies.csv" % net), "w").write(
+                hdr + "warmup,0,x,0,1,99,16000000000,16100000000\n" + "".join(
+                    "bench,%d,x,0,1,%d,%d,%d\n" % (i, i, i * 10**9, i * 10**9 + 5 * 10**8)
+                    for i in range(first, last + 1)))
+        q = p99_together(os.path.join(d, "r1"))
+        assert q["a"][1] == 6 and q["b"][1] == 6
+        assert abs(q["a"][0] - np.percentile(range(15, 21), 99)) < 1e-12
     print("  selftest passed")
 
 
 if __name__ == "__main__":
     {"inputs": cmd_inputs, "splits": cmd_splits, "triple-predict": cmd_triple_predict,
      "triple-compare": cmd_triple_compare, "check-predict": cmd_check_predict,
-     "check-compare": cmd_check_compare, "energy": cmd_energy,
+     "check-compare": cmd_check_compare, "energy": cmd_energy, "tenants": cmd_tenants,
      "triple-current": lambda: cmd_triple_compare(True), "power": cmd_power, "selftest": selftest}.get(
         CMD, lambda: sys.exit(__doc__))()
