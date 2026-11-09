@@ -113,8 +113,10 @@ EFF="$DATA/models/efficientnet_b0/engine/efficientnet_b0.engine"
 
 RUNS=5                          # independent runs per configuration
 FIXED=32                        # fixed preprocessed input set
-MIN_INF=5000                    # protocol: at least N inferences...
-MIN_DUR=30                      # ...AND at least T seconds
+MIN_INF="${MIN_INF:-5000}"      # protocol: at least N inferences...
+MIN_DUR="${MIN_DUR:-30}"        # ...AND at least T seconds. Both can be set from the environment: the
+                                # equal-work runs (energy-same-n) use MIN_INF=10000 MIN_DUR=0, so that every
+                                # network stops by itself after the same number of inferences.
 
 # Where the GPU's frequency limits can be read. If min != max the governor is
 # still free to clock the GPU down under us and every measurement is worthless.
@@ -363,15 +365,26 @@ printf '[sweep] %d jobs selected, %d runs each, %d runs total\n' \
 # run. That is what makes an interrupted sweep safe to restart: a run killed
 # mid-measurement leaves its latency CSV behind but no stats file, so it is not
 # "done" and gets re-run as if it had never started.
+#
+# A pair run (two measured processes) writes one labelled stats file per network, <prefix>_<net>_stats.csv
+# (net_label below), so it is done when two of them exist.
 job_done() {  # $1 = output prefix
-    [ -f "$1_stats.csv" ] || \
-        { [ -f "$1_mobilenet_stats.csv" ] && [ -f "$1_resnet_stats.csv" ]; }
+    [ -f "$1_stats.csv" ] || [ "$(compgen -G "$1_*_stats.csv" | wc -l)" -ge 2 ]
 }
 
 # Partial output with no completion marker: somebody killed a run in flight.
 interrupted() {  # $1 = output prefix
     job_done "$1" && return 1
-    [ -f "$1_latencies.csv" ] || [ -f "$1_mobilenet_latencies.csv" ]
+    compgen -G "$1_*latencies.csv" > /dev/null
+}
+
+# The label of a measured process in a pair run: the network named after the last ':' of its --net. The
+# older pair families name no --net in their commands and keep the labels they always had, mobilenet for
+# the first process and resnet for the second ($2).
+net_label() {  # $1 = runner command, $2 = the label when it names no --net
+    local l
+    l=$(sed -n 's/.*--net [^ ]*:\([A-Za-z0-9_]*\).*/\1/p' <<< "$1")
+    echo "${l:-$2}"
 }
 
 move_back() {  # $1 = tmpfs prefix, $2 = results prefix
@@ -516,20 +529,29 @@ do_job() {  # $1 = spec, $2 = output prefix
     # the OS allows. $! must be read immediately, before the next command can
     # overwrite it, and each exit status is collected separately rather than
     # letting the failure of one mask the other.
+    #
+    # Each file is labelled with its network (net_label). With POWER=1 the rails are sampled from before the two start until both have exited: the
+    # equal-work runs (energy-same-n) measure the energy of the whole job, each network stopping by
+    # itself.
+    local la lb
+    la=$(net_label "$cmdA" mobilenet)
+    lb=$(net_label "$cmdB" resnet)
+    power_start "$out"
     # shellcheck disable=SC2086
-    timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_mobilenet" > "${out}_mobilenet.log" 2>&1 &
+    timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "${tmp}_$la" > "${out}_$la.log" 2>&1 &
     local pid_a=$!
     # shellcheck disable=SC2086
-    timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_resnet" > "${out}_resnet.log" 2>&1 &
+    timeout -k 30 "$RUN_TIMEOUT" env $penv $envB $cmdB $PROTO --csv "${tmp}_$lb" > "${out}_$lb.log" 2>&1 &
     local pid_b=$!
 
     # `|| rc=$?` instead of letting the failure propagate, because `set -e`
     # would otherwise abort before we could report WHICH of the two failed.
     wait "$pid_a" || rc_a=$?
     wait "$pid_b" || rc_b=$?
+    power_stop
     if [ "$rc_a" -ne 0 ] || [ "$rc_b" -ne 0 ]; then
-        echo "[sweep] ABORT: run failed (mobilenet rc=$rc_a, resnet rc=$rc_b)." >&2
-        echo "        See ${out}_mobilenet.log / ${out}_resnet.log" >&2
+        echo "[sweep] ABORT: run failed ($la rc=$rc_a, $lb rc=$rc_b)." >&2
+        echo "        See ${out}_$la.log / ${out}_$lb.log" >&2
         return 1
     fi
     move_back "$tmp" "$out"
@@ -546,6 +568,7 @@ if [ "$SMOKE" = 1 ]; then
     echo "[sweep] SMOKE MODE: one fast run per configuration, results are NOT measurements"
 else
     PROTO="$PROTO --min-inferences $MIN_INF --min-duration $MIN_DUR"
+    printf '[sweep] protocol: %s\n' "$PROTO"
 fi
 
 if [ "$DRY" = 0 ]; then
@@ -613,8 +636,8 @@ for r in $(seq 1 "$RUNS"); do
                 printf '      A: %s %s --csv %s   (measured)\n' "$_cA" "$PROTO" "$out"
                 printf '      B: %s   (co-runner process, stopped when A exits)\n' "$_cB"
             else
-                printf '      A: %s %s --csv %s_mobilenet\n' "$_cA" "$PROTO" "$out"
-                printf '      B: %s %s --csv %s_resnet\n' "$_cB" "$PROTO" "$out"
+                printf '      A: %s %s --csv %s_%s\n' "$_cA" "$PROTO" "$out" "$(net_label "$_cA" mobilenet)"
+                printf '      B: %s %s --csv %s_%s\n' "$_cB" "$PROTO" "$out" "$(net_label "$_cB" resnet)"
             fi
             continue
         fi

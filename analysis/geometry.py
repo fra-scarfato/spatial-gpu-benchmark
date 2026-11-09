@@ -9,6 +9,8 @@
     python3 analysis/geometry.py power           power, completed inferences, energy per inference
     python3 analysis/geometry.py check-predict   the final check: freeze the normalized model's predictions
     python3 analysis/geometry.py check-compare   score them on 2+14, 14+2 and 6+6
+    python3 analysis/geometry.py energy          sec:stress-energy: alone by size, pairs at equal work,
+                                                 and the direct check (energy-same-n)
     python3 analysis/geometry.py selftest
 
 The model is counter-model.py's L2 variant with its frozen p99 coefficients (counter-model-coeffs.csv):
@@ -614,6 +616,130 @@ def cmd_power():
     write("geometry-power.csv", rows)
 
 
+# ------------------------------------------------------------------ energy at equal work
+#
+# The professor (2026-11-09): keep mean power, throughput and energy per inference apart, and compare
+# networks running together with the same networks alone at equal work, the same number of inferences of
+# each network, by the total energy. From the 30 s runs this is computed: the pair side by side at its
+# measured power and rates until the faster has done its share, then the slower alone on its partition at
+# its alone rate and energy per inference; alone, one network after the other. energy-same-n measures it:
+# both networks launched together, each stopping after the same N, the rails integrated until the last
+# exits, against the same N run by each network alone, on its partition and on the whole GPU.
+
+# Each network alone at each size: the family and configuration suffix of its runs. 8 SMs is
+# stress-triple's own alone row, the session of the 8+4 pairs; 16 SMs is energy-alone-16.
+ENERGY_ALONE = {4: ("stress-split-412", "-alone"), 6: ("stress-split-610", "-alone"),
+                8: ("stress-triple", "-alone"), 10: ("stress-sizes", "-alone10"),
+                12: ("stress-split-124", "-alone"), 16: ("energy-alone-16", "-alone16")}
+ENERGY_PAIRS = {"stress-split-412": (4, 12), "stress-split-610": (6, 10), "stress-triple": (8, 4),
+                "stress-split-124": (12, 4)}
+
+
+def power_rows():
+    """geometry-power.csv (cmd_power), grouped by (family, config)."""
+    by = {}
+    for r in csv.DictReader(open(os.path.join(C.AGG, "geometry-power.csv"))):
+        by.setdefault((r["family"], r["config"]), []).append(r)
+    return by
+
+
+def same_n_computed(by, fam, a, b):
+    """(t, e, t_alone, e_alone) per inference of each network, for the pair a (first partition of fam) +
+    b, from the 30 s runs: side by side at the pair's median power and rates until the faster has done
+    one inference's worth, then the slower alone at its alone rate and energy per inference; alone, one
+    after the other. Every term scales with the number of inferences, so the ratios do not depend on it.
+    None if a row is missing or a co-runner count is."""
+    med = lambda rs, k: st.median(float(r[k]) for r in rs)
+    nt, nc = ENERGY_PAIRS[fam]
+    rs = by.get((fam, a + "+" + b))
+    al = [by.get((ENERGY_ALONE[n][0], x + ENERGY_ALONE[n][1])) for x, n in ((a, nt), (b, nc))]
+    if not rs or None in al or any(int(r["corunner_missing"]) for r in rs):
+        return None
+    P = med(rs, "rails_mW") / 1e3
+    rate = [med(rs, "target_inf_s"), st.median(float(r["corunner_inf_s"]) for r in rs)]
+    thr = [med(x, "target_inf_s") for x in al]
+    E = [med(x, "mJ_per_inference") / 1e3 for x in al]
+    fast = 0 if rate[0] >= rate[1] else 1
+    slow = 1 - fast
+    t1 = 1.0 / rate[fast]                       # the faster's inference, side by side
+    left = 1.0 - rate[slow] * t1                # what the slower still has to do, alone
+    return t1 + left / thr[slow], P * t1 + left * E[slow], sum(1.0 / x for x in thr), sum(E)
+
+
+def run_energy(prefix):
+    """(seconds, joules, inferences per network) of one run: the three rails summed and integrated with
+    trapezoids from the first inference of any network in the run (warm-up included) to the last, the
+    ends interpolated between the 200 ms samples. The rows are <prefix>_latencies.csv (solo) or
+    <prefix>_<label>_latencies.csv (pair). None without rows or a power log."""
+    lats = sorted(glob.glob(prefix + "_*latencies.csv"))
+    if not lats or not os.path.exists(prefix + "_power.log"):
+        return None
+    spans, counts = [], []
+    for f in lats:
+        rows = [(int(r["t_start_ns"]) / 1e9, int(r["t_end_ns"]) / 1e9) for r in csv.DictReader(open(f))]
+        spans += rows
+        counts.append(len(rows))
+    t0, t1 = min(s for s, e in spans), max(e for s, e in spans)
+    p = power_log(prefix + "_power.log")
+    t = np.array([x[0] for x in p])
+    w = np.array([(x[1] + x[2] + x[3]) / 1e3 for x in p])
+    g = np.concatenate(([t0], t[(t > t0) & (t < t1)], [t1]))
+    v = np.interp(g, t, w)
+    return t1 - t0, float(np.sum((v[1:] + v[:-1]) / 2 * np.diff(g))), counts
+
+
+def cmd_energy():
+    by = power_rows()
+    med = lambda rs, k: st.median(float(r[k]) for r in rs)
+    rng = lambda v: "%.2f (%.2f-%.2f)" % (st.median(v), min(v), max(v))
+    print("each network alone: power W, throughput inf/s, energy per inference mJ (medians of the runs)")
+    for net in NETS:
+        cells = []
+        for n, (f, suf) in sorted(ENERGY_ALONE.items()):
+            rs = by.get((f, net + suf))
+            cells.append("%2d: %4.1f W %5.0f/s %6.1f mJ" % (n, med(rs, "rails_mW") / 1e3, med(rs, "target_inf_s"),
+                                                          med(rs, "mJ_per_inference")) if rs else "%2d: -" % n)
+        print("  %-12s %s" % (net, " | ".join(cells)))
+
+    print("\npairs, the same number of inferences of each network, computed from the 30 s runs:")
+    print("mean power together and alone in sequence (W), time and energy together / alone (median, range)")
+    for fam, (nt, nc) in ENERGY_PAIRS.items():
+        res = [x for x in (same_n_computed(by, fam, *c.split("+")) for f, c in by
+                           if f == fam and c.count("+") == 1) if x]
+        if res:
+            print("  %2d+%-2d pairs %2d  %4.1f W  %4.1f W  time %s  energy %s" % (
+                nt, nc, len(res), st.median(e / t for t, e, ta, ea in res), st.median(ea / ta for t, e, ta, ea in res),
+                rng([t / ta for t, e, ta, ea in res]), rng([e / ea for t, e, ta, ea in res])))
+
+    d = os.path.join(P.BENCH, "energy-same-n")
+    if not os.path.isdir(d):
+        return
+
+    def measured(cfg):
+        """Median (seconds, joules) over the runs of one energy-same-n configuration, and the counts."""
+        rs = [x for x in (run_energy(f[:-len("_power.log")]) for f in sorted(glob.glob(os.path.join(d, cfg, "r*_power.log")))) if x]
+        return (st.median(x[0] for x in rs), st.median(x[1] for x in rs), sorted({c for x in rs for c in x[2]})) if rs else None
+
+    print("\ndirect check (energy-same-n): the same N inferences of each network, measured;")
+    print("together against alone in sequence on the same partitions and on the whole GPU, and the computed ratio")
+    for cfg in sorted(os.listdir(d)):
+        if "+" not in cfg:
+            continue
+        a, b = cfg.split("+")
+        tog, pa, pb, wa, wb = (measured(c) for c in (cfg, a + "-alone08", b + "-alone04", a + "-alone16", b + "-alone16"))
+        if None in (tog, pa, pb):
+            print("  %-24s incomplete" % cfg)
+            continue
+        line = "  %-24s together %6.1f s %7.0f J (inferences %s)  same partitions: time %.2f energy %.2f" % (
+            cfg, tog[0], tog[1], tog[2], tog[0] / (pa[0] + pb[0]), tog[1] / (pa[1] + pb[1]))
+        if wa and wb:
+            line += "  whole GPU: time %.2f energy %.2f" % (tog[0] / (wa[0] + wb[0]), tog[1] / (wa[1] + wb[1]))
+        c = same_n_computed(by, "stress-triple", a, b)
+        if c:
+            line += "  computed: time %.2f energy %.2f" % (c[0] / c[2], c[1] / c[3])
+        print(line)
+
+
 # ------------------------------------------------------------------ selftest
 
 def selftest():
@@ -654,12 +780,27 @@ def selftest():
     assert normalized(b, 0.05, 100, 8, 50) == predict(b, 0.05, 100, 50)                    # 8 SMs: unchanged
     assert abs(normalized(b, 0.05, 50, 4, 50) - predict(b, 0.05, 100, 50)) < 1e-12         # per SM, times 8
     assert sorted(CHECK_ALONE) == [2, 6, 8, 14] and CHECK_ALONE[2] == ("exp35", "-alone02")
+    with tempfile.TemporaryDirectory() as d:
+        # 10 W from 0 to 30 s; inferences from 10 to 20 s: 10 s and 100 J, the ends interpolated
+        open(os.path.join(d, "r1_power.log"), "w").write("uptime_s a b c d e f\n" + "".join(
+            "%.2f 5000 2000 0 0 0 0\n" % (0.2 * i) for i in range(151)))
+        hdr = "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns\n"
+        open(os.path.join(d, "r1_a_latencies.csv"), "w").write(hdr + "warmup,0,x,0,1,1,10050000000,11000000000\n")
+        open(os.path.join(d, "r1_b_latencies.csv"), "w").write(hdr + "bench,0,x,0,1,1,12000000000,20000000000\n")
+        s, j, n = run_energy(os.path.join(d, "r1"))
+        assert abs(s - 9.95) < 1e-9 and abs(j - 99.5) < 1e-6 and n == [1, 1]
+    by = {("stress-triple", "a+b"): [dict(rails_mW="30000", target_inf_s="100", corunner_inf_s="50", corunner_missing="0")],
+          ("stress-triple", "a-alone"): [dict(target_inf_s="200", mJ_per_inference="100")],
+          ("stress-split-412", "b-alone"): [dict(target_inf_s="100", mJ_per_inference="200")]}
+    t, e, ta, ea = same_n_computed(by, "stress-triple", "a", "b")
+    # side by side 0.01 s at 30 W (b does 0.5), then b alone 0.005 s and 0.1 J; alone 0.015 s, 0.3 J
+    assert abs(t - 0.015) < 1e-12 and abs(e - 0.4) < 1e-12 and abs(ta - 0.015) < 1e-12 and abs(ea - 0.3) < 1e-12
     print("  selftest passed")
 
 
 if __name__ == "__main__":
     {"inputs": cmd_inputs, "splits": cmd_splits, "triple-predict": cmd_triple_predict,
      "triple-compare": cmd_triple_compare, "check-predict": cmd_check_predict,
-     "check-compare": cmd_check_compare,
+     "check-compare": cmd_check_compare, "energy": cmd_energy,
      "triple-current": lambda: cmd_triple_compare(True), "power": cmd_power, "selftest": selftest}.get(
         CMD, lambda: sys.exit(__doc__))()

@@ -815,3 +815,27 @@ for sp in 214:12 142:88 66:37:37; do
         done
     done
 done
+
+# Energy at equal work (the professor, 2026-11-09: the same number of inferences of each network, and the
+# total energy consumed). energy-alone-16: each network alone on the whole GPU, one static partition of all
+# 16 SMs ("100:", a one-share list), standard protocol, for its power, throughput and energy per inference
+# there. energy-same-n, run with MIN_INF=10000 MIN_DUR=0 so that every network stops by itself after the
+# same 10000 inferences: four pairs on 8+4 launched together (kind pair: both start at once and the sweep
+# waits for both; POWER=1 samples until the last exits), and each of their networks alone on its partition
+# and on the whole GPU. The pairs span the saving computed from the 30 s runs: inception+efficientnet (the
+# largest), resnet+mobilenet, mobilenet+resnet (the thesis example) and mobilenet+retinanet (the smallest).
+# The families are also declared in analysis/lib/families.py.
+for en_t in $GEO_NETS; do
+    add "energy-alone-16_${en_t%%:*}-alone16" "solo|static|||$(stress_target "${en_t%%:*}" "${en_t#*:}")||100:"
+done
+for en_p in inception:efficientnet resnet:mobilenet mobilenet:resnet mobilenet:retinanet; do
+    en_a=${en_p%%:*} en_b=${en_p#*:}
+    add "energy-same-n_${en_a}+${en_b}" \
+        "pair|static|||$(stress_target "$en_a" "$(eng_of "$en_a")")|$(stress_target "$en_b" "$(eng_of "$en_b")")|50:25"
+done
+energy_share() { case "$1" in 04) echo 25 ;; 08) echo 50 ;; 16) echo "100:" ;; esac; }
+for en_s in mobilenet:08 mobilenet:04 resnet:08 resnet:04 retinanet:04 inception:08 efficientnet:04 \
+            mobilenet:16 resnet:16 retinanet:16 inception:16 efficientnet:16; do
+    add "energy-same-n_${en_s%%:*}-alone${en_s#*:}" \
+        "solo|static|||$(stress_target "${en_s%%:*}" "$(eng_of "${en_s%%:*}")")||$(energy_share "${en_s#*:}")"
+done

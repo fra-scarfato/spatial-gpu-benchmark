@@ -38,6 +38,13 @@ for f in stress-split-check-214 stress-split-check-142 stress-split-check-66; do
     POWER=1 ./measure/sweep.sh --exp $f --static-chunks 8
 done
 python3 analysis/geometry.py check-compare
+
+# 8. Energy at equal work: each network alone on the whole GPU, then the direct check, four pairs and
+#    their networks alone, every network stopping after the same 10000 inferences (about 2 h)
+POWER=1 ./measure/sweep.sh --exp energy-alone-16 --static-chunks 8
+POWER=1 MIN_INF=10000 MIN_DUR=0 ./measure/sweep.sh --exp energy-same-n --static-chunks 8
+python3 analysis/geometry.py power
+python3 analysis/geometry.py energy
 ```
 
 `POWER=1` samples the board's three INA3221 power rails every 200 ms during each run. The splits are
