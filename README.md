@@ -45,7 +45,7 @@ Six ONNX models, under `$DATA/models/`. `models.sha256` holds their checksums:
 | Inception v3 | `inception_v3-onnx-float/` (`inception_v3.onnx` and its weights, `inception_v3.data`) | Qualcomm AI Hub, release v0.62.0: `https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/inception_v3/releases/v0.62.0/inception_v3-onnx-float.zip` |
 | RetinaNet | `retinanet-9/retinanet-9.onnx` | ONNX Model Zoo, `validated/vision/object_detection_segmentation/retinanet/model/` |
 | EfficientNet-B0 | `efficientnet_b0/efficientnet_b0_Opset17.onnx` | ONNX Model Zoo, `Computer_Vision/efficientnet_b0_Opset17_timm/`, commit `69d6901` |
-| ViT-B/16 | `vit-base-patch16-224/vit-base-patch16-224.onnx` | `google/vit-base-patch16-224` (Hugging Face), exported to ONNX with PyTorch 2.7.1 |
+| ViT-B/16 | `vit-base-patch16-224/vit-base-patch16-224.onnx` (renamed from `onnx/model.onnx`) | Hugging Face, `onnx-community/vit-base-patch16-224-ONNX` (an ONNX export of `google/vit-base-patch16-224`), commit `cbd8c61`: `https://huggingface.co/onnx-community/vit-base-patch16-224-ONNX/resolve/cbd8c61cf91321b8dc986b5cbf84af9db7eac1a7/onnx/model.onnx` |
 
 The ONNX Model Zoo is `https://github.com/onnx/models` (the files are in Git LFS).
 
