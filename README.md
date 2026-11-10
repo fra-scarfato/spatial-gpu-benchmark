@@ -1,4 +1,4 @@
-# runner
+# Spatial GPU benchamrk
 
 A TensorRT inference benchmark for the NVIDIA Jetson AGX Orin, built to measure how much
 co-located clients interfere when each is given a **disjoint partition of the GPU's SMs**, and
