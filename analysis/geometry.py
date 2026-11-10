@@ -15,6 +15,8 @@
                                                  16 -> 8+8 -> 8+4+4 -> 4+4+4+4: time, energy and p99
                                                  at equal work (energy-tenants; the shared GPU:
                                                  energy-tenants-mpsdefault, energy-tenants-nomps)
+    python3 analysis/geometry.py energy-model    the additive power model: errors on runs it never used,
+                                                 and the allocation with the least energy it picks
     python3 analysis/geometry.py selftest
 
 The model is counter-model.py's L2 variant with its frozen p99 coefficients (counter-model-coeffs.csv):
@@ -874,6 +876,181 @@ def cmd_tenants():
                     rng([x[2] for x in v]), rng([x[3] for x in v])))
 
 
+# ------------------------------------------------------------------ energy model
+#
+# The professor (2026-11-10): start from the additive approximation, generalize it to three tenants, check
+# how well it predicts the powers already measured and, above all, whether it is good enough to pick the
+# allocation with the least energy despite its errors.
+#
+# Power while a set S of networks runs, each on its partition:
+#
+#     P(S) = sum over S of P_alone(network, its SMs) - (|S| - 1) B
+#
+# B is the power of the module that networks running together draw only once (the base the plain sum
+# would count |S| times): the median over the 30 s pairs of P(a) + P(b) - P(a+b). Time: a network runs at
+# u_m times its alone rate while m others run, u_1 from the 30 s pairs and u_2 from the 30 s triples; no
+# 30 s quads exist, so u_3 = u_2 (a known gap: the quad is the one case it extrapolates). The inputs are
+# the networks alone at each size (ENERGY_ALONE) and the 30 s pairs and triples. It is checked only on
+# runs it never used: every phase (between two network ends) of the equal-work runs, energy-same-n and
+# energy-tenants, and their totals.
+#
+# The decision: for each set of networks, the allocations measured in one session (energy-tenants: the
+# layouts and one after the other alone on 16 SMs; energy-same-n: 8+4 either way round and one after the
+# other on 16 SMs), the one with the least predicted energy against the one with the least measured
+# energy. The regret is the measured energy of the model's choice over the best one, minus 1: what its
+# errors cost. Allocations from different sessions are not compared, because the power drifts a few
+# percent between sessions, as much as the differences being ranked. The shared-GPU families have no
+# input of their own here, so the model does not predict them.
+TENANT_SIZES = {"energy-same-n": {2: (8, 4)}, "energy-tenants": {2: (8, 8), 3: (8, 4, 4), 4: (4, 4, 4, 4)}}
+
+
+def run_phases(prefix):
+    """The phases of one equal-work run, cut at every network's last inference: ([(t0, t1, [networks
+    running], mean W)], {network: (first start, last end, inferences)}). The first phase starts at the
+    first inference of any network (warm-up included, as in run_energy); a phase under 50 ms, between two
+    ends that nearly coincide, is dropped. A solo run's network is named after its configuration. ([], {})
+    without rows or a power log."""
+    lats = sorted(glob.glob(prefix + "_*latencies.csv"))
+    if not lats or not os.path.exists(prefix + "_power.log"):
+        return [], {}
+    run, cfg = os.path.basename(prefix), os.path.basename(os.path.dirname(prefix))
+    span = {}
+    for f in lats:
+        net = os.path.basename(f)[len(run) + 1:-len("_latencies.csv")] or cfg.split("-")[0]
+        rows = [(int(r["t_start_ns"]) / 1e9, int(r["t_end_ns"]) / 1e9) for r in csv.DictReader(open(f))]
+        span[net] = (min(s for s, e in rows), max(e for s, e in rows), len(rows))
+    p = power_log(prefix + "_power.log")
+    t = np.array([x[0] for x in p])
+    w = np.array([(x[1] + x[2] + x[3]) / 1e3 for x in p])
+    cuts = sorted({min(s[0] for s in span.values())} | {s[1] for s in span.values()})
+    phases = []
+    for a, b in zip(cuts, cuts[1:]):
+        if b - a < 0.05:
+            continue
+        g = np.concatenate(([a], t[(t > a) & (t < b)], [b]))
+        v = np.interp(g, t, w)
+        running = [n for n, s in span.items() if s[0] < b - 1e-3 and s[1] > a + 1e-3]
+        phases.append((a, b, running, float(np.sum((v[1:] + v[:-1]) / 2 * np.diff(g))) / (b - a)))
+    return phases, span
+
+
+def energy_simulate(sizes, n_inf, rate, power, u):
+    """(seconds, joules) of the networks in sizes ({network: SMs}) doing n_inf[network] inferences side by
+    side from t = 0. While m others run, a network goes at u[m] times rate(network, SMs); when one
+    finishes, its partition stays idle and the others go on at the rate of the smaller set. power(S) is
+    the model's power of the set S, a list of (network, SMs)."""
+    left = {n: float(n_inf[n]) for n in sizes}
+    t = e = 0.0
+    while left:
+        r = {n: rate(n, sizes[n]) * u[len(left) - 1] for n in left}
+        dt = min(left[n] / r[n] for n in left)
+        e += dt * power([(n, sizes[n]) for n in left])
+        t += dt
+        for n in list(left):
+            left[n] -= r[n] * dt
+            if left[n] <= 1e-6:
+                del left[n]
+    return t, e
+
+
+def cmd_energy_model():
+    by = power_rows()
+    med = lambda rs, k: st.median(float(r[k]) for r in rs)
+    alone = lambda n, k: by[(ENERGY_ALONE[k][0], n + ENERGY_ALONE[k][1])]
+    pw = lambda n, k: med(alone(n, k), "rails_mW") / 1e3
+    rate = lambda n, k: med(alone(n, k), "target_inf_s")
+    complete = lambda rs: not any(int(r["corunner_missing"]) for r in rs)
+    summ = lambda e: "n %3d  mean %+5.1f %%  mean |e| %4.1f %%  max |e| %4.1f %%" % (
+        len(e), st.mean(e), st.mean(abs(x) for x in e), max(abs(x) for x in e))
+
+    # 1. The inputs: B and u_1 from the 30 s pairs, u_2 from the 30 s triples (8+4+4, in stress-triple).
+    Bs, u1 = [], []
+    for (f, c), rs in by.items():
+        if f in ENERGY_PAIRS and c.count("+") == 1 and complete(rs):
+            (a, b), (ka, kb) = c.split("+"), ENERGY_PAIRS[f]
+            Bs.append(pw(a, ka) + pw(b, kb) - med(rs, "rails_mW") / 1e3)
+            u1 += [med(rs, "target_inf_s") / rate(a, ka), med(rs, "corunner_inf_s") / rate(b, kb)]
+    B = st.median(Bs)
+    power = lambda S: sum(pw(n, k) for n, k in S) - (len(S) - 1) * B
+    err, u2 = [], []
+    for (f, c), rs in by.items():
+        if f == "stress-triple" and c.count("+") == 2 and complete(rs):
+            a, b, d = c.split("+")
+            err.append(100 * (power([(a, 8), (b, 4), (d, 4)]) / (med(rs, "rails_mW") / 1e3) - 1))
+            co = [[float(x) for x in r["corunner_inf_s"].split(";")] for r in rs]
+            u2 += [med(rs, "target_inf_s") / rate(a, 8), st.median(x[0] for x in co) / rate(b, 4),
+                   st.median(x[1] for x in co) / rate(d, 4)]
+    u = {0: 1.0, 1: st.median(u1), 2: st.median(u2), 3: st.median(u2)}
+    print("B = %.1f W (median of %d pairs, range %.1f-%.1f); u1 = %.3f, u2 = %.3f (u3 = u2)" % (
+        B, len(Bs), min(Bs), max(Bs), u[1], u[2]))
+    print("30 s triples, power predicted vs measured: " + summ(err))
+
+    # 2. The equal-work runs, never used above: the power of every phase, and each run's totals.
+    phase_err, runs = {}, {}
+    for fam in TENANT_SIZES:
+        for d in sorted(glob.glob(os.path.join(P.BENCH, fam, "*"))):
+            cfg = os.path.basename(d)
+            if "-alone" in cfg:
+                n, k = cfg.split("-alone")
+                sizes = {n: int(k)}
+            else:
+                nets = cfg.split("+")
+                sizes = dict(zip(nets, TENANT_SIZES[fam][len(nets)]))
+            if not all(k in ENERGY_ALONE for k in sizes.values()):
+                continue
+            for pl in sorted(glob.glob(os.path.join(d, "r*_power.log"))):
+                phases, span = run_phases(pl[:-len("_power.log")])
+                if not phases:
+                    continue
+                e_meas = e_pow = 0.0
+                for a, b, S, w in phases:
+                    p = power([(n, sizes[n]) for n in S])
+                    phase_err.setdefault(len(S), []).append(100 * (p / w - 1))
+                    e_meas += (b - a) * w
+                    e_pow += (b - a) * p
+                t_meas = max(s[1] for s in span.values()) - min(s[0] for s in span.values())
+                t_pred, e_pred = energy_simulate(sizes, {n: s[2] for n, s in span.items()}, rate, power, u)
+                runs.setdefault((fam, cfg), []).append((t_meas, e_meas, e_pow, t_pred, e_pred))
+    print("\nphase power, predicted vs measured, by networks running:")
+    for k in sorted(phase_err):
+        print("  %d running  %s" % (k, summ(phase_err[k])))
+    tot = {key: [st.median(x[i] for x in v) for i in range(5)] for key, v in runs.items()}
+    print("\ntotals (medians of the runs): measured | energy with the measured phase times | full prediction")
+    for (fam, cfg), m in sorted(tot.items()):
+        print("  %-15s %-38s T %6.1f s E %6.0f J | E %+5.1f %% | T %+5.1f %% E %+5.1f %%" % (
+            fam, cfg, m[0], m[1], 100 * (m[2] / m[1] - 1), 100 * (m[3] / m[0] - 1), 100 * (m[4] / m[1] - 1)))
+
+    # 3. The decision, within each session: the allocation with the least energy, predicted against
+    #    measured, and the regret of the predicted choice.
+    print("\nleast energy per set of networks, in one session: allocation, measured J, predicted J")
+    sets = {}
+    for (fam, cfg), m in tot.items():
+        if "+" in cfg:
+            sets.setdefault((fam, frozenset(cfg.split("+"))), []).append((cfg, m[1], m[4]))
+    regrets, right, lay_regrets, lay_right = [], 0, [], 0
+    for (fam, nets), opts in sorted(sets.items(), key=lambda x: (x[0][0], len(x[0][1]), sorted(x[0][1]))):
+        seq = [tot.get((fam, n + "-alone16")) for n in nets]
+        if None in seq:
+            continue
+        opts = opts + [("one after the other on 16", sum(s[1] for s in seq), sum(s[4] for s in seq))]
+        best = min(opts, key=lambda o: o[1])
+        pick = min(opts, key=lambda o: o[2])
+        regret = 100 * (pick[1] / best[1] - 1)
+        regrets.append(regret)
+        right += pick is best
+        print("  %-15s %s" % (fam, "  ".join("%s %.0f/%.0f" % (o[0], o[1], o[2]) for o in opts)))
+        print("  %15s picks %s, best %s: regret %.1f %%" % ("", pick[0], best[0], regret))
+        lay = opts[:-1]                 # the layouts alone: which network gets the larger partition
+        if len(lay) > 1:
+            lb, lp = min(lay, key=lambda o: o[1]), min(lay, key=lambda o: o[2])
+            lay_regrets.append(100 * (lp[1] / lb[1] - 1))
+            lay_right += lp is lb
+    print("  the model picks the least-energy allocation in %d of %d sets; regret median %.1f %%, max %.1f %%" % (
+        right, len(regrets), st.median(regrets), max(regrets)))
+    print("  among the layouts only (no one after the other): %d of %d sets; regret max %.1f %%" % (
+        lay_right, len(lay_regrets), max(lay_regrets)))
+
+
 # ------------------------------------------------------------------ selftest
 
 def selftest():
@@ -941,6 +1118,9 @@ def selftest():
         q = p99_together(os.path.join(d, "r1"))
         assert q["a"][1] == 6 and q["b"][1] == 6
         assert abs(q["a"][0] - np.percentile(range(15, 21), 99)) < 1e-12
+    t, e = energy_simulate({"a": 8, "b": 8}, {"a": 10, "b": 20}, lambda n, k: 10.0,
+                           lambda S: 10.0 * len(S), {0: 1.0, 1: 0.5})
+    assert abs(t - 3.0) < 1e-9 and abs(e - 50.0) < 1e-9
     print("  selftest passed")
 
 
@@ -948,5 +1128,6 @@ if __name__ == "__main__":
     {"inputs": cmd_inputs, "splits": cmd_splits, "triple-predict": cmd_triple_predict,
      "triple-compare": cmd_triple_compare, "check-predict": cmd_check_predict,
      "check-compare": cmd_check_compare, "energy": cmd_energy, "tenants": cmd_tenants,
+     "energy-model": cmd_energy_model,
      "triple-current": lambda: cmd_triple_compare(True), "power": cmd_power, "selftest": selftest}.get(
         CMD, lambda: sys.exit(__doc__))()
