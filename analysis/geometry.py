@@ -11,8 +11,10 @@
     python3 analysis/geometry.py check-compare   score them on 2+14, 14+2 and 6+6
     python3 analysis/geometry.py energy          sec:stress-energy: alone by size, pairs at equal work,
                                                  and the direct check (energy-same-n)
-    python3 analysis/geometry.py tenants         16 -> 8+8 -> 8+4+4 -> 4+4+4+4: time, energy and p99
-                                                 at equal work (energy-tenants)
+    python3 analysis/geometry.py tenants [family [alone family]]
+                                                 16 -> 8+8 -> 8+4+4 -> 4+4+4+4: time, energy and p99
+                                                 at equal work (energy-tenants; the shared GPU:
+                                                 energy-tenants-mpsdefault, energy-tenants-nomps)
     python3 analysis/geometry.py selftest
 
 The model is counter-model.py's L2 variant with its frozen p99 coefficients (counter-model-coeffs.csv):
@@ -753,6 +755,10 @@ def cmd_energy():
 # each network's p99 while all k are running, against its p99 alone on the whole GPU. The networks
 # finish at very different times (MobileNet does 10000 inferences in seconds, RetinaNet in minutes), so
 # the window in which all of them run can be short: the number of inferences behind each p99 is printed.
+# The professor (2026-11-10): the same sets on the shared GPU, with no static partition, under the MPS
+# daemon (energy-tenants-mpsdefault) and without it (energy-tenants-nomps); a triple is then one set, not
+# three layouts, and each set is also printed beside the static layouts of energy-tenants with the same
+# networks. Those ratios come from another session, each against its own alone runs.
 LAYOUT = {2: "8+8", 3: "8+4+4", 4: "4+4+4+4"}
 
 
@@ -776,55 +782,96 @@ def p99_together(prefix):
     return out
 
 
-def cmd_tenants():
-    d = os.path.join(P.BENCH, "energy-tenants")
-    if not os.path.isdir(d):
-        sys.exit("no energy-tenants runs in " + d)
-    runs = lambda cfg: [f[:-len("_power.log")] for f in sorted(glob.glob(os.path.join(d, cfg, "r*_power.log")))]
-    rng = lambda v: "%.2f (%.2f-%.2f)" % (st.median(v), min(v), max(v))
+def tenants_prefixes(d, cfg):
+    """The run prefixes (<d>/<cfg>/r1, r2, ...) of one configuration of a tenants family, from its power logs."""
+    return [f[:-len("_power.log")] for f in sorted(glob.glob(os.path.join(d, cfg, "r*_power.log")))]
 
-    # Each network alone on the whole GPU: median seconds, joules and p99 over its runs.
+
+def tenants_alone(fam):
+    """{network: (seconds, joules, p99 gpu_ms)} of each network alone on the whole GPU in a tenants family
+    (its -alone16 configurations): medians over the runs."""
+    d = os.path.join(P.BENCH, fam)
+    if not os.path.isdir(d):
+        sys.exit("no %s runs in %s" % (fam, d))
     alone = {}
     for cfg in sorted(c for c in os.listdir(d) if c.endswith("-alone16")):
-        ps = runs(cfg)
+        ps = tenants_prefixes(d, cfg)
         es = [x for x in map(run_energy, ps) if x]
         p99 = [np.percentile([float(r["gpu_ms"]) for r in csv.DictReader(open(p + "_latencies.csv"))
                               if r["phase"] == "bench"], 99) for p in ps]
         if es:
             alone[cfg[:-len("-alone16")]] = (st.median(x[0] for x in es), st.median(x[1] for x in es), st.median(p99))
+    return alone
+
+
+def tenants_groups(fam, alone):
+    """{configuration: (seconds, joules, time ratio, energy ratio, {network: (p99 ratio, inferences)})} of the
+    group runs of a tenants family, medians over the runs. The ratios are together over the same networks one
+    after the other alone on the whole GPU (alone, from tenants_alone); a network's p99 ratio is its p99 while
+    every network runs (p99_together) over its p99 alone, and is missing when no run has a row in that
+    window. A configuration with no complete run, or a network without alone runs, is left out."""
+    d = os.path.join(P.BENCH, fam)
+    res = {}
+    for cfg in (c for c in os.listdir(d) if "+" in c):
+        nets = cfg.split("+")
+        got = [(x, p99_together(p)) for p in tenants_prefixes(d, cfg) for x in [run_energy(p)] if x]
+        if not got or any(n not in alone for n in nets):
+            continue
+        t, e = st.median(x[0] for x, q in got), st.median(x[1] for x, q in got)
+        p99 = {}
+        for n in nets:
+            v = [q[n] for x, q in got if q.get(n, (None, 0))[0] is not None]
+            if v:
+                p99[n] = (st.median(a for a, c in v) / alone[n][2], st.median(c for a, c in v))
+        res[cfg] = (t, e, t / sum(alone[n][0] for n in nets), e / sum(alone[n][1] for n in nets), p99)
+    return res
+
+
+def cmd_tenants():
+    """tenants [family [alone family]]: energy-tenants (the MPS static layouts) by default. The alone runs
+    come from the family itself unless another is named: energy-tenants-nomps has none and takes those of
+    energy-tenants-mpsdefault, measured in the same session. A shared-GPU family is also printed beside
+    the static layouts of energy-tenants with the same networks."""
+    fam = sys.argv[2] if len(sys.argv) > 2 else "energy-tenants"
+    alone = tenants_alone(sys.argv[3] if len(sys.argv) > 3 else fam)
+    shared = fam != "energy-tenants"
+    static = tenants_groups("energy-tenants", tenants_alone("energy-tenants")) if shared else {}
+    res = tenants_groups(fam, alone)
+    rng = lambda v: "%.2f (%.2f-%.2f)" % (st.median(v), min(v), max(v))
+    span = lambda v: "%.2f" % v[0] if len(v) == 1 else "%.2f-%.2f" % (min(v), max(v))
+    where = lambda k: "shared" if shared else LAYOUT[k]
+
     print("each network alone on the whole GPU, the same N inferences (medians of the runs):")
     for net, (t, e, p) in alone.items():
         print("  %-12s %6.1f s %6.0f J  p99 %.3f ms" % (net, t, e, p))
 
-    print("\ntogether on the layout, against the same networks one after the other alone on the whole GPU:")
+    print("\n%s, together against the same networks one after the other alone on the whole GPU:" % fam)
     print("time and energy ratios (medians of the runs); each network's p99 while all run, against its p99")
-    print("alone on the whole GPU, with the inferences behind it")
-    res = {}
-    for cfg in sorted((c for c in os.listdir(d) if "+" in c), key=lambda c: (c.count("+"), c)):
+    print("alone on the whole GPU, with the inferences behind it" +
+          ("; then the static layouts of energy-tenants" if shared else ""))
+    cfgs = sorted((c for c in os.listdir(os.path.join(P.BENCH, fam)) if "+" in c), key=lambda c: (c.count("+"), c))
+    for cfg in cfgs:
         nets = cfg.split("+")
-        got = [(x, p99_together(p)) for p in runs(cfg) for x in [run_energy(p)] if x]
-        if not got or any(n not in alone for n in nets):
-            print("  %-8s %-40s incomplete" % (LAYOUT.get(len(nets), "?"), cfg))
+        if cfg not in res:
+            print("  %-8s %-40s incomplete" % (where(len(nets)), cfg))
             continue
-        t, e = st.median(x[0] for x, q in got), st.median(x[1] for x, q in got)
-        rt, re = t / sum(alone[n][0] for n in nets), e / sum(alone[n][1] for n in nets)
-        cells = []
-        for n in nets:
-            v = [q[n] for x, q in got if q.get(n, (None, 0))[0] is not None]
-            cells.append("%s %s" % (n, "%.2f (%d)" % (st.median(a for a, c in v) / alone[n][2],
-                                                      st.median(c for a, c in v)) if v else "-"))
-        res.setdefault(len(nets), []).append((nets, rt, re))
-        print("  %-8s %-40s %6.1f s %6.0f J  time %.2f  energy %.2f  | %s" % (
-            LAYOUT[len(nets)], cfg, t, e, rt, re, "  ".join(cells)))
+        t, e, rt, re, p99 = res[cfg]
+        cells = "  ".join("%s %s" % (n, "%.2f (%d)" % p99[n] if n in p99 else "-") for n in nets)
+        line = "  %-8s %-40s %6.1f s %6.0f J  time %.2f  energy %.2f  | %s" % (where(len(nets)), cfg, t, e, rt, re, cells)
+        same = [v for c, v in static.items() if set(c.split("+")) == set(nets)]
+        if same:
+            line += "  | static time %s energy %s" % (span([v[2] for v in same]), span([v[3] for v in same]))
+        print(line)
 
     print("\nby tenant count: median (range) of the time and energy ratios")
-    for k in sorted(res):
-        for label, keep in (("all", lambda n: True), ("with RetinaNet", lambda n: "retinanet" in n),
-                            ("without RetinaNet", lambda n: "retinanet" not in n)):
-            v = [x for x in res[k] if keep(x[0])]
+    for k in sorted({c.count("+") + 1 for c in res}):
+        for label, keep in (("all", lambda c: True), ("with RetinaNet", lambda c: "retinanet" in c),
+                            ("without RetinaNet", lambda c: "retinanet" not in c)):
+            v = [x for c, x in res.items() if c.count("+") + 1 == k and keep(c)]
             if v:
-                print("  %d tenants %-8s %-18s %2d layouts  time %s  energy %s" % (
-                    k, LAYOUT[k], label, len(v), rng([x[1] for x in v]), rng([x[2] for x in v])))
+                print("  %d tenants %-8s %-18s %2d %s  time %s  energy %s" % (
+                    k, where(k), label, len(v), "sets" if shared else "layouts",
+                    rng([x[2] for x in v]), rng([x[3] for x in v])))
 
 
 # ------------------------------------------------------------------ selftest

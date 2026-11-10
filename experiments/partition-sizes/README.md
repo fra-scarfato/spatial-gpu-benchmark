@@ -50,6 +50,13 @@ python3 analysis/geometry.py energy
 #    stopping after the same 10000 inferences, and each alone on the whole GPU (about 6 h)
 POWER=1 MIN_INF=10000 MIN_DUR=0 RUN_TIMEOUT=1200 ./measure/sweep.sh --exp energy-tenants --static-chunks 8
 python3 analysis/geometry.py tenants
+
+# 10. The same sets on the shared GPU, no static partition: under the MPS daemon (with the four networks
+#     alone on the whole GPU again, the baseline of both arms) and with no daemon (about 5 h)
+POWER=1 MIN_INF=10000 MIN_DUR=0 RUN_TIMEOUT=1200 ./measure/sweep.sh --exp energy-tenants-mpsdefault --static-chunks 8
+POWER=1 MIN_INF=10000 MIN_DUR=0 RUN_TIMEOUT=1200 ./measure/sweep.sh --exp energy-tenants-nomps --static-chunks 8
+python3 analysis/geometry.py tenants energy-tenants-mpsdefault
+python3 analysis/geometry.py tenants energy-tenants-nomps energy-tenants-mpsdefault
 ```
 
 `POWER=1` samples the board's three INA3221 power rails every 200 ms during each run. The splits are

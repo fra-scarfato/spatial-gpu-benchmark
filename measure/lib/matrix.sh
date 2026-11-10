@@ -869,3 +869,33 @@ for et_t in $DEV; do
 done
 add "energy-tenants_${et_dev[0]}+${et_dev[1]}+${et_dev[2]}+${et_dev[3]}" \
     "pair|static|||$(et_cmd "${et_dev[0]}")|$(et_cmd "${et_dev[1]}");$(et_cmd "${et_dev[2]}");$(et_cmd "${et_dev[3]}")|25:25:25:25"
+
+# Tenants on the shared GPU (the professor, 2026-11-10): the sets of energy-tenants launched together with
+# no static partition, every network free to use all 16 SMs: energy-tenants-mpsdefault under the MPS daemon
+# with no partitions, energy-tenants-nomps with no daemon, where the driver time-slices the processes.
+# Without partitions the position of a network no longer matters, so the three networks of a triple are
+# one configuration, not three layouts: 6 pairs, 4 triples and the quad. energy-tenants-mpsdefault also
+# re-runs the four networks alone on the whole GPU, with the same command as energy-tenants, so that both
+# arms have a baseline from their own session. Run like energy-tenants; also declared in
+# analysis/lib/families.py.
+for et_arm in mpsdefault:on nomps:off; do
+    et_f="energy-tenants-${et_arm%%:*}" et_m="${et_arm#*:}"
+    if [ "$et_m" = on ]; then
+        for et_t in $DEV; do
+            add "${et_f}_${et_t}-alone16" "solo|static|||$(et_cmd "$et_t")||100:"
+        done
+    fi
+    for et_i in 0 1 2; do
+        for et_j in $(seq $((et_i + 1)) 3); do
+            add "${et_f}_${et_dev[$et_i]}+${et_dev[$et_j]}" \
+                "pair|$et_m|||$(et_cmd "${et_dev[$et_i]}")|$(et_cmd "${et_dev[$et_j]}")|"
+        done
+    done
+    for et_x in 3 2 1 0; do          # each triple is the four networks less one
+        et_o=(); for et_k in 0 1 2 3; do [ "$et_k" = "$et_x" ] || et_o+=("${et_dev[$et_k]}"); done
+        add "${et_f}_${et_o[0]}+${et_o[1]}+${et_o[2]}" \
+            "pair|$et_m|||$(et_cmd "${et_o[0]}")|$(et_cmd "${et_o[1]}");$(et_cmd "${et_o[2]}")|"
+    done
+    add "${et_f}_${et_dev[0]}+${et_dev[1]}+${et_dev[2]}+${et_dev[3]}" \
+        "pair|$et_m|||$(et_cmd "${et_dev[0]}")|$(et_cmd "${et_dev[1]}");$(et_cmd "${et_dev[2]}");$(et_cmd "${et_dev[3]}")|"
+done
