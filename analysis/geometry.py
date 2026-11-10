@@ -959,17 +959,17 @@ def energy_simulate(sizes, n_inf, rate, power, u):
     return t, e
 
 
-def cmd_energy_model():
-    by = power_rows()
+def energy_fit(by):
+    """The additive model's inputs, from the 30 s runs (power_rows()): B and u_1 from the pairs, u_2 from
+    the 8+4+4 triples (stress-triple). A dict: B (W) and Bs (each pair's), u ({others running: rate
+    factor}, u_3 = u_2), pw(network, SMs) and rate(network, SMs) alone (ENERGY_ALONE), power(S) of a set
+    S = [(network, SMs)], and err, the triples' power predicted against measured (%). catalog.py exports
+    B and u, so the simulator's energy is this model's."""
     med = lambda rs, k: st.median(float(r[k]) for r in rs)
     alone = lambda n, k: by[(ENERGY_ALONE[k][0], n + ENERGY_ALONE[k][1])]
     pw = lambda n, k: med(alone(n, k), "rails_mW") / 1e3
     rate = lambda n, k: med(alone(n, k), "target_inf_s")
     complete = lambda rs: not any(int(r["corunner_missing"]) for r in rs)
-    summ = lambda e: "n %3d  mean %+5.1f %%  mean |e| %4.1f %%  max |e| %4.1f %%" % (
-        len(e), st.mean(e), st.mean(abs(x) for x in e), max(abs(x) for x in e))
-
-    # 1. The inputs: B and u_1 from the 30 s pairs, u_2 from the 30 s triples (8+4+4, in stress-triple).
     Bs, u1 = [], []
     for (f, c), rs in by.items():
         if f in ENERGY_PAIRS and c.count("+") == 1 and complete(rs):
@@ -987,9 +987,19 @@ def cmd_energy_model():
             u2 += [med(rs, "target_inf_s") / rate(a, 8), st.median(x[0] for x in co) / rate(b, 4),
                    st.median(x[1] for x in co) / rate(d, 4)]
     u = {0: 1.0, 1: st.median(u1), 2: st.median(u2), 3: st.median(u2)}
+    return dict(B=B, Bs=Bs, u=u, pw=pw, rate=rate, power=power, err=err)
+
+
+def cmd_energy_model():
+    m = energy_fit(power_rows())
+    B, Bs, u, rate, power = m["B"], m["Bs"], m["u"], m["rate"], m["power"]
+    summ = lambda e: "n %3d  mean %+5.1f %%  mean |e| %4.1f %%  max |e| %4.1f %%" % (
+        len(e), st.mean(e), st.mean(abs(x) for x in e), max(abs(x) for x in e))
+
+    # 1. The inputs: B and u_1 from the 30 s pairs, u_2 from the 30 s triples (8+4+4, in stress-triple).
     print("B = %.1f W (median of %d pairs, range %.1f-%.1f); u1 = %.3f, u2 = %.3f (u3 = u2)" % (
         B, len(Bs), min(Bs), max(Bs), u[1], u[2]))
-    print("30 s triples, power predicted vs measured: " + summ(err))
+    print("30 s triples, power predicted vs measured: " + summ(m["err"]))
 
     # 2. The equal-work runs, never used above: the power of every phase, and each run's totals.
     phase_err, runs = {}, {}
