@@ -405,7 +405,14 @@ move_back() {  # $1 = tmpfs prefix, $2 = results prefix
 # inferences on 4 SMs next to other networks, about 6 minutes, so it is run with RUN_TIMEOUT=1200.
 RUN_TIMEOUT="${RUN_TIMEOUT:-600}"
 
-# POWER=1: each run also writes <out>_power.log, the board's three INA3221 rails sampled every 200 ms
+# A periodic run (runner --levels) starts its first window at one CLOCK_MONOTONIC instant shared by
+# every process of the run, this many seconds after the launch: enough for the slowest engine load and
+# warm-up, and a process that misses it fails instead of releasing late.
+ORIGIN_DELAY_S="${ORIGIN_DELAY_S:-30}"
+
+# POWER=1: each run also writes <out>_power.log, the board's three INA3221 rails sampled every 200 ms,
+# with the GPU clock (Hz) and the gpu-thermal temperature (millidegrees) in the same line, so that a
+# throttled or wrongly locked clock shows in the run's own record
 # from the start of the first process to the end of the target. hwmon and not tegrastats, because
 # tegrastats stamps its lines to the second; here each line starts with /proc/uptime (10 ms, the
 # boot clock, which equals the runner's CLOCK_MONOTONIC stamps on a board that never suspends), so
@@ -416,19 +423,25 @@ POWER_HW=""
 for h in /sys/class/hwmon/hwmon*; do
     [ "$(cat "$h/in1_label" 2>/dev/null)" = VDD_GPU_SOC ] && POWER_HW="$h"
 done
+GPU_TEMP=""
+for z in /sys/devices/virtual/thermal/thermal_zone*; do
+    [ "$(cat "$z/type" 2>/dev/null)" = gpu-thermal ] && GPU_TEMP="$z/temp"
+done
 power_start() {  # $1 = output prefix; sets POWER_PID
     POWER_PID=""
     [ "$POWER" = 1 ] || return 0
     [ -n "$POWER_HW" ] || { echo "[sweep] ABORT: POWER=1 but no INA3221 with VDD_GPU_SOC" >&2; exit 1; }
+    [ -n "$GPU_TEMP" ] || { echo "[sweep] ABORT: POWER=1 but no gpu-thermal zone" >&2; exit 1; }
     (
-        local h="$POWER_HW" up _ v1 c1 v2 c2 v3 c3
-        echo "uptime_s gpu_soc_mV gpu_soc_mA cpu_cv_mV cpu_cv_mA sys5v_mV sys5v_mA"
+        local h="$POWER_HW" up _ v1 c1 v2 c2 v3 c3 hz mc
+        echo "uptime_s gpu_soc_mV gpu_soc_mA cpu_cv_mV cpu_cv_mA sys5v_mV sys5v_mA gpu_hz gpu_mC"
         while :; do
             read -r up _ < /proc/uptime
             read -r v1 < "$h/in1_input"; read -r c1 < "$h/curr1_input"
             read -r v2 < "$h/in2_input"; read -r c2 < "$h/curr2_input"
             read -r v3 < "$h/in3_input"; read -r c3 < "$h/curr3_input"
-            echo "$up $v1 $c1 $v2 $c2 $v3 $c3"
+            read -r hz < "$GPU_DEVFREQ/cur_freq"; read -r mc < "$GPU_TEMP"
+            echo "$up $v1 $c1 $v2 $c2 $v3 $c3 $hz $mc"
             sleep 0.2
         done
     ) > "$1_power.log" 2>&1 &
@@ -460,6 +473,12 @@ do_job() {  # $1 = spec, $2 = output prefix
     # The CSVs go to RAM during the run and are moved into the tree afterwards.
     local tmp="$TMPCSV/$(basename "$out")"
 
+    # A periodic run gets its shared origin (ORIGIN_DELAY_S); python's monotonic_ns is the runner's clock.
+    local origin=""
+    case "$cmdA $cmdB" in
+        *--levels*) origin="--origin-ns $(python3 -c "import time; print(time.monotonic_ns() + int($ORIGIN_DELAY_S * 1e9))")" ;;
+    esac
+
     # $penv, $envA and $cmdA are deliberately unquoted: each is a string that
     # must split into separate words for `env`. They are empty when unused, and
     # an empty unquoted expansion simply disappears. (That is also why the
@@ -467,7 +486,7 @@ do_job() {  # $1 = spec, $2 = output prefix
     if [ "$kind" = solo ]; then
         power_start "$out"
         # shellcheck disable=SC2086
-        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 ||
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO $origin --csv "$tmp" > "$out.log" 2>&1 ||
             { power_stop; return 1; }
         power_stop
         move_back "$tmp" "$out"
@@ -517,7 +536,7 @@ do_job() {  # $1 = spec, $2 = output prefix
         done
         sleep 3
         # shellcheck disable=SC2086
-        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envA $cmdA $PROTO $origin --csv "$tmp" > "$out.log" 2>&1 || rc_a=$?
         power_stop
         kill -TERM "${pids[@]}" 2>/dev/null || true
         wait "${pids[@]}" 2>/dev/null || true
@@ -550,7 +569,7 @@ do_job() {  # $1 = spec, $2 = output prefix
             envi="CUDA_MPS_SM_PARTITION=${PART_LIST[$j]}"
         fi
         # shellcheck disable=SC2086
-        timeout -k 30 "$RUN_TIMEOUT" env $penv $envi ${cmds[$i]} $PROTO --csv "${tmp}_${labels[$i]}" \
+        timeout -k 30 "$RUN_TIMEOUT" env $penv $envi ${cmds[$i]} $PROTO $origin --csv "${tmp}_${labels[$i]}" \
             > "${out}_${labels[$i]}.log" 2>&1 &
         pids+=($!)
     done

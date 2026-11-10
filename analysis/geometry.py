@@ -560,12 +560,13 @@ def cmd_check_compare():
 # ------------------------------------------------------------------ power
 
 def power_log(path):
-    """[(uptime_s, gpu_soc_mW, cpu_cv_mW, sys5v_mW)] from a sweep _power.log."""
+    """[(uptime_s, gpu_soc_mW, cpu_cv_mW, sys5v_mW)] from a sweep _power.log. Since 2026-11-10 a line
+    also carries the GPU clock and temperature (nine columns, read by periodic.py clock_log)."""
     out = []
     for line in open(path, errors="replace"):
         f = line.split()
-        if len(f) == 7 and f[0][0].isdigit():
-            v = [float(x) for x in f]
+        if len(f) in (7, 9) and f[0][0].isdigit():
+            v = [float(x) for x in f[:7]]
             out.append((v[0], v[1] * v[2] / 1e3, v[3] * v[4] / 1e3, v[5] * v[6] / 1e3))
     return out
 
@@ -686,12 +687,17 @@ def run_energy(prefix):
         spans += rows
         counts.append(len(rows))
     t0, t1 = min(s for s, e in spans), max(e for s, e in spans)
-    p = power_log(prefix + "_power.log")
+    return t1 - t0, rails_energy(power_log(prefix + "_power.log"), t0, t1), counts
+
+
+def rails_energy(p, t0, t1):
+    """Joules of the three rails from t0 to t1 (seconds, CLOCK_MONOTONIC): the power_log samples p
+    integrated with trapezoids, the ends interpolated between the 200 ms samples."""
     t = np.array([x[0] for x in p])
     w = np.array([(x[1] + x[2] + x[3]) / 1e3 for x in p])
     g = np.concatenate(([t0], t[(t > t0) & (t < t1)], [t1]))
     v = np.interp(g, t, w)
-    return t1 - t0, float(np.sum((v[1:] + v[:-1]) / 2 * np.diff(g))), counts
+    return float(np.sum((v[1:] + v[:-1]) / 2 * np.diff(g)))
 
 
 def cmd_energy():

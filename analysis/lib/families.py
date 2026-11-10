@@ -100,6 +100,10 @@ EXP_DIR = {
     "energy-tenants":              "exp41",
     "energy-tenants-mpsdefault":   "exp42",
     "energy-tenants-nomps":        "exp43",
+    "periodic-alone16":            "exp44",
+    "periodic-freq":               "exp45",
+    "periodic-88":                 "exp46",
+    "periodic-844":                "exp47",
 }
 
 # The keys whose configuration names the one measured target first (mobilenet-saxpy-L030,
@@ -109,7 +113,7 @@ EXP_DIR = {
 TARGET_FIRST = {"exp13", "exp14", "exp15", "exp17", "exp18", "exp19", "exp20", "exp21", "exp22",
                 "exp23", "exp24", "exp25", "exp26", "exp27", "exp28", "exp29", "exp30", "exp31",
                 "exp32", "exp33", "exp34", "exp35", "exp36", "exp37", "exp38", "exp39", "exp40",
-                "exp41", "exp42", "exp43"}
+                "exp41", "exp42", "exp43", "exp44", "exp45", "exp46", "exp47"}
 
 
 def key_map():

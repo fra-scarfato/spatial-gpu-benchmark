@@ -45,6 +45,12 @@ check_clocks() {
         local gov; gov=$(cat "$GPU_DEVFREQ/governor" 2>/dev/null)
         printf '[sweep] GPU governor: %s\n' "${gov:-unreadable}"
         [ "$gov" = "$GPU_GOVERNOR" ] || echo "[sweep] WARNING: GPU governor is ${gov:-unreadable}, not the expected $GPU_GOVERNOR." >&2
+        # GPU_FREQ (Hz): a block of a campaign meant for one locked frequency (measure/gpu-freq.sh).
+        if [ -n "${GPU_FREQ:-}" ] && { [ "$gmin" != "$GPU_FREQ" ] || [ "$gmax" != "$GPU_FREQ" ]; }; then
+            echo "[sweep] ABORT: the GPU clock is not locked at GPU_FREQ=$GPU_FREQ." >&2
+            echo "        Fix with:  sudo measure/gpu-freq.sh $GPU_FREQ" >&2
+            ok=0
+        fi
         if [ "$gmin" != "$gmax" ]; then
             echo "[sweep] ABORT: the GPU clocks are NOT locked." >&2
             echo "        An idle governor would inflate every latency ~4x." >&2

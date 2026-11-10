@@ -899,3 +899,62 @@ for et_arm in mpsdefault:on nomps:off; do
     add "${et_f}_${et_dev[0]}+${et_dev[1]}+${et_dev[2]}+${et_dev[3]}" \
         "pair|$et_m|||$(et_cmd "${et_dev[0]}")|$(et_cmd "${et_dev[1]}");$(et_cmd "${et_dev[2]}");$(et_cmd "${et_dev[3]}")|"
 done
+
+# Periodic loads (the professor, 2026-11-10): the networks released like cameras (runner --levels; the
+# schedule is Periodic in include/config.hpp) instead of back to back, at ascending loads in one process:
+# the classification networks from 15 to 960 Hz in steps of sqrt 2 (15, 30 and 60 are the camera rates),
+# RetinaNet on every third tick (5 to 320 Hz), 2000 ticks per level. Releases synchronized (sync: every
+# process at offset 0) or staggered (stag: the i-th of k at i/k of a tick). No job is dropped: the budget,
+# gamma x the p99 alone on 16 SMs, is applied by analysis/periodic.py. Every family runs with POWER=1 and
+# RUN_TIMEOUT=900 (a sweep is about 8 minutes). Also declared in analysis/lib/families.py.
+#   periodic-alone16  each development network alone on the whole GPU
+#   periodic-freq     resnet+inception and mobilenet+retinanet, synchronized, on 8+8 (static) and on the
+#                     shared GPU (MPS default), at three locked GPU clocks: the suffix f<MHz> names the
+#                     clock, which measure/gpu-freq.sh sets (root) and GPU_FREQ=<Hz> makes the guard check
+#   periodic-88       the 6 pairs, sync and stag, on 8+8 (static), MPS default and no MPS
+#   periodic-844      the 12 static layouts of 8+4+4, and the 4 triples on MPS default and no MPS, sync
+#                     and stag
+PER_LEVELS="15,21.21,30,42.43,60,84.85,120,169.71,240,339.41,480,678.82,960"
+per_cmd() {  # $1 = network, $2 = its first release in ticks after the window start
+    local every=1; [ "$1" = retinanet ] && every=3
+    echo "$(et_cmd "$1") --levels $PER_LEVELS --jobs-per-level 2000 --every $every --offset-frac $2"
+}
+for pt in $DEV; do
+    add "periodic-alone16_${pt}" "solo|static|||$(per_cmd "$pt" 0)||100:"
+done
+for pf in 1300 816 612; do
+    for pp in resnet:inception mobilenet:retinanet; do
+        pa=${pp%%:*} pb=${pp#*:}
+        add "periodic-freq_${pa}+${pb}-static-f$pf" "pair|static|||$(per_cmd "$pa" 0)|$(per_cmd "$pb" 0)|50"
+        add "periodic-freq_${pa}+${pb}-mpsdefault-f$pf" "pair|on|||$(per_cmd "$pa" 0)|$(per_cmd "$pb" 0)|"
+    done
+done
+for pi in 0 1 2; do
+    for pj in $(seq $((pi + 1)) 3); do
+        pa=${et_dev[$pi]} pb=${et_dev[$pj]}
+        for pr in sync:0 stag:0.5; do
+            pn="${pa}+${pb}" po="${pr#*:}" ps="${pr%%:*}"
+            add "periodic-88_${pn}-static-$ps" "pair|static|||$(per_cmd "$pa" 0)|$(per_cmd "$pb" "$po")|50"
+            add "periodic-88_${pn}-mpsdefault-$ps" "pair|on|||$(per_cmd "$pa" 0)|$(per_cmd "$pb" "$po")|"
+            add "periodic-88_${pn}-nomps-$ps" "pair|off|||$(per_cmd "$pa" 0)|$(per_cmd "$pb" "$po")|"
+        done
+    done
+done
+for pr in sync:0:0 stag:0.3333:0.6667; do
+    ps=${pr%%:*} po=${pr#*:}; po1=${po%%:*} po2=${po#*:}
+    for pt in $DEV; do
+        et_o=(); for et_c in $DEV; do [ "$et_c" = "$pt" ] || et_o+=("$et_c"); done
+        for et_p in 0:1 0:2 1:2; do
+            pa=${et_o[${et_p%:*}]} pb=${et_o[${et_p#*:}]}
+            add "periodic-844_${pt}+${pa}+${pb}-static-$ps" \
+                "pair|static|||$(per_cmd "$pt" 0)|$(per_cmd "$pa" "$po1");$(per_cmd "$pb" "$po2")|50:25:25"
+        done
+    done
+    for et_x in 3 2 1 0; do
+        et_o=(); for et_k in 0 1 2 3; do [ "$et_k" = "$et_x" ] || et_o+=("${et_dev[$et_k]}"); done
+        pn="${et_o[0]}+${et_o[1]}+${et_o[2]}"
+        pc="$(per_cmd "${et_o[0]}" 0)|$(per_cmd "${et_o[1]}" "$po1");$(per_cmd "${et_o[2]}" "$po2")"
+        add "periodic-844_${pn}-mpsdefault-$ps" "pair|on|||$pc|"
+        add "periodic-844_${pn}-nomps-$ps" "pair|off|||$pc|"
+    done
+done

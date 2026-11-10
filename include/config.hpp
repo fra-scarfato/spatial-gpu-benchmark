@@ -18,6 +18,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,6 +78,29 @@ struct Protocol {
     double      minDurationS  = cfg::minDurationS;
 };
 
+// Periodic releases (--levels). Empty levels is the closed loop every run before
+// 2026-11-10 used: each inference starts when the previous one ends, as fast as the
+// GPU allows. With levels, the network is released like a camera, job m of a
+// level at
+//
+//     window start + (offsetFrac + m * every) * tick,    tick = 1 / level  (s),
+//
+// whatever the previous job is doing. A job released while the previous one still
+// runs waits in a FIFO and starts at its end; no job is ever dropped, so a deadline
+// can be applied afterwards, in the analysis, at any value. The levels are
+// ascending loads stepped through in one process: each a window of jobsPerLevel
+// ticks, then a 1 s gap that lets a backlog drain before the next load. Every
+// process of a run computes the same windows from the same origin, so their levels
+// line up and offsetFrac alone decides whether their releases coincide.
+struct Periodic {
+    std::vector<double> levels;          // base release rates (Hz), ascending
+    std::size_t  jobsPerLevel = 2000;    // ticks per level window
+    unsigned     every        = 1;       // release on every k-th tick (RetinaNet: 3)
+    double       offsetFrac   = 0.0;     // first release, in ticks after the window start
+    std::int64_t originNs     = 0;       // CLOCK_MONOTONIC start of the first window; 0 = 1 s after warm-up
+    double       maxLagMs     = 1000.0;  // a job that starts this late means overload: stop
+};
+
 struct Options {
     // Inputs, shared by every network.
     std::string imageDir;                         // dataset directory
@@ -90,6 +114,7 @@ struct Options {
     std::size_t numFixedInputs = cfg::numFixedInputs;
 
     Protocol protocol;
+    Periodic periodic;                            // empty levels = back to back
 
     // Output base name. With one network the files are
     // <csvPrefix>_latencies.csv; with several, each network gets

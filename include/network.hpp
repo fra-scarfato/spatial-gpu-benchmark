@@ -28,6 +28,7 @@ struct RunSpec {
     std::size_t minInferences = cfg::minInferences;
     double      minDurationS  = cfg::minDurationS;
     std::string csvPrefix     = std::string(cfg::defaultCsvPrefix);
+    Periodic    periodic;                       // empty levels = back to back
 };
 
 // Set by SIGTERM/SIGINT (handler installed in main). The warm-up and timed loops
@@ -118,11 +119,16 @@ private:
     // tEndNs place it in time on CLOCK_MONOTONIC (host side: before the input fetch, and
     // when the host sees it complete), so its latency can be matched to what a co-runner
     // logs on the same clock, e.g. the ON and OFF phases of an itfproc stressor.
+    // tReleaseNs is when the job was released: its start in the closed loop, its slot
+    // in the schedule under --levels. levelHz is the base rate of its load level, 0 in
+    // the closed loop, so that a file says by itself which load each job saw.
     struct Sample {
         float prepMs = 0, wallMs = 0, gpuMs = 0;
-        std::int64_t tStartNs = 0, tEndNs = 0;
+        std::int64_t tStartNs = 0, tEndNs = 0, tReleaseNs = 0;
+        double levelHz = 0;
     };
     Sample step(std::size_t index);
+    void   measurePeriodic(StartGate& gate);   // measure() under --levels
     void   writeRow(const char* phase, std::size_t index, const Sample& s);
 
     std::string                   label_;

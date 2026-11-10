@@ -17,7 +17,9 @@
 #include <sched.h>
 #include <sys/resource.h>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
+#include <time.h>
 
 std::atomic<bool> g_stop{false};
 static_assert(std::atomic<bool>::is_always_lock_free);   // safe to set from a signal handler
@@ -37,6 +39,15 @@ double secondsSince(Clock::time_point t0) {
 // clock other processes on the board can read too.
 std::int64_t monoNs(Clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+}
+
+// Sleeps until t, in CLOCK_MONOTONIC nanoseconds, and returns at once if t is past. An
+// absolute deadline (TIMER_ABSTIME), not a relative sleep, so the lateness of one wake-up
+// never carries into the next release. A signal ends the sleep only when it asked to stop.
+void sleepUntil(std::int64_t t) {
+    const timespec ts{static_cast<time_t>(t / 1000000000), static_cast<long>(t % 1000000000)};
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, nullptr) == EINTR && !g_stop) {
+    }
 }
 
 } // namespace
@@ -60,7 +71,7 @@ Network::Network(const NetworkOptions& net,
     // working stream that silently discards every row.
     if (!csv_)
         throw std::runtime_error("cannot open " + spec.csvPrefix + "_latencies.csv");
-    csv_ << "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns\n";
+    csv_ << "phase,index,image,prep_ms,wall_ms,gpu_ms,t_start_ns,t_end_ns,level_hz,t_release_ns\n";
 }
 
 Network::Sample Network::step(std::size_t index) {
@@ -88,6 +99,7 @@ Network::Sample Network::step(std::size_t index) {
     s.gpuMs  = float(gpuMs);
     s.tStartNs = monoNs(t0);
     s.tEndNs   = monoNs(t2);
+    s.tReleaseNs = s.tStartNs;      // the closed loop releases a job when it starts it
     return s;
 }
 
@@ -97,7 +109,7 @@ void Network::writeRow(const char* phase, std::size_t index, const Sample& s) {
     // which in fixed mode is a set index rather than a file name.
     csv_ << phase << "," << index << "," << inputSet_.idOf(index) << ","
          << s.prepMs << "," << s.wallMs << "," << s.gpuMs << ","
-         << s.tStartNs << "," << s.tEndNs << "\n";
+         << s.tStartNs << "," << s.tEndNs << "," << s.levelHz << "," << s.tReleaseNs << "\n";
 }
 
 void Network::warmup() {
@@ -113,6 +125,11 @@ void Network::warmup() {
 }
 
 void Network::measure(StartGate& gate) {
+    if (!spec_.periodic.levels.empty()) {
+        measurePeriodic(gate);
+        return;
+    }
+
     // The stop rule. A bound of 0 disables it, and with both bounds at 0 the
     // loop makes a single pass over the input set, which is the fast
     // development mode.
@@ -184,6 +201,61 @@ void Network::measure(StartGate& gate) {
     if (g_stop)
         std::cerr << std::format("[info] {} timed inferences in {:.2f} s before the stop\n",
                                  timedCount_, timedDurationS_);
+}
+
+// The timed phase under --levels (Periodic in config.hpp). The schedule is pure
+// arithmetic on the origin, so the processes of a run, given the same origin and
+// levels, compute the same windows without talking to each other.
+void Network::measurePeriodic(StartGate& gate) {
+    const Periodic& p = spec_.periodic;
+    gate.arriveAndWait();
+
+    const std::int64_t now = monoNs(Clock::now());
+    std::int64_t window = p.originNs ? p.originNs : now + 1000000000;
+    if (window < now)
+        throw std::runtime_error(std::format(
+            "the origin is {:.2f} s in the past: the warm-up took longer than the sweep "
+            "allowed (raise ORIGIN_DELAY_S)", (now - window) / 1e9));
+    std::cout << std::format("[info] timed phase: {} levels from {:g} Hz, {} ticks each, every {}, "
+                             "offset {:g} ticks; first window in {:.2f} s\n", p.levels.size(),
+                             p.levels[0], p.jobsPerLevel, p.every, p.offsetFrac, (window - now) / 1e9);
+
+    const std::int64_t first = window;
+    std::size_t n = 0;
+    bool overload = false;
+    for (std::size_t k = 0; k < p.levels.size() && !overload && !g_stop; ++k) {
+        const double tick = 1e9 / p.levels[k];
+        const std::int64_t end = window + std::llround(double(p.jobsPerLevel) * tick);
+        std::size_t jobs = 0;
+        for (std::size_t m = 0; !g_stop; ++m) {
+            const std::int64_t release = window + std::llround((p.offsetFrac + double(m * p.every)) * tick);
+            if (release >= end)
+                break;
+            sleepUntil(release);
+            Sample s = step(n);
+            s.levelHz    = p.levels[k];
+            s.tReleaseNs = release;
+            writeRow("bench", n, s);
+            gpuTimes_.push_back(s.gpuMs);
+            wallTimes_.push_back(s.wallMs);
+            prepTimes_.push_back(s.prepMs);
+            ++n;
+            ++jobs;
+            const double lagMs = (s.tStartNs - release) / 1e6;
+            if (lagMs > p.maxLagMs) {
+                std::cout << std::format("[warn] overload at level {} ({:g} Hz): job {} started {:.0f} ms "
+                                         "after its release; stopping\n", k, p.levels[k], jobs, lagMs);
+                overload = true;
+                break;
+            }
+        }
+        std::cout << std::format("  ...level {} ({:g} Hz): {} jobs\n", k, p.levels[k], jobs);
+        window = end + 1000000000;        // the drain gap
+    }
+
+    timedCount_     = n;
+    timedDurationS_ = (monoNs(Clock::now()) - first) / 1e9;
+    csv_.close();
 }
 
 void Network::report() const {

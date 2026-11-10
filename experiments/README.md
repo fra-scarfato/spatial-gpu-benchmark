@@ -12,6 +12,7 @@ programs.
 | [`models/`](models/) | `sec:stress-models`, `sec:stress-bound`: three models, baselines, correction, maximum, margin | `tab:stress-temporal-stat`, `tab:counter-variants`, `tab:models-*`, `tab:bound-*`, `tab:stress-margin`, `tab:stress-pessimism` | about 5 h |
 | [`composition/`](composition/) | `sec:stress-compose`: two co-runners together | `tab:stress-compose` | about 2 h |
 | [`partition-sizes/`](partition-sizes/) | `sec:stress-sizes`, `sec:stress-triple`, `sec:stress-energy` | `tab:stress-sizes*`, `tab:stress-triple*`, `tab:stress-energy*` | about 12 h |
+| [`periodic-loads/`](periodic-loads/) | not yet in the thesis | none yet | about 64 h |
 
 The times leave out the profiled runs (traces, DRAM counters, Nsight Compute), which take minutes
 per set; `measure/profile.sh <set> --list` prints a set's runs.
@@ -27,6 +28,7 @@ Run the parts in the order of the table, or one part after the parts it needs:
 | composition | nothing | |
 | models | stressor | the twelve pairs and the targets' smooth curves |
 | partition-sizes | models (and so stressor), composition | the profiles and the coefficients fitted on the twelve pairs; the factor f |
+| periodic-loads | partition-sizes | the networks alone on the whole GPU (energy-tenants), the budgets |
 
 Two constants of the stress chapter come from `partitioning-mechanisms`: the cost of a kernel
 boundary (1.05 us) and the kernels per inference of the four networks, both in `tab:l2-presence`

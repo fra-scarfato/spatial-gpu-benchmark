@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -104,6 +105,20 @@ void printUsage(const char* prog) {
         << "                        varies both at once. spin keeps a kernel\n"
         << "                        resident that touches no memory; idle holds\n"
         << "                        the partition and runs nothing. Needs greenctx.\n"
+        << "Periodic releases (one network per process):\n"
+        << "  --levels <f1,f2,...>  release the network at ascending base rates (Hz),\n"
+        << "                        one window per level, instead of back to back. A\n"
+        << "                        job waits while the previous one runs and none is\n"
+        << "                        dropped. --min-inferences/--min-duration are ignored.\n"
+        << "  --jobs-per-level <n>  ticks per level window (default 2000): the window\n"
+        << "                        lasts n / level seconds, then a 1 s gap.\n"
+        << "  --every <k>           release on every k-th tick (default 1).\n"
+        << "  --offset-frac <x>     first release x ticks into the window (default 0,\n"
+        << "                        in step with the other processes of the run).\n"
+        << "  --origin-ns <t>       CLOCK_MONOTONIC start of the first window, the same\n"
+        << "                        for every process of a run (default: 1 s after the\n"
+        << "                        warm-up). A process that misses it fails.\n"
+        << "  --max-lag-ms <ms>     stop when a job starts this late (default 1000).\n"
         << "Notes:\n"
         << "  On this SoC SM counts are rounded to a multiple of 2, and the actual\n"
         << "  grant is reported. With the default bounds the loop runs until BOTH are\n"
@@ -275,6 +290,21 @@ Options parseArgs(int argc, char** argv) {
             const int v = std::stoi(nextValue(i, argc, argv, arg));
             if (v < 16) throw std::runtime_error("--interferer-size must be at least 16");
             o.interferer.size = v;
+        } else if (arg == "--levels") {
+            o.periodic.levels.clear();
+            std::stringstream list(nextValue(i, argc, argv, arg));
+            for (std::string level; std::getline(list, level, ',');)
+                o.periodic.levels.push_back(std::stod(level));
+        } else if (arg == "--jobs-per-level") {
+            o.periodic.jobsPerLevel = std::stoull(nextValue(i, argc, argv, arg));
+        } else if (arg == "--every") {
+            o.periodic.every = static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
+        } else if (arg == "--offset-frac") {
+            o.periodic.offsetFrac = std::stod(nextValue(i, argc, argv, arg));
+        } else if (arg == "--origin-ns") {
+            o.periodic.originNs = std::stoll(nextValue(i, argc, argv, arg));
+        } else if (arg == "--max-lag-ms") {
+            o.periodic.maxLagMs = std::stod(nextValue(i, argc, argv, arg));
         } else if (arg == "--submit-threads") {
             const unsigned v =
                 static_cast<unsigned>(std::stoul(nextValue(i, argc, argv, arg)));
@@ -312,6 +342,21 @@ Options parseArgs(int argc, char** argv) {
         throw std::runtime_error(
             "--wq-scope/--wq-limit configure a green context, so they need "
             "--allocation greenctx");
+
+    // Periodic releases: unsorted levels would interleave loads, and the schedule is
+    // per process, so a second network in the same process would share its thread.
+    const Periodic& p = o.periodic;
+    if (!p.levels.empty()) {
+        for (std::size_t k = 0; k < p.levels.size(); ++k)
+            if (p.levels[k] <= 0 || (k > 0 && p.levels[k] <= p.levels[k - 1]))
+                throw std::runtime_error("--levels must be positive and ascending");
+        if (p.jobsPerLevel == 0 || p.every == 0)
+            throw std::runtime_error("--jobs-per-level and --every must be at least 1");
+        if (p.offsetFrac < 0 || p.offsetFrac >= 1)
+            throw std::runtime_error("--offset-frac must be in [0, 1)");
+        if (o.networks.size() > 1)
+            throw std::runtime_error("--levels drives one network per process");
+    }
 
     // Unlabelled networks still need a name, because the label is what keeps
     // their output files apart: with several networks each writes

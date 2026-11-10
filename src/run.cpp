@@ -84,7 +84,8 @@ Run::Run(const Options& opts)
     for (std::size_t k = 0; k < opts_.networks.size(); ++k) {
         const RunSpec spec{opts_.protocol.minInferences,
                            opts_.protocol.minDurationS,
-                           csvPrefixFor(opts_, k)};
+                           csvPrefixFor(opts_, k),
+                           opts_.periodic};
         nets_.push_back(std::make_unique<Network>(opts_.networks[k],
                                                   std::move(allocations[k]),
                                                   opts_, spec, images_));
