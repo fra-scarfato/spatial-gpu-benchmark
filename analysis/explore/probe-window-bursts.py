@@ -4,7 +4,7 @@
 import csv, glob, statistics as st
 import os
 import numpy as np
-os.chdir(os.path.join(os.environ.get("DATA", "/mnt/nvme/f.scarfato"), "bench"))
+os.chdir(os.path.join(os.environ.get("DATA", "/home/fscarfato/data"), "bench"))
 
 REP = "stress-reporter-onoff"
 AGG = "aggregate"

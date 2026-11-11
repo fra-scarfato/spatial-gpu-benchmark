@@ -27,7 +27,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DATA="${DATA:-/mnt/nvme/f.scarfato}"
+DATA="${DATA:-/home/fscarfato/data}"
 NSYS="${NSYS:-/usr/local/bin/nsys}"
 WAIT_MIN="${WAIT_MIN:-0}"
 DS="$DATA/dataset/imagenet-1k"

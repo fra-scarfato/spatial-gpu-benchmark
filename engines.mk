@@ -28,7 +28,7 @@
 
 TRTEXEC ?= /usr/src/tensorrt/bin/trtexec
 # The graphs and the engines are data, so they are on the NVMe with the rest of it.
-DATA     ?= /mnt/nvme/f.scarfato
+DATA     ?= /home/fscarfato/data
 MODELS   ?= $(DATA)/models
 AUX_STREAMS_PROBE ?= probes/aux-streams-probe
 FP16     = --fp16

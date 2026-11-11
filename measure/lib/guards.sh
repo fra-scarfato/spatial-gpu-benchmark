@@ -90,7 +90,7 @@ check_clocks() {
 }
 
 # The board's login screen (gdm's Xorg, gnome-shell, mutter) holds the GPU devices but is idle. It
-# runs as the gdm user, so a guard run as nvidia cannot read its file descriptors and never saw it:
+# runs as the gdm user, so a guard run as an ordinary user cannot read its file descriptors and never saw it:
 # every campaign so far ran beside it. A guard run under sudo (profile.sh's counter sets) sees it,
 # and ignores it here so that both see the same board.
 is_desktop() {   # $1 = command line
@@ -100,18 +100,35 @@ is_desktop() {   # $1 = command line
     return 1
 }
 
+# Since 2026-11-11 the board has one account per person, and another user's /proc/<pid>/fd is
+# unreadable, so the device nodes cannot tell whether that process holds the GPU. Its thread names
+# can: they are public, and the CUDA driver starts threads named cuda-EvtHandlr and cuda0000... in
+# every process that creates a context. Checked on this board: they are there from cudaFree(0) to
+# exit, idle or busy. Sacrifice: another user's graphics-only GPU work (EGL, Vulkan) has no such
+# thread and goes unseen; the only such user here is the desktop, which is ignored anyway.
+cuda_threads() {   # $1 = /proc/<pid>
+    grep -qs '^cuda' "$1"/task/*/comm
+}
+
+# other_gpu_users: 1, and one line per process (pid, user, command), if any process other than this
+# campaign's own holds the GPU. A process whose open files are readable (ours, or any under sudo)
+# is judged by its device nodes; any other process by its CUDA threads.
 other_gpu_users() {
     local p pid f t cmd hit found=0
     for p in /proc/[0-9]*; do
-        # Any of the device nodes counts; stop at the first one. A process can
-        # exit mid-scan, which is normal, so a failed readlink just means skip.
         hit=""
-        for f in "$p"/fd/*; do
-            t=$(readlink "$f" 2>/dev/null) || continue
-            case "$t" in
-                /dev/nvgpu/*|/dev/nvmap|/dev/dri/renderD*) hit=1; break ;;
-            esac
-        done
+        if [ -r "$p/fd" ]; then
+            # Any of the device nodes counts; stop at the first one. A process can
+            # exit mid-scan, which is normal, so a failed readlink just means skip.
+            for f in "$p"/fd/*; do
+                t=$(readlink "$f" 2>/dev/null) || continue
+                case "$t" in
+                    /dev/nvgpu/*|/dev/nvmap|/dev/dri/renderD*) hit=1; break ;;
+                esac
+            done
+        else
+            cuda_threads "$p" && hit=1
+        fi
         [ -n "$hit" ] || continue
 
         pid=$(basename "$p")
@@ -119,12 +136,13 @@ other_gpu_users() {
         # line. Empty means a kernel thread or a process already exiting.
         cmd=$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null) || continue
         [ -n "$cmd" ] || continue
-        # Ourselves, and the daemon, which is attached but idle by construction.
+        # Ourselves, and our MPS daemon, which is attached but idle by construction. Another
+        # user's MPS server runs that user's work, so it counts.
         case "$cmd" in
-            *sweep.sh*|*nvidia-cuda-mps-control*|*nvidia-cuda-mps-server*) continue ;;
+            *sweep.sh*|*nvidia-cuda-mps-control*|*nvidia-cuda-mps-server*) [ -O "$p" ] && continue ;;
         esac
         is_desktop "$cmd" && continue
-        printf '          pid %-8s %s\n' "$pid" "$cmd"
+        printf '          pid %-8s %-10s %s\n' "$pid" "$(stat -c %U "$p" 2>/dev/null)" "$cmd"
         found=1
     done
     [ "$found" = 0 ]

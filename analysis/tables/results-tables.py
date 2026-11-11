@@ -522,7 +522,7 @@ close_table()
 # partition set covers the device in two parts, so the 4 SM participants use the colon ratio,
 # which places three partitions and leaves the last quarter of the device unassigned. The
 # participant writes no stats file, so its own load is read from the run's log.
-_BENCH = os.environ.get("BENCH", "/mnt/nvme/f.scarfato/bench")
+_BENCH = os.environ.get("BENCH", "/home/fscarfato/data/bench")
 
 
 def itf_load(family, cfg, unit):

@@ -18,7 +18,7 @@ __pycache__/
 *.pyc
 
 # CSVs from a run invoked with the default prefix. The results tree is
-# $DATA/bench ($DATA = /mnt/nvme/f.scarfato), outside this repository, so anything here is scratch.
+# $DATA/bench ($DATA = /home/fscarfato/data), outside this repository, so anything here is scratch.
 bench_*
 
 # Logs from a redirected sweep. The real results tree is $DATA/bench, outside this

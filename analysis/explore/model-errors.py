@@ -11,7 +11,7 @@ model (infwin88, infwin88d, infwin88p, infwin88pd, steadywin88p, steadywin88pd, 
 skipped. The reporter models predict from the reporter p99 for both statistics,
 the thesis model (err_p99_p99, err_median_p99)."""
 import csv, os
-D = os.path.join(os.environ.get("DATA", "/mnt/nvme/f.scarfato"), "bench/aggregate/stress-comparison-%s.csv")
+D = os.path.join(os.environ.get("DATA", "/home/fscarfato/data"), "bench/aggregate/stress-comparison-%s.csv")
 M = [m for m in ("onoff88", "uniform88", "smooth88", "smoothx88", "counters-dram", "counters-l2", "counters-ref", "infwin88", "infwin88d", "infwin88p", "infwin88pd", "steadywin88p", "steadywin88pd", "max-dram", "max-ref", "max-l2", "maxc-dram", "maxc-ref", "maxc-l2") if os.path.exists(D % m)]
 for q in ("p99", "median"):
     err = {m: {(r["target"], r["corunner"]): float(r["err_%s_p99_pts" % q]) for r in csv.DictReader(open(D % m))}

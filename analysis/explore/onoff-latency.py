@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """onoff-latency.py - the target's latency next to ON/OFF and uniform SAXPY (family stress-onoff).
 
-    python3 analysis/explore/onoff-latency.py [<bench dir>]      default /mnt/nvme/f.scarfato/bench/stress-onoff
+    python3 analysis/explore/onoff-latency.py [<bench dir>]      default /home/fscarfato/data/bench/stress-onoff
 
 Daniel's readout (2026-10-10): median, p95, p99 and maximum of the target's per-inference gpu_ms,
 per configuration, and for ON/OFF the same split into inferences run during ON, during OFF, and
@@ -28,7 +28,7 @@ import sys
 
 import numpy as np
 
-BENCH = sys.argv[1] if len(sys.argv) > 1 else "/mnt/nvme/f.scarfato/bench/stress-onoff"
+BENCH = sys.argv[1] if len(sys.argv) > 1 else "/home/fscarfato/data/bench/stress-onoff"
 QS = (50, 95, 99, 100)                       # median, p95, p99, max
 rng = np.random.default_rng(1)
 

@@ -30,7 +30,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-DATA = os.environ.get("DATA", "/mnt/nvme/f.scarfato")
+DATA = os.environ.get("DATA", "/home/fscarfato/data")
 PROF = os.path.join(DATA, "profiles")
 BENCH = os.path.join(DATA, "bench")
 DERIVED = os.path.join(PROF, "derived")

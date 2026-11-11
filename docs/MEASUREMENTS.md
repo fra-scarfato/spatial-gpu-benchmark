@@ -6,7 +6,7 @@ where it is stored, which code computes it, and what limits it carries.
 
 ## 1. Where the data lives
 
-All data is under `$DATA = /mnt/nvme/f.scarfato`, outside the repository.
+All data is under `$DATA = /home/fscarfato/data`, outside the repository.
 
 ```
 bench/                          THE CAMPAIGN: latencies, five runs per configuration

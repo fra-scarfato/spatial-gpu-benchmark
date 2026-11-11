@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SWEEP = ROOT / "measure" / "sweep.sh"
-DEFAULT_DATA = "/mnt/nvme/f.scarfato"
+DEFAULT_DATA = "/home/fscarfato/data"
 
 GROUP_VARS = {"section": "SECTION_FAMILIES", "appendix": "APPENDIX_FAMILIES",
               "mem": "MEM_FAMILIES", "all": "ALL_FAMILIES"}

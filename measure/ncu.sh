@@ -27,7 +27,7 @@
 set -u
 
 NCU=${NCU:-/usr/local/cuda/bin/ncu}
-DATA=${DATA:-/mnt/nvme/f.scarfato}
+DATA=${DATA:-/home/fscarfato/data}
 MODEL=${MODEL:-$DATA/models/mobilenetv2-12/engine/mobilenetv2-12.engine}
 OUT=${OUT:-$DATA/profiles/ncu}
 MODE=${1:-}

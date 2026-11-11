@@ -33,7 +33,7 @@ import cv2
 import numpy as np
 import tensorrt as trt
 
-DATA = os.environ.get("DATA", "/mnt/nvme/f.scarfato")
+DATA = os.environ.get("DATA", "/home/fscarfato/data")
 DS = os.path.join(DATA, "dataset", "imagenet-1k")
 CALIB = slice(1000, 1500)
 CHECK = slice(2000, 2200)

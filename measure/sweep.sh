@@ -69,7 +69,7 @@ ROOT="$(cd "$HERE/.." && pwd)"                          # .../runner, the reposi
 # the root filesystem is small and shared, and it once filled up under a campaign's
 # worth of CSVs. Everything below is built by appending to this root, so DATA
 # repoints the whole chain.
-DATA="${DATA:-/mnt/nvme/f.scarfato}"
+DATA="${DATA:-/home/fscarfato/data}"
 
 if [ ! -d "$DATA" ]; then
     echo "sweep.sh: data root not found: $DATA" >&2

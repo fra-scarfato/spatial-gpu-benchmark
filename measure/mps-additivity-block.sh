@@ -21,7 +21,7 @@
 # Does not need root. Results go to $MPS_BLOCK_OUT (default $DATA/bench/<family>).
 set -u
 
-DATA="${DATA:-/mnt/nvme/f.scarfato}"
+DATA="${DATA:-/home/fscarfato/data}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 FAMILY="${MPS_BLOCK_FAMILY:-interference-additivity-mps}"

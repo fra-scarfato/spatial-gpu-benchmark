@@ -19,7 +19,7 @@ import sys
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     src = args[0] if args else "-"
-    out_dir = "/mnt/nvme/f.scarfato/bench/aggregate/tables"
+    out_dir = "/home/fscarfato/data/bench/aggregate/tables"
     for i, a in enumerate(sys.argv):
         if a == "--out" and i + 1 < len(sys.argv):
             out_dir = sys.argv[i + 1]

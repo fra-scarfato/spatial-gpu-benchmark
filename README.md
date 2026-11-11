@@ -31,7 +31,7 @@ Part of the KubeDeadline master's thesis on spatial GPU reservation for real-tim
 - Python 3 with `pip install -r requirements.txt` (numpy and pandas, pinned).
 - Nsight Systems (`nsys`) and Nsight Compute (`ncu`) for the profiled runs, and root for the DRAM
   counters and `ncu`.
-- About 30 GB under `$DATA` (default `/mnt/nvme/f.scarfato`; `export DATA=<path>` elsewhere).
+- About 30 GB under `$DATA` (default `/home/fscarfato/data`; `export DATA=<path>` elsewhere).
 
 ## Models and images
 
@@ -180,7 +180,7 @@ also needs a rule in `aggregate.py`'s `load()`. To add a table, add it to
 
 ## Data
 
-All data lives outside the repository under `$DATA` (default `/mnt/nvme/f.scarfato`):
+All data lives outside the repository under `$DATA` (default `/home/fscarfato/data`):
 
 ```
 bench/<family>/<config>/r<k>_*   the campaign: one stats, latencies and log file per run

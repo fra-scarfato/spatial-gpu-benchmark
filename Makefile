@@ -16,7 +16,7 @@
 #
 # Layout: the sources are here (include/, src/) and so is the binary.
 # The data and the results are NOT: models/, dataset/, labels/ and bench/ are on
-# the NVMe, in /mnt/nvme/f.scarfato, because the root filesystem is small and shared.
+# the NVMe, in /home/fscarfato/data, because the root filesystem is small and shared.
 # sweep.sh is what tells the runner where they are, and it takes that root from $DATA.
 
 CXX      := g++
@@ -96,7 +96,7 @@ check:
 # ponytail: every rule depends on all raw runs, not on its own families, so a run of any family
 # re-runs the chain (about 4 minutes). Per-family prerequisites if that becomes slow.
 
-DATA ?= /mnt/nvme/f.scarfato
+DATA ?= /home/fscarfato/data
 export DATA
 AGG := $(DATA)/bench/aggregate
 FROZEN := $(DATA)/bench/frozen
